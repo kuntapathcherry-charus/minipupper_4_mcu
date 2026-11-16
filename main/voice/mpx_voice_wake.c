@@ -35,6 +35,7 @@
 #include "driver/gpio.h"
 #include "mpx_audio.h"
 #include "mpx_voice_link.h"
+#include "voice/voice_phone_audio.h"
 #include "sdkconfig.h"
 
 #ifndef M_PI
@@ -620,6 +621,7 @@ static void wake_auto_task(void *arg)
     const uint32_t max_secs = CONFIG_APP_VOICE_AUTO_MAX_SECONDS;
     wake_auto_state_t state = WAKE_ST_LISTEN;
     bool follow_up = false;   /* this TALK needs no wake word and no beep */
+    uint32_t listen_retry_ms = WAKE_AUTO_CONNECT_RETRY_MS;
 
     while (s_auto_run) {
         s_auto_state = state;
@@ -631,11 +633,19 @@ static void wake_auto_task(void *arg)
             if (!s_active) {
                 const esp_err_t err = mpx_voice_wake_start();
                 if (err != ESP_OK) {
-                    ESP_LOGW(TAG, "hands-free: cannot listen (%s) -- retrying",
-                             esp_err_to_name(err));
-                    vTaskDelay(pdMS_TO_TICKS(WAKE_AUTO_CONNECT_RETRY_MS));
+                    /* Music and TLS can temporarily exhaust contiguous DMA
+                     * RAM. Back off instead of logging the same allocation
+                     * failure every two seconds for the life of the song. */
+                    ESP_LOGW(TAG, "hands-free: cannot listen (%s) -- retrying in %lu ms",
+                             esp_err_to_name(err), (unsigned long)listen_retry_ms);
+                    vTaskDelay(pdMS_TO_TICKS(listen_retry_ms));
+                    if (listen_retry_ms < 10000) {
+                        listen_retry_ms = (listen_retry_ms >= 5000)
+                                              ? 10000 : listen_retry_ms * 2;
+                    }
                     break;
                 }
+                listen_retry_ms = WAKE_AUTO_CONNECT_RETRY_MS;
             }
             /* Short timeout only so `wake auto off` and a dead feed are
              * noticed promptly. */
@@ -698,7 +708,12 @@ static void wake_auto_task(void *arg)
                 ESP_LOGI(TAG, "hands-free: your turn -- no wake word needed until the server ends the session");
             }
             const uint32_t secs = follow_up ? WAKE_FOLLOWUP_SECONDS : max_secs;
-            const esp_err_t err = mpx_voice_talk_start_auto(secs);
+            /* When the PWA owns the microphone, the SAME turn runs off the
+             * phone's PCM ring instead of I2S -- connection, provisioning,
+             * follow-ups and barge-in stay in this loop either way. */
+            const esp_err_t err = mpx_phone_audio_mic_enabled()
+                                      ? mpx_voice_talk_start_phone(secs)
+                                      : mpx_voice_talk_start_auto(secs);
             if (err != ESP_OK) {
                 ESP_LOGW(TAG, "hands-free: talk failed (%s) -- back to listening",
                          esp_err_to_name(err));

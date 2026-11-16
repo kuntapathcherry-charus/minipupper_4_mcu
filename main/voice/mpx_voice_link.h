@@ -158,6 +158,16 @@ bool      mpx_voice_talk_active(void);
  * mpx_voice_talk_wait() to block until it has released the microphone. */
 esp_err_t mpx_voice_talk_start_auto(uint32_t max_seconds);
 
+/* Phone capture variant: identical protocol to mpx_voice_talk_start_auto(),
+ * but the PCM comes from the PWA's microphone (voice_phone_audio.h) instead
+ * of I2S, so the robot microphone may stay owned by the wake front end. Only
+ * valid while the phone microphone is enabled. */
+esp_err_t mpx_voice_talk_start_phone(uint32_t max_seconds);
+
+/* Move an already-active robot-microphone turn to the enabled phone mic.
+ * The talk task closes I2S and drains stale phone PCM before switching. */
+esp_err_t mpx_voice_talk_use_phone(void);
+
 /* Block until the current talk (either kind) has finished and closed the
  * microphone, or `timeout_ms` passes. ESP_OK when not talking. */
 esp_err_t mpx_voice_talk_wait(uint32_t timeout_ms);

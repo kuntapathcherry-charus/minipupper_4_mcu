@@ -70,6 +70,11 @@ bool chat_ws_owns_fd(int sockfd);
  *  of the text session each socket is viewing. Caller supplies JSON text. */
 void broadcast_voice_to_pwa(const char *json_text);
 
+/** Broadcast raw PCM16 mono 16 kHz to every chat socket. Used when the phone
+ *  is the speaker for a voice reply. Best effort: a slow or dead socket is
+ *  skipped rather than allowed to hold up playback. */
+void broadcast_voice_binary_to_pwa(const uint8_t *data, size_t len);
+
 /**
  * @brief REST handler for POST /v1/chat/send.
  *

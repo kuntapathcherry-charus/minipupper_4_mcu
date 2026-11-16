@@ -9,6 +9,13 @@
     onNew,
     onClear,
     onClose,
+    phoneMic = false,
+    phoneSpeaker = false,
+    phoneError = "",
+    phoneSupported = false,
+    phoneAudioAvailable = false,
+    onToggleMic,
+    onToggleSpeaker,
   } = $props();
 
   let transcriptEl = $state(null);
@@ -49,8 +56,41 @@
         </svg>
       </span>
       <strong>{statusLabel}</strong>
-      <span class="status-detail">Gateway STT/TTS · Pupper answers on the robot</span>
+      <span class="status-detail">
+        Gateway STT/TTS · {phoneMic ? "phone mic" : "robot mic"} → {phoneSpeaker ? "phone speaker" : "robot speaker"}
+      </span>
     </div>
+
+    {#if phoneAudioAvailable}
+    <div class="phone-audio">
+      <div class="phone-audio-head">
+        <span>This phone</span>
+        <span class="phone-audio-hint">Useful when you are testing movement from across the room</span>
+      </div>
+      <div class="phone-audio-toggles">
+        <button
+          class:on={phoneMic}
+          aria-pressed={phoneMic}
+          disabled={busy || !phoneSupported}
+          onclick={() => onToggleMic?.()}
+        >Phone mic</button>
+        <button
+          class:on={phoneSpeaker}
+          aria-pressed={phoneSpeaker}
+          disabled={busy || !phoneSupported}
+          onclick={() => onToggleSpeaker?.()}
+        >Phone speaker</button>
+      </div>
+      {#if !phoneSupported}
+        <p class="phone-audio-error">
+          Phone audio needs a secure page. Use HTTPS, or allow this origin in
+          chrome://flags/#unsafely-treat-insecure-origin-as-secure.
+        </p>
+      {:else if phoneError}
+        <p class="phone-audio-error" role="alert">{phoneError}</p>
+      {/if}
+    </div>
+    {/if}
 
     <div class="voice-transcript" bind:this={transcriptEl} aria-live="polite">
       {#if turns.length === 0}
@@ -126,6 +166,63 @@
   .voice-panel-header h2 { margin: 2px 0 0; font-size: 24px; }
   .eyebrow { color: var(--sub); font-size: 11px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
   .icon-button { width: 42px; height: 42px; border: 1px solid var(--hair); border-radius: 50%; background: var(--panel, var(--page)); color: var(--ink); font-size: 28px; cursor: pointer; }
+
+  .phone-audio {
+    margin: 12px 0 4px;
+    padding: 10px 12px;
+    border: 1px solid var(--hair);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--panel) 60%, transparent);
+  }
+
+  .phone-audio-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    align-items: baseline;
+    font-size: 0.82rem;
+    font-weight: 600;
+  }
+
+  .phone-audio-hint {
+    font-weight: 400;
+    opacity: 0.62;
+  }
+
+  .phone-audio-toggles {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .phone-audio-toggles button {
+    flex: 1;
+    padding: 9px 10px;
+    border: 1px solid var(--hair);
+    border-radius: 999px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 0.84rem;
+    cursor: pointer;
+  }
+
+  .phone-audio-toggles button.on {
+    border-color: var(--mpx-yellow);
+    background: color-mix(in srgb, var(--mpx-yellow) 18%, transparent);
+    color: var(--mpx-yellow);
+  }
+
+  .phone-audio-toggles button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .phone-audio-error {
+    margin: 8px 0 0;
+    font-size: 0.78rem;
+    color: #ff9d9d;
+  }
 
   .voice-status { display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 25px 10px 20px; text-align: center; }
   .status-orb { display: grid; place-items: center; width: 78px; height: 78px; margin-bottom: 5px; border-radius: 50%; background: var(--panel, var(--hair)); color: var(--sub); }

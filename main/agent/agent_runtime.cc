@@ -17,6 +17,7 @@
 #include "agent/agent_fs.h"
 #include "app_claw.h"
 #include "cap_im_local.h"
+#include "claw_cap.h"
 #include "claw_memory.h"
 
 static const char *TAG = "agent";
@@ -44,6 +45,39 @@ constexpr const char *kGatewayTokField = "max_tokens";
 bool s_running = false;
 agent::OutboundFn s_outbound = nullptr;
 std::atomic<agent::OutboundListenerFn> s_outbound_listener{nullptr};
+
+bool valid_voice_session_id(const char *session_id)
+{
+	if (!session_id || strlen(session_id) != 14 ||
+	    strncmp(session_id, "voice-", 6) != 0) {
+		return false;
+	}
+	for (size_t i = 6; i < 14; i++) {
+		const char c = session_id[i];
+		if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+		      (c >= 'A' && c <= 'F'))) {
+			return false;
+		}
+	}
+	return true;
+}
+
+esp_err_t restrict_voice_tools(const char *session_id)
+{
+	if (!valid_voice_session_id(session_id)) {
+		return ESP_ERR_INVALID_ARG;
+	}
+	/* Session visibility is enforced for execution as well as the LLM tool
+	 * schema. Installed skills are separate capability groups and therefore
+	 * disappear with these five built-ins. PWA sessions are unchanged. */
+	static constexpr const char *kVoiceGroups[] = {
+		"cap_robot", "cap_display", "cap_music", "cap_self_config",
+		"cap_runtime",
+	};
+	return claw_cap_set_session_llm_visible_groups(
+		session_id, kVoiceGroups,
+		sizeof(kVoiceGroups) / sizeof(kVoiceGroups[0]));
+}
 
 void copy_field(char *dst, size_t dst_size, const char *src)
 {
@@ -255,6 +289,10 @@ esp_err_t submit(const char *session_id, const char *text)
 esp_err_t submit_voice(const char *session_id, const char *text)
 {
 	if (!text) return ESP_ERR_INVALID_ARG;
+	const esp_err_t policy_err = restrict_voice_tools(session_id);
+	if (policy_err != ESP_OK) {
+		return policy_err;
+	}
 	/* Voice normally needs one direct response, not a visible agent loop.
 	 * Keep physical-action tools available, but make them the exception.
 	 * The end marker is consumed by voice_brain and is never spoken. */
@@ -277,6 +315,10 @@ esp_err_t clear_session(const char *session_id)
 {
 	if (!session_id || !session_id[0]) return ESP_ERR_INVALID_ARG;
 	if (!s_running) return ESP_ERR_INVALID_STATE;
+	/* A cleared voice session no longer needs a private capability view. */
+	const esp_err_t visibility_err =
+		claw_cap_set_session_llm_visible_groups(session_id, nullptr, 0);
+	if (visibility_err != ESP_OK) return visibility_err;
 	bool deleted = false;
 	return claw_memory_delete_session_history(session_id, &deleted);
 }

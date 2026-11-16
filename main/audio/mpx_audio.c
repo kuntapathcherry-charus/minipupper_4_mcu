@@ -301,11 +301,15 @@ static void audio_out_close(void)
          * capture_stop() finishes the shutdown once nothing needs it. */
         return;
     }
-    (void)i2s_channel_disable(s_tx);
-    s_out_running = false;
-    if (s_out_slot_bits != 16) {
-        s_out_cfg_rate = 0;   /* a capture widened the slots; reconfigure on the next open */
+    if (s_out_running) {
+        (void)i2s_channel_disable(s_tx);
+        s_out_running = false;
     }
+    /* Keep the 32-bit slot configuration a four-channel capture installed.
+     * audio_out_write_stereo16() already widens samples for it, and the next
+     * voice/music stream uses the same 16 kHz clock. Forcing a 16-bit
+     * reconfigure here would shrink the DMA rings and make the next wake-word
+     * open allocate them again in a fragmented heap. */
 }
 
 /* ── WAV ───────────────────────────────────────────────────────────────────
@@ -747,11 +751,10 @@ void mpx_audio_capture_stop(void)
     if (s_tx && s_out_running && !s_out_scratch) {
         (void)i2s_channel_disable(s_tx);
         s_out_running = false;
-        /* The codec left TX in whatever width this capture needed; make the
-         * next open (with nothing capturing) put it back to 16-bit. If an
-         * output stream is open right now it keeps the current width until
-         * it closes, and the same reset happens on its next open. */
-        s_out_cfg_rate = 0;
+        /* Keep the codec's 32-bit slot/clock setup. The next output open
+         * reuses it and audio_out_write_stereo16() widens its samples;
+         * resetting s_out_cfg_rate here would shrink TX's DMA ring and
+         * force the next microphone open to allocate it again. */
     }
 }
 

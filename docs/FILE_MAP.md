@@ -205,6 +205,9 @@ that unlock its tools.
 | [mpx_voice_stream.c](../main/voice/mpx_voice_stream.c) | Mic → Opus → socket, and socket → speaker streaming. |
 | [mpx_voice_codec.cc](../main/voice/mpx_voice_codec.cc) | Opus encode/decode wrappers. |
 | [mpx_voice_wake.{h,c}](../main/voice/mpx_voice_wake.c) | esp-sr wake word (AFE setup, wake detection, accessors for status). |
+| [voice_brain.{h,cc}](../main/voice/voice_brain.cc) | The on-device agent as the voice brain: one outstanding turn, STT → `agent::submit_voice()`, full reply → speech sanitiser, session ids/end/clear, and an 80 s turn timeout. |
+| [voice_history.{h,cc}](../main/voice/voice_history.cc) | JSONL voice transcripts under `/fs/voice/`, tail-only listing for `/v1/voice/history`, and per-session clear. |
+| [voice_phone_audio.{h,cc}](../main/voice/voice_phone_audio.cc) | Optional phone mic/speaker endpoints: a PSRAM PCM ring for browser capture and PCM broadcast for TTS, selected per turn by `mpx_phone_audio_mic_enabled()`. |
 | [mpx_voice_ota.c](../main/voice/mpx_voice_ota.c) | First-wake-word provisioning of the gateway URL/token (OTA identification). |
 | [cap_music.{h,c}](../main/voice/cap_music.c) | Music playback (internet radio by genre, or a URL) sharing the speaker with voice. |
 

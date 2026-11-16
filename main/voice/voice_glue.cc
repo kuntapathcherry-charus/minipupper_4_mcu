@@ -407,6 +407,11 @@ std::string status_json()
     cJSON_AddStringToObject(o, "mode", agent_config::mode_name(agent_config::mode()));
     cJSON_AddBoolToObject(o, "mic", mpx_audio_have_mic());
     cJSON_AddBoolToObject(o, "speaker", mpx_audio_have_speaker());
+#ifdef CONFIG_APP_VOICE_PHONE_AUDIO
+    cJSON_AddBoolToObject(o, "phone_audio", true);
+#else
+    cJSON_AddBoolToObject(o, "phone_audio", false);
+#endif
     cJSON_AddNumberToObject(o, "volume", mpx_audio_get_volume());
     cJSON_AddBoolToObject(o, "provisioned", mpx_voice_stored_url()[0] != '\0');
     cJSON_AddStringToObject(o, "gateway", MPX_VOICE_DEFAULT_OTA_URL);

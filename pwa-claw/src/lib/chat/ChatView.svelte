@@ -13,6 +13,7 @@
   import AgentActivity from "./AgentActivity.svelte";
   import EmptyChat from "./EmptyChat.svelte";
   import VoicePanel from "./VoicePanel.svelte";
+  import { PhoneAudio, phoneAudioControl } from "../voice/phoneAudio.js";
   import {
     saveConversation,
     getConversation,
@@ -86,6 +87,15 @@
   let voiceWakeMode = $derived(
     messages.length === 0 && !inputText.trim() && !sending && !conversationArchived,
   );
+
+  /* Phone-side audio. Off by default: the robot's own mic/speaker stay the
+   * normal path, and these are opt-in for testing while across the room. */
+  let phoneMic = $state(false);
+  let phoneSpeaker = $state(false);
+  let phoneAudioError = $state("");
+  let phoneAudio = null;
+  let phoneAudioAvailable = $state(false);
+  const phoneAudioSupported = PhoneAudio.supported;
 
   /* Surface only the newest robot-owned voice transcript beside the composer.
    * Older conversations remain in History; a row of chips made the chat header
@@ -421,8 +431,9 @@
     socket.onopen = () => {
       if (socket !== ws) return;        // stale socket — ignore
       connected = true;
-      sendSessionReset(sessionId, { pwa_build: "brains-v21" });
+      sendSessionReset(sessionId, { pwa_build: "brains-v23" });
       probeLocalBrain();
+      void loadVoiceCapabilities();
       void loadVoiceHistory();
     };
 
@@ -437,7 +448,13 @@
       if (socket === ws) connected = false;
     };
 
+    socket.binaryType = "arraybuffer";
     socket.onmessage = (event) => {
+      if (event.data instanceof ArrayBuffer) {
+        // PCM16 from the robot's TTS, only arriving when phone speaker is on.
+        phoneAudio?.play(new Int16Array(event.data));
+        return;
+      }
       try {
         const data = JSON.parse(event.data);
         handleMessage(data);
@@ -465,6 +482,18 @@
     return -1;
   }
 
+  async function loadVoiceCapabilities() {
+    try {
+      const res = await fetch("/v1/voice", { cache: "no-store" });
+      if (!res.ok) throw new Error(`voice status HTTP ${res.status}`);
+      const status = await res.json();
+      phoneAudioAvailable = status.phone_audio === true;
+      if (!phoneAudioAvailable) await stopPhoneAudio();
+    } catch {
+      phoneAudioAvailable = false;
+    }
+  }
+
   async function loadVoiceHistory() {
     try {
       /* Fewer conversations keeps the LittleFS read short: the history handler
@@ -487,6 +516,18 @@
   }
 
   function handleMessage(data) {
+    if (data.type === "phone_audio") {
+      if (data.event === "stop") {
+        phoneAudio?.interrupt();
+      } else if (data.ok === false) {
+        phoneAudioError = data.error || "Phone audio could not start";
+        phoneMic = false;
+        void phoneAudio?.setMic(false).then(() => sendPhoneAudioState());
+      } else {
+        phoneAudioError = "";
+      }
+      return;
+    }
     if (data.type === "voice_turn") {
       const convo = appendVoiceTurn(data, { activeId: sessionId });
       if (voiceWakeRequested && convo) {
@@ -719,6 +760,7 @@
 
   async function endVoiceSession() {
     if (voiceWakeBusy) return;
+    await stopPhoneAudio();
     voiceWakeBusy = true;
     voiceWakeError = "";
     try {
@@ -740,6 +782,7 @@
 
   async function newVoiceSession() {
     if (voiceWakeBusy) return;
+    await stopPhoneAudio();
     voiceWakeBusy = true;
     voiceWakeError = "";
     try {
@@ -782,6 +825,73 @@
     } finally {
       voiceWakeBusy = false;
     }
+  }
+
+  function sendPhoneAudioState() {
+    if (!phoneAudio || !ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(phoneAudioControl({ mic: phoneAudio.mic, speaker: phoneAudio.speaker }));
+  }
+
+  async function ensurePhoneAudio() {
+    if (!phoneAudio) {
+      phoneAudio = new PhoneAudio({
+        sendBinary: (buffer) => {
+          if (ws && ws.readyState === WebSocket.OPEN) ws.send(buffer);
+        },
+        onError: (message) => {
+          phoneAudioError = message;
+        },
+      });
+    }
+    return phoneAudio;
+  }
+
+  async function togglePhoneMic() {
+    if (voiceWakeBusy) return;
+    phoneAudioError = "";
+    const next = !phoneMic;
+    try {
+      const audio = await ensurePhoneAudio();
+      await audio.setMic(next);
+      phoneMic = next;
+      if (!next) audio.interrupt();
+      sendPhoneAudioState();
+    } catch (error) {
+      phoneAudioError = error?.message || "Phone microphone unavailable — check browser permission";
+      phoneMic = false;
+    }
+  }
+
+  async function togglePhoneSpeaker() {
+    if (voiceWakeBusy) return;
+    phoneAudioError = "";
+    const next = !phoneSpeaker;
+    try {
+      const audio = await ensurePhoneAudio();
+      await audio.setSpeaker(next);
+      phoneSpeaker = next;
+      sendPhoneAudioState();
+    } catch (error) {
+      phoneAudioError = error?.message || "Phone speaker unavailable";
+      phoneSpeaker = false;
+    }
+  }
+
+  /* Microphone capture must not outlive the panel: a page left open would
+   * otherwise keep streaming room audio to the robot. */
+  async function stopPhoneAudio() {
+    if (!phoneAudio) return;
+    await phoneAudio.disable();
+    phoneMic = false;
+    phoneSpeaker = false;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(phoneAudioControl({ mic: false, speaker: false }));
+    }
+  }
+
+  function closeVoicePanel() {
+    showVoicePanel = false;
+    void stopPhoneAudio();
   }
 
   function submitChat() {
@@ -1073,7 +1183,14 @@
       onEnd={endVoiceSession}
       onNew={newVoiceSession}
       onClear={clearVoiceContext}
-      onClose={() => showVoicePanel = false}
+      onClose={closeVoicePanel}
+      phoneMic={phoneMic}
+      phoneSpeaker={phoneSpeaker}
+      phoneError={phoneAudioError}
+      phoneSupported={phoneAudioSupported}
+      phoneAudioAvailable={phoneAudioAvailable}
+      onToggleMic={togglePhoneMic}
+      onToggleSpeaker={togglePhoneSpeaker}
     />
   {/if}
 </div>

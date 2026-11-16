@@ -56,6 +56,11 @@ CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0
 CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=65536
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+# S3 still uses AES-DMA when AES_USE_INTERRUPT=n. Use software AES so a
+# voice + HTTPS-music session needs no AES DMA buffers. Software AES costs
+# little CPU for a 128 kbps radio stream and does not weaken TLS.
+# CONFIG_MBEDTLS_HARDWARE_AES is not set
+# CONFIG_MBEDTLS_AES_USE_INTERRUPT is not set
 
 # local-claw, Phase 5: the on-device agent (ESP-Claw, third-party/esp-claw)
 # runs its tasks on PSRAM stacks -- claw_task_create() asks for
@@ -236,6 +241,9 @@ CONFIG_LV_BUILD_DEMOS=n
 CONFIG_APP_AUDIO_ENABLE=y
 CONFIG_APP_VOICE_ENABLE=y
 CONFIG_APP_VOICE_AUTO_LISTEN=y
+# Developer-only phone PCM bridge: browsers require HTTPS or a special
+# insecure-origin exception for microphone capture. End-user images hide it.
+# CONFIG_APP_VOICE_PHONE_AUDIO is not set
 
 # local-claw: voice (main/voice). esp-sr's models: WakeNet 9 "Hi ESP", the
 # medium VADNet, WebRTC noise suppression (no model), no command recogniser;

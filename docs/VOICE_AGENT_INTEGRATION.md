@@ -38,9 +38,9 @@ F1–F9 and P1–P6 now have a first implementation. The local brain is selected
 by `CONFIG_APP_VOICE_BRAIN_LOCAL` (default on when the agent is present);
 hello advertises either `features.brain="device"` or MCP, never both. Voice
 uses one NVS-backed rolling `voice-xxxxxxxx` session, a PSRAM worker, one
-outstanding turn (the protocol has no turn id), 4-second fillers, an 80-second
-timeout, and 3-second duplicate-STT suppression. Speech cleanup is a separate
-ESP-free C module with host tests.
+outstanding turn (the protocol has no turn id), an 80-second timeout, and
+3-second duplicate-STT suppression. Speech cleanup is a separate ESP-free C
+module with host tests.
 
 Transcripts live in `/fs/voice/*.jsonl` (16 newest files, 64 KiB/file, 200
 lines retained when compacting). The PWA imports them from
@@ -50,10 +50,11 @@ turns, new voice session, and local-only delete. `POST /v1/voice/history/clear`
 erases transcripts only. Skill hold keeps the device-brain control socket
 open so the agent can still answer, while wake word/music remain held.
 
-The most recent voice conversation gets a compact preview directly above the
-chat composer (`.voice-recent` in `pwa-claw/src/lib/chat/ChatView.svelte`):
-first user turn, latest reply, timestamp, and a live listening/thinking/
-speaking state. Tapping it opens the transcript. Older voice conversations
+The most recent voice conversation gets a one-line chip directly above the
+chat composer (`.voice-chip` in `pwa-claw/src/lib/chat/ChatView.svelte`):
+mic icon, first user turn, timestamp, and a live listening/thinking/
+speaking state. The full preview card was too tall next to the transcript, so
+the reply line was dropped; tapping the chip opens the panel. Older voice conversations
 stay in the History drawer with the other chats, instead of occupying a
 permanent chip row in the main chat window.
 
@@ -86,6 +87,85 @@ playback/talk and disconnects without disabling the wake-word loop. Repeated
 "One moment" filler is gone: the voice prompt requests one concise direct
 answer, uses tools only for explicit physical actions, and has one 80-second
 timeout instead of periodic spoken filler.
+
+Voice sessions also get a session-scoped ESP-Claw capability allowlist:
+`cap_robot`, `cap_display`, `cap_music`, `cap_self_config` and
+`cap_agent_runtime`. Lua, WASM and skill groups are neither advertised to
+the model nor executable by it, while the same tools remain available to
+PWA text sessions. This trims the per-request tool schema and prevents
+skill detours without disabling either runtime at boot.
+
+### 1b. Phone microphone and speaker
+
+Testing movement is easier when the person is across the room, where the
+robot's microphone is too far away. Developer builds with
+`CONFIG_APP_VOICE_PHONE_AUDIO=y` therefore have two independent switches,
+**Phone mic** and **Phone speaker**, both off at runtime by default. The
+Kconfig option is **off by default** and is not an end-user feature: disabled
+builds allocate no phone ring, reject `phone_audio` WebSocket commands, and
+report `phone_audio:false` from `GET /v1/voice`, which hides the PWA controls.
+When enabled, the switches move one endpoint of the same gateway turn; VAD,
+STT, the agent and TTS stay on the robot.
+
+- **Transport.** Binary WebSocket frames over the existing chat socket carry
+  raw PCM16 mono at 16 kHz. That is 32 KB/s, which local Wi-Fi handles
+  comfortably and which avoids shipping an Opus decoder to the browser. The
+  robot converts nothing: the gateway's Opus is decoded on the robot as
+  usual, and its PCM is forwarded to the phone.
+- **Mic.** `pwa-claw/src/lib/voice/pcm-worklet.js` captures on the audio
+  thread (`AudioWorklet`), decimates to 16 kHz when Chrome ignores the
+  requested context rate, and posts 60 ms `Int16Array` blocks.
+  `main/voice/voice_phone_audio.cc` buffers them in a 2-second PSRAM ring and
+  `talk_task` reads whole `MPX_VOICE_UPLINK_FRAME` frames from it instead of
+  `mpx_audio_capture_read()`. If the toggle arrives during a robot-microphone
+  turn, `mpx_voice_talk_use_phone()` moves that live turn to the phone on the
+  next frame. The ring accepts PCM only while a phone-owned talk task is
+  consuming it; both edges of the turn discard stale audio, so idle browser
+  capture cannot fill the ring or leak into the next utterance.
+- **Speaker.** When the flag is set, `playback_task` forwards decoded PCM to
+  every open chat socket instead of `mpx_audio_output_write()`; the phone
+  queues it on a 16 kHz `AudioContext` with half a frame of lead.
+  `phone_audio stop` (broadcast on barge-in, End, New) flushes the queue.
+- **Control.** The PWA sends `{"type":"phone_audio","mic":bool,"speaker":bool}`.
+  The robot answers `{"type":"phone_audio","ok":true,...}` or `ok:false` with
+  an `esp_err` name, which the panel shows. Turning the mic on runs the turn
+  through `voice_glue::wake_now()`, so connecting, provisioning and
+  follow-ups behave exactly like a spoken wake word; `mpx_voice_wake.c` picks
+  `mpx_voice_talk_start_phone()` when the flag is set. Turning it off stops
+  the turn and clears buffered audio. Closing the panel disables both and
+  stops capture.
+- **Limits.** This is a developer-only transport because of browser security,
+  not CORS: Android Chrome over HTTPS is the supported target. `getUserMedia`
+  needs a secure context, and the robot serves its PWA over plain HTTP, so on
+  `http://<robot-ip>` the switches stay disabled with an explanatory hint.
+  Either front the UI with TLS or add the origin to
+  `chrome://flags/#unsafely-treat-insecure-origin-as-secure`. The wake word
+  itself still comes from the robot microphone (unless the panel's primary
+  button is used), because browser wake-word detection is not implemented.
+
+### 1c. Stable I2S DMA allocation
+
+Hands-free capture keeps the ES7210 in its four-channel / 32-bit-slot layout
+for both wake-word listening and uplink talk. Previously the talk task opened
+two channels, shrinking the paired I2S DMA rings; the next wake-word open then
+needed twelve fresh 1920-byte DMA allocations. Once music, TLS and the agent
+had fragmented internal RAM, that failed repeatedly even with enough total
+bytes free. `audio_out_close()` also keeps the wide-slot configuration instead
+of forcing a 16-bit reconfigure, and failed microphone starts back off from
+2 to 10 seconds instead of logging the same error every two seconds. This is
+intended to preserve wake-word barge-in during music without increasing peak
+DMA usage beyond the layout the wake-word front end already needs.
+
+Live music now destroys its HTTP/TLS/decoder pipeline when a conversation
+takes over, rather than retaining those buffers behind a stopped player.
+Failed streams are likewise destroyed before recreation, with bounded
+2/4/8-second retry backoff. HTTPS music exposed a separate allocation
+failure in ESP-IDF's DMA-backed AES (`esp-aes: Failed to allocate memory`).
+Disabling only AES interrupts was insufficient on S3; it still used AES-DMA.
+DMA allocations. That allocation persisted with `AES_USE_INTERRUPT=n`, so
+`CONFIG_MBEDTLS_HARDWARE_AES=n` now selects software AES instead: the same
+TLS encryption, no AES DMA buffers, and negligible CPU cost for a 128 kbps
+radio stream. Ordinary mbedTLS buffers remain in PSRAM.
 
 Stack budget matters more than usual here: the history endpoint runs on the
 `esp_http_server` task (`main/network/http_server.cc:3116`, `stack_size =

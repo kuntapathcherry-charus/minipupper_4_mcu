@@ -93,6 +93,7 @@ if(CONFIG_APP_VOICE_ENABLE)
         "voice/voice_brain.cc"
         "voice/voice_brain_text.c"
         "voice/voice_history.cc"
+        "voice/voice_phone_audio.cc"
         "voice/voice_tools.cc"
     )
 endif()

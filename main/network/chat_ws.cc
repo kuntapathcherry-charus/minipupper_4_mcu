@@ -35,6 +35,11 @@
 #include "network/http_server.h"
 #include "robot/robot.h"
 #include "lua/lua_vm.h"
+#if CONFIG_APP_VOICE_ENABLE
+#include "voice/mpx_voice_link.h"
+#include "voice/voice_glue.h"
+#include "voice/voice_phone_audio.h"
+#endif
 
 static const char *TAG = "chat_ws";
 
@@ -120,6 +125,10 @@ static constexpr size_t MAX_PWA_WS_CLIENTS = 4;
 /* ── PWA WebSocket client pool ─────────────────────────────── */
 static PwaWsClient s_pwa_clients[MAX_PWA_WS_CLIENTS] = {};
 static SemaphoreHandle_t s_pwa_mutex = nullptr;
+/* httpd_ws_send_data() is not safe to call on one socket from two tasks at
+ * once: the JSON from the agent and the PCM from the playback task would
+ * interleave inside one WebSocket frame. Every PWA send takes this first. */
+static SemaphoreHandle_t s_ws_send_mutex = nullptr;
 static httpd_handle_t s_httpd_handle = nullptr;
 static constexpr size_t REPLY_TEXT_MAX = 2048;
 
@@ -996,9 +1005,11 @@ void broadcast_to_pwa(const char *session_id, const char *json_text)
         pkt.len  = std::strlen(json_text);
         pkt.type = HTTPD_WS_TYPE_TEXT;
 
+        xSemaphoreTake(s_ws_send_mutex, portMAX_DELAY);
         esp_err_t ret = s_httpd_handle
             ? httpd_ws_send_data(s_httpd_handle, targets[t].fd, &pkt)
             : ESP_FAIL;
+        xSemaphoreGive(s_ws_send_mutex);
 
         if (ret != ESP_OK) {
             // Send failed → the client is dead.  Close its socket and free the
@@ -1021,7 +1032,6 @@ void broadcast_to_pwa(const char *session_id, const char *json_text)
 }
 
 /* ── Replies and steps to the PWA, whichever brain they come from ──────
- *
  * The PWA's frames (ChatView.svelte):
  *   {"type":"chat_reply","text","commands":[],"session_id"}       one frame
  *   {"type":"chat_reply_chunk","text","seq","total","session_id"} or several
@@ -1034,6 +1044,38 @@ void broadcast_to_pwa(const char *session_id, const char *json_text)
  * "total" slots on the first chunk it sees and backing off UTF-8
  * boundaries makes chunks uneven. mpv2-claw's http_server_mpx_chat_api.c.
  */
+/* Raw PCM to every phone. Called from the playback task once per 60 ms
+ * frame, so it must stay cheap and must not log per frame. A socket that
+ * fails is left for the text path to reap: audio frames are best effort and
+ * a dead phone must not turn into a reconnect storm from this loop. */
+static void broadcast_binary_to_pwa(const uint8_t *data, size_t len)
+{
+    if (!s_pwa_mutex || !s_httpd_handle || !data || !len) return;
+
+    int fds[MAX_PWA_WS_CLIENTS];
+    int n = 0;
+    xSemaphoreTake(s_pwa_mutex, portMAX_DELAY);
+    for (size_t i = 0; i < MAX_PWA_WS_CLIENTS; ++i) {
+        if (s_pwa_clients[i].fd >= 0) fds[n++] = s_pwa_clients[i].fd;
+    }
+    xSemaphoreGive(s_pwa_mutex);
+
+    for (int i = 0; i < n; ++i) {
+        /* Audio is disposable: rather than queue behind a slow JSON send,
+         * drop this frame for this socket. */
+        if (!s_ws_send_mutex ||
+            xSemaphoreTake(s_ws_send_mutex, pdMS_TO_TICKS(20)) != pdTRUE) {
+            continue;
+        }
+        httpd_ws_frame_t pkt{};
+        pkt.payload = const_cast<uint8_t *>(data);
+        pkt.len = len;
+        pkt.type = HTTPD_WS_TYPE_BINARY;
+        (void)httpd_ws_send_data(s_httpd_handle, fds[i], &pkt);
+        xSemaphoreGive(s_ws_send_mutex);
+    }
+}
+
 static constexpr size_t REPLY_SINGLE_MAX = 1700;   /* text bytes sent as one chat_reply */
 static constexpr size_t REPLY_CHUNK_TEXT = 1200;   /* text bytes per chat_reply_chunk */
 static constexpr size_t REPLY_FRAME_BUF  = 4096;   /* escaped text + envelope */
@@ -1415,6 +1457,11 @@ void broadcast_voice_to_pwa(const char *json_text)
     if (json_text) broadcast_to_pwa(nullptr, json_text);
 }
 
+void broadcast_voice_binary_to_pwa(const uint8_t *data, size_t len)
+{
+    broadcast_binary_to_pwa(data, len);
+}
+
 bool init_chat_pipeline()
 {
     // Bind the local agent before allocating any optional chat-pipeline
@@ -1433,6 +1480,13 @@ bool init_chat_pipeline()
     s_pwa_mutex = xSemaphoreCreateMutex();
     if (!s_pwa_mutex) {
         ESP_LOGE(TAG, "Failed to create PWA mutex");
+        return false;
+    }
+
+    // ── Serialise sends on the PWA sockets ─────────────────────
+    s_ws_send_mutex = xSemaphoreCreateMutex();
+    if (!s_ws_send_mutex) {
+        ESP_LOGE(TAG, "Failed to create WebSocket send mutex");
         return false;
     }
 
@@ -1795,6 +1849,18 @@ esp_err_t chat_ws_handler(httpd_req_t *req)
     }
     buf[buf_size] = 0;  // null-terminate
 
+    /* Raw PCM16 mono 16 kHz from the phone microphone. Handled before the
+     * client lookup: audio frames carry no session and must not wait on the
+     * text path. */
+    if (ws_pkt.type == HTTPD_WS_TYPE_BINARY) {
+#if CONFIG_APP_VOICE_ENABLE && CONFIG_APP_VOICE_PHONE_AUDIO
+        if (mpx_phone_audio_mic_enabled() && buf_size >= 2 && (buf_size & 1u) == 0) {
+            mpx_phone_audio_push(reinterpret_cast<const int16_t *>(buf), buf_size / 2);
+        }
+#endif
+        return ESP_OK;
+    }
+
     // Store the client pointer by looking up the req handle
     PwaWsClient *client = nullptr;
     if (s_pwa_mutex) {
@@ -1879,6 +1945,71 @@ esp_err_t chat_ws_handler(httpd_req_t *req)
             }
             client->session_id[s_idx] = 0;
         }
+
+#if CONFIG_APP_VOICE_ENABLE
+        if (std::strstr(input, "\"phone_audio\"")) {
+#if !CONFIG_APP_VOICE_PHONE_AUDIO
+            static const char ack[] =
+                R"({"type":"phone_audio","ok":false,"error":"phone audio disabled at build time"})";
+            httpd_ws_frame_t pkt{};
+            pkt.payload = reinterpret_cast<uint8_t *>(const_cast<char *>(ack));
+            pkt.len = sizeof(ack) - 1;
+            pkt.type = HTTPD_WS_TYPE_TEXT;
+            if (s_ws_send_mutex) xSemaphoreTake(s_ws_send_mutex, portMAX_DELAY);
+            httpd_ws_send_frame(req, &pkt);
+            if (s_ws_send_mutex) xSemaphoreGive(s_ws_send_mutex);
+            return ESP_OK;
+#else
+            const bool mic = std::strstr(input, "\"mic\":true") != nullptr;
+            const bool speaker = std::strstr(input, "\"speaker\":true") != nullptr;
+            mpx_phone_audio_set_enabled(mic, speaker);
+            const char *problem = nullptr;
+            if (mic) {
+                if (mpx_voice_stream_is_playing()) {
+                    mpx_voice_stream_abort_playback();
+                    mpx_phone_audio_stop_playback();
+                }
+                esp_err_t err = ESP_OK;
+                if (mpx_voice_talk_active()) {
+                    /* A robot-mic turn may already be running. Move that
+                     * turn to the phone instead of letting its ring fill. */
+                    err = mpx_voice_talk_use_phone();
+                } else {
+                    /* Go through the hands-free loop: it owns connecting,
+                     * provisioning and follow-up turns, and starts this turn
+                     * off the phone ring because the mic flag is already set. */
+                    err = voice_glue::wake_now();
+                }
+                if (err != ESP_OK) {
+                    problem = (err == ESP_ERR_INVALID_STATE)
+                        ? "voice is off or not ready -- enable it in AI & Voice settings"
+                        : esp_err_to_name(err);
+                    /* No phone consumer started, so stop claiming the mic. */
+                    mpx_phone_audio_set_enabled(false, speaker);
+                }
+            } else if (mpx_voice_talk_active()) {
+                mpx_voice_talk_stop();
+            }
+            char ack[192];
+            const int n = problem
+                ? std::snprintf(ack, sizeof(ack),
+                    R"({"type":"phone_audio","ok":false,"error":"%s"})", problem)
+                : std::snprintf(ack, sizeof(ack),
+                    R"({"type":"phone_audio","ok":true,"mic":%s,"speaker":%s})",
+                    mic ? "true" : "false", speaker ? "true" : "false");
+            if (n > 0 && static_cast<size_t>(n) < sizeof(ack)) {
+                httpd_ws_frame_t pkt{};
+                pkt.payload = reinterpret_cast<uint8_t *>(ack);
+                pkt.len = n;
+                pkt.type = HTTPD_WS_TYPE_TEXT;
+                if (s_ws_send_mutex) xSemaphoreTake(s_ws_send_mutex, portMAX_DELAY);
+                httpd_ws_send_frame(req, &pkt);
+                if (s_ws_send_mutex) xSemaphoreGive(s_ws_send_mutex);
+            }
+#endif  /* CONFIG_APP_VOICE_PHONE_AUDIO */
+            return ESP_OK;
+        }
+#endif
 
         // Which brain this conversation uses: "brain":"local" is the
         // on-device agent; anything else (including an older PWA that sends

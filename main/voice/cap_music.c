@@ -464,7 +464,12 @@ static void music_task(void *arg)
             if (s_started && !s_held) {
                 s_hold_output = true;
                 if (s_live) {
+                    /* stop() leaves the HTTP/TLS/decoder pipeline allocated.
+                     * A live station has no position worth preserving, so
+                     * destroy it and return that memory to voice/agent use. */
                     player_halt();
+                    player_destroy();
+                    s_started = false;
                 } else {
                     (void)esp_audio_simple_player_pause(s_asp);
                 }
@@ -520,13 +525,20 @@ static void music_task(void *arg)
             }
             s_retries++;
             player_halt();
+            /* A failed pipeline retains dead TLS/decoder state and its heap
+             * buffers. Recreate it on retry instead of stacking new state on
+             * top of the same failed player. */
+            player_destroy();
+            s_started = false;
             s_state = ESP_ASP_STATE_NONE;
             if (s_station >= 0) {
                 s_server ^= 1;          /* the other SomaFM server */
                 station_url(&s_stations[s_station], s_server, s_url, sizeof(s_url));
             }
-            s_retry_at = now + 2000000;
-            ESP_LOGW(TAG, "stream dropped -- retry %d/%d in 2 s", s_retries, MUSIC_RETRIES);
+            const uint32_t backoff_ms = 2000u << (s_retries - 1);
+            s_retry_at = now + (int64_t)backoff_ms * 1000;
+            ESP_LOGW(TAG, "stream dropped -- retry %d/%d in %lu s",
+                     s_retries, MUSIC_RETRIES, (unsigned long)(backoff_ms / 1000));
         } else if (s_state == ESP_ASP_STATE_RUNNING) {
             s_retries = 0;
         }

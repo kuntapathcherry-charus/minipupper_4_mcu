@@ -673,6 +673,19 @@ config APP_VOICE_BRAIN_LOCAL
         speaks, while ESP-Claw answers with its own tools and conversation
         memory. Off keeps the server's model and the MCP tool bridge.
 
+config APP_VOICE_PHONE_AUDIO
+    bool "Developer: route voice microphone/speaker through the PWA device"
+    default n
+    help
+        Experimental development bridge: the phone/browser supplies 16 kHz
+        PCM microphone audio and plays decoded TTS PCM over the chat
+        WebSocket. The robot still owns Opus, gateway STT/TTS and the agent.
+
+        Leave off for end-user images. Browsers require a secure context for
+        microphone capture (HTTPS, localhost, or an explicit insecure-origin
+        developer exception), and enabling this exposes phone-audio controls
+        in the PWA. Disabled builds omit the PCM ring and reject the control.
+
 config APP_VOICE_CONV_IDLE_HOURS
     int "Roll the voice conversation after this many idle hours"
     range 1 168

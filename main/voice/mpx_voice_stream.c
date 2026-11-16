@@ -45,6 +45,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "mpx_audio.h"
+#include "voice/voice_phone_audio.h"
 
 static const char *TAG = "mpx_voice_stream";
 
@@ -77,10 +78,15 @@ static const char *TAG = "mpx_voice_stream";
 /* Frames (60 ms each) to have in hand before a reply starts playing. */
 #define VOICE_STREAM_PREBUFFER   7
 
-/* What cap_display's ES7210 recording has been validated with all through
- * Phase 1 (see mpx_audio_cmd.c's `audio rec` defaults) -- 2 channels, pick
- * channel 0. Reusing known-good numbers rather than picking new ones. */
-#define TALK_CAPTURE_CHANNELS  2
+/* Keep the voice talk capture in the same four-channel / 32-bit-slot layout
+ * as the wake-word front end. The paired I2S DMA rings stay allocated after
+ * capture_stop(), but a two-channel open shrinks them to 16-bit slots; the
+ * next wake-word open then has to find twelve fresh 1920-byte DMA buffers.
+ * Once music, TLS and the agent have fragmented internal RAM that fails even
+ * with enough total bytes free. Reading all four channels and selecting the
+ * same microphone costs a little PSRAM scratch bandwidth, but avoids the
+ * reallocations and keeps barge-in available while music plays. */
+#define TALK_CAPTURE_CHANNELS  4
 #define TALK_CAPTURE_PICK      0
 
 typedef struct {
@@ -95,6 +101,7 @@ static bool s_stream_ready;
 static volatile bool s_talk_active;
 static volatile bool s_talk_stop_requested;
 static volatile bool s_talk_auto;        /* this talk is listen-mode "auto" */
+static volatile bool s_talk_phone;       /* capture comes from the PWA, not I2S */
 static volatile bool s_server_turn;      /* the server answered -- stop streaming */
 static volatile uint32_t s_tts_stops;    /* replies finished, see the header */
 static volatile bool s_stop_pending;     /* a "tts stop" arrived; close once the queue drains */
@@ -230,6 +237,10 @@ void mpx_voice_stream_abort_playback(void)
     s_stop_pending = true;
     const voice_rx_frame_t sentinel = { .data = NULL, .len = 0 };
     (void)xQueueSend(s_rx_queue, &sentinel, 0);
+    /* The phone buffers its own playback ahead of real time, so resetting the
+     * robot queue alone would leave the first words of the old reply playing
+     * from the phone after a barge-in. */
+    if (mpx_phone_audio_speaker_enabled()) mpx_phone_audio_stop_playback();
 }
 
 static void playback_task(void *arg)
@@ -243,6 +254,9 @@ static void playback_task(void *arg)
             /* Nothing queued. If a "tts stop" has arrived, the reply is
              * over whether or not its sentinel made it into the queue. */
             if (s_stop_pending && s_playback_open) {
+                /* Always stop I2S, even when the phone was the speaker: it
+                 * may have been left open by a turn that started on the robot
+                 * and ended on the phone. */
                 mpx_audio_output_stop();
                 s_playback_open = false;
             }
@@ -276,7 +290,9 @@ static void playback_task(void *arg)
              * internet a 180 ms cushion still ran dry mid-word now and then,
              * and a sound cut off mid-wave is a click -- crackle. The server
              * sends a 1.2 s head start, so this fills at once. */
-            for (int i = 0; i < 32 && uxQueueMessagesWaiting(s_rx_queue) < VOICE_STREAM_PREBUFFER; i++) {
+            const bool phone_out = mpx_phone_audio_speaker_enabled();
+            const int prebuffer = phone_out ? 2 : VOICE_STREAM_PREBUFFER;
+            for (int i = 0; i < 32 && uxQueueMessagesWaiting(s_rx_queue) < prebuffer; i++) {
                 vTaskDelay(pdMS_TO_TICKS(25));
             }
             /* MPX_VOICE_PLAYBACK_RATE, not mpx_voice_downlink_rate(): the
@@ -284,7 +300,12 @@ static void playback_task(void *arg)
              * so this is what the PCM actually is -- and it is the only rate
              * the I2S peripheral will accept while the wake-word front end
              * holds the microphone open (see the header for the full story). */
-            if (mpx_audio_output_start(MPX_VOICE_PLAYBACK_RATE) == ESP_OK) {
+            if (phone_out) {
+                /* No I2S: the phone plays the PCM this task forwards below.
+                 * Its own AudioContext handles buffering, so the same
+                 * prebuffer is kept only to absorb the server's burst. */
+                s_playback_open = true;
+            } else if (mpx_audio_output_start(MPX_VOICE_PLAYBACK_RATE) == ESP_OK) {
                 s_playback_open = true;
             } else {
                 ESP_LOGW(TAG, "cannot open speaker for playback");
@@ -294,7 +315,11 @@ static void playback_task(void *arg)
         if (s_playback_open) {
             const int n = mpx_voice_decode(frame.data, frame.len, pcm, MPX_VOICE_DOWNLINK_FRAME);
             if (n > 0) {
-                (void)mpx_audio_output_write(pcm, (size_t)n);
+                if (mpx_phone_audio_speaker_enabled()) {
+                    mpx_phone_audio_play(pcm, (size_t)n);
+                } else {
+                    (void)mpx_audio_output_write(pcm, (size_t)n);
+                }
             } else if (n < 0) {
                 ESP_LOGW(TAG, "decode failed: %d", n);
             }
@@ -334,19 +359,24 @@ static void talk_task(void *arg)
 {
     const uint32_t max_seconds = (uint32_t)(uintptr_t)arg;
     const uint32_t max_frames = max_seconds ? (max_seconds * 1000u / MPX_VOICE_FRAME_MS) : 0;
+    bool phone = s_talk_phone;
     int16_t pcm[MPX_VOICE_UPLINK_FRAME];
     uint8_t packet[MPX_VOICE_PACKET_MAX];
     uint32_t frames_sent = 0;
 
-    const esp_err_t open_err = mpx_audio_capture_start(MPX_VOICE_UPLINK_RATE,
-                                                        TALK_CAPTURE_CHANNELS,
-                                                        TALK_CAPTURE_PICK);
-    if (open_err != ESP_OK) {
-        ESP_LOGE(TAG, "capture start failed: %s", esp_err_to_name(open_err));
-        s_talk_active = false;
-        xSemaphoreGive(s_talk_done);
-        vTaskDeleteWithCaps(NULL);
-        return;
+    if (!phone) {
+        const esp_err_t open_err = mpx_audio_capture_start(MPX_VOICE_UPLINK_RATE,
+                                                            TALK_CAPTURE_CHANNELS,
+                                                            TALK_CAPTURE_PICK);
+        if (open_err != ESP_OK) {
+            ESP_LOGE(TAG, "capture start failed: %s", esp_err_to_name(open_err));
+            s_talk_active = false;
+            xSemaphoreGive(s_talk_done);
+            vTaskDeleteWithCaps(NULL);
+            return;
+        }
+    } else {
+        mpx_phone_audio_set_streaming(true);
     }
 
     const bool auto_mode = s_talk_auto;
@@ -359,7 +389,35 @@ static void talk_task(void *arg)
     while (!s_talk_stop_requested &&
            !(auto_mode && s_server_turn) &&
            (max_frames == 0 || frames_sent < max_frames)) {
-        if (mpx_audio_capture_read(pcm, MPX_VOICE_UPLINK_FRAME) != ESP_OK) {
+        const bool want_phone = s_talk_phone && mpx_phone_audio_mic_enabled();
+        if (want_phone != phone) {
+            /* The PWA toggle may arrive after this task opened I2S. Move the
+             * live turn rather than filling a phone ring nobody reads. */
+            if (phone) mpx_phone_audio_set_streaming(false);
+            else mpx_audio_capture_stop();
+            phone = want_phone;
+            if (phone) {
+                mpx_phone_audio_set_streaming(true);
+                ESP_LOGI(TAG, "live turn switched to phone microphone");
+            } else {
+                const esp_err_t open_err = mpx_audio_capture_start(
+                    MPX_VOICE_UPLINK_RATE, TALK_CAPTURE_CHANNELS, TALK_CAPTURE_PICK);
+                if (open_err != ESP_OK) {
+                    ESP_LOGE(TAG, "robot microphone restart failed: %s",
+                             esp_err_to_name(open_err));
+                    break;
+                }
+                ESP_LOGI(TAG, "live turn switched to robot microphone");
+            }
+        }
+        if (phone) {
+            /* Timeout, not failure: the phone may simply not have sent the
+             * next 60 ms yet, and a short read is padded by the ring's
+             * staging buffer instead of truncated mid-frame. */
+            if (mpx_phone_audio_read(pcm, MPX_VOICE_UPLINK_FRAME, 200) == 0) {
+                continue;
+            }
+        } else if (mpx_audio_capture_read(pcm, MPX_VOICE_UPLINK_FRAME) != ESP_OK) {
             ESP_LOGW(TAG, "capture read failed -- stopping");
             break;
         }
@@ -373,7 +431,11 @@ static void talk_task(void *arg)
         frames_sent++;
     }
 
-    mpx_audio_capture_stop();
+    if (phone) {
+        mpx_phone_audio_set_streaming(false);
+    } else {
+        mpx_audio_capture_stop();
+    }
     /* In auto mode the server has already decided the utterance is over by
      * the time it answers; telling it "stop" on top of that is at best
      * redundant and on some servers cancels the reply it is producing. Only
@@ -390,17 +452,19 @@ static void talk_task(void *arg)
     vTaskDeleteWithCaps(NULL);
 }
 
-static esp_err_t talk_start_common(uint32_t max_seconds, bool auto_mode)
+static esp_err_t talk_start_common(uint32_t max_seconds, bool auto_mode, bool phone)
 {
     ESP_RETURN_ON_FALSE(mpx_voice_state() == MPX_VOICE_READY, ESP_ERR_INVALID_STATE, TAG,
                         "not connected -- run `voice connect` first");
     ESP_RETURN_ON_FALSE(!s_talk_active, ESP_ERR_INVALID_STATE, TAG, "already talking");
+    ESP_RETURN_ON_FALSE(!phone || mpx_phone_audio_mic_enabled(), ESP_ERR_INVALID_STATE, TAG,
+                        "phone microphone is not enabled");
     /* The microphone is a single hardware stream (see mpx_audio_capture_active()'s
      * doc comment) -- if mpx_voice_wake's `wake start` already has it open,
      * talk_task's own capture_start() below would not fail, it would just
      * silently interleave reads with wake's, which is worse than an error
      * here. */
-    ESP_RETURN_ON_FALSE(!mpx_audio_capture_active(), ESP_ERR_INVALID_STATE, TAG,
+    ESP_RETURN_ON_FALSE(phone || !mpx_audio_capture_active(), ESP_ERR_INVALID_STATE, TAG,
                         "microphone busy -- stop `wake` first (`wake stop`)");
     ESP_RETURN_ON_ERROR(mpx_voice_stream_init(), TAG, "stream init failed");
 
@@ -422,6 +486,7 @@ static esp_err_t talk_start_common(uint32_t max_seconds, bool auto_mode)
 
     s_talk_stop_requested = false;
     s_talk_auto = auto_mode;
+    s_talk_phone = phone;
     s_server_turn = false;
     s_talk_active = true;
 
@@ -444,12 +509,29 @@ static esp_err_t talk_start_common(uint32_t max_seconds, bool auto_mode)
 
 esp_err_t mpx_voice_talk_start(uint32_t max_seconds)
 {
-    return talk_start_common(max_seconds, false);
+    return talk_start_common(max_seconds, false, false);
 }
 
 esp_err_t mpx_voice_talk_start_auto(uint32_t max_seconds)
 {
-    return talk_start_common(max_seconds, true);
+    return talk_start_common(max_seconds, true, false);
+}
+
+esp_err_t mpx_voice_talk_start_phone(uint32_t max_seconds)
+{
+    /* Same auto listen mode as a wake-word turn: the gateway's VAD decides
+     * when the phone user stopped talking. */
+    return talk_start_common(max_seconds, true, true);
+}
+
+esp_err_t mpx_voice_talk_use_phone(void)
+{
+    ESP_RETURN_ON_FALSE(s_talk_active, ESP_ERR_INVALID_STATE, TAG, "no active turn");
+    ESP_RETURN_ON_FALSE(mpx_phone_audio_mic_enabled(), ESP_ERR_INVALID_STATE, TAG,
+                        "phone microphone is not enabled");
+    /* talk_task performs the I2S/ring handoff on its next 60 ms iteration. */
+    s_talk_phone = true;
+    return ESP_OK;
 }
 
 esp_err_t mpx_voice_talk_wait(uint32_t timeout_ms)
