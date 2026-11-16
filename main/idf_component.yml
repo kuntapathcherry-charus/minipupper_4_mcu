@@ -88,6 +88,12 @@ dependencies:
   ##   cap_im_local  the "web" chat channel the PWA's chat is bridged to.
   ##   claw_event_router  its header, for the stack-size override in
   ##                 main/agent/claw_overrides.c.
+  ##   claw_memory   claw_memory_delete_session_history(): the voice panel's
+  ##                 "clear this conversation's context" (agent_runtime.cc).
+  ##                 app_claw only brings it in under its own
+  ##                 `$CONFIG{APP_CLAW_CAP_MEMORY} == True` rule, which is
+  ##                 false on a fresh configure pass, so main's REQUIRES has
+  ##                 to be satisfied by this manifest instead.
   ## Declared unconditionally, like the voice stack above: `rules:` are
   ## evaluated from sdkconfig.json, which the first configure pass does not
   ## have, and main's REQUIRES names them.
@@ -103,3 +109,5 @@ dependencies:
     path: ../third-party/esp-claw/components/claw_capabilities/cap_im_local
   claw_event_router:
     path: ../third-party/esp-claw/components/claw_modules/claw_event_router
+  claw_memory:
+    path: ../third-party/esp-claw/components/claw_modules/claw_memory
