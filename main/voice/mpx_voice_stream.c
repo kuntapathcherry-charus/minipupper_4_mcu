@@ -83,11 +83,18 @@ static const char *TAG = "mpx_voice_stream";
  * capture_stop(), but a two-channel open shrinks them to 16-bit slots; the
  * next wake-word open then has to find twelve fresh 1920-byte DMA buffers.
  * Once music, TLS and the agent have fragmented internal RAM that fails even
- * with enough total bytes free. Reading all four channels and selecting the
- * same microphone costs a little PSRAM scratch bandwidth, but avoids the
- * reallocations and keeps barge-in available while music plays. */
+ * with enough total bytes free. Reading all four channels costs a little PSRAM
+ * scratch bandwidth, but avoids the reallocations and keeps barge-in available
+ * while music plays.
+ *
+ * Pick slot 1, the microphone in the wake front end's measured "RMNN" layout.
+ * Slot 0 is the amplifier's echo reference, not a microphone: selecting it
+ * produces valid Opus frames containing almost no speech, so the server VAD
+ * times out without an STT result even though the wake word works. The older
+ * two-channel talk capture used slot 0 for its microphone; that numbering does
+ * not carry over to this four-channel layout. See WAKE_FORMAT_4CH. */
 #define TALK_CAPTURE_CHANNELS  4
-#define TALK_CAPTURE_PICK      0
+#define TALK_CAPTURE_PICK      1
 
 typedef struct {
     uint8_t *data;  /* NULL is the "tts finished" sentinel */

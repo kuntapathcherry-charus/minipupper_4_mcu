@@ -17,7 +17,6 @@
   import {
     saveConversation,
     getConversation,
-    listConversations,
     generateUUID,
     BRAINS,
     normalizeBrain,
@@ -97,34 +96,6 @@
   let phoneAudioAvailable = $state(false);
   const phoneAudioSupported = PhoneAudio.supported;
 
-  /* Surface only the newest robot-owned voice transcript beside the composer.
-   * Older conversations remain in History; a row of chips made the chat header
-   * busy without showing enough of the conversation to be useful. */
-  let latestVoice = $derived.by(() => {
-    sidebarRefreshKey;  /* the store is not reactive; this is the tick */
-    return listConversations().find((c) => c.source === "voice") || null;
-  });
-  let latestVoiceLive = $derived(
-    voiceState.state !== "idle" &&
-      (!latestVoice || !voiceState.id || voiceState.id === latestVoice.id),
-  );
-
-  function voiceTitle(convo) {
-    const first = (convo.messages || []).find((m) => m.role === "user");
-    return (first?.text || convo.title || "Voice chat").trim();
-  }
-
-  function voiceWhen(convo) {
-    const ts = convo.updatedAt || convo.createdAt;
-    if (!ts) return "";
-    const d = new Date(ts);
-    const now = new Date();
-    const sameDay = d.toDateString() === now.toDateString();
-    return sameDay
-      ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      : d.toLocaleDateString([], { month: "short", day: "numeric" });
-  }
-
   // ── Brain: who answers this conversation ───
   // "cloud" (OpenClaw, relayed by the robot) or "local" (ESP-Claw's agent
   // on the robot). Chosen before the first message and fixed from then on:
@@ -132,6 +103,12 @@
   // conversation switching sides would lose its own past. The toggle in
   // the action bar is therefore live only while the conversation is empty;
   // a new conversation starts with the last choice made on this device.
+  /**
+   * @deprecated Cloud chat selection is deprecated and its tab is hidden.
+   * Keep the button, relay protocol and stored-conversation support for now;
+   * this flag only controls whether the deprecated tab is rendered.
+   */
+  const SHOW_DEPRECATED_CLOUD_TAB = false;
   let brain = $state(getPreferredBrain());
   let brainLocked = $derived(messages.length > 0);
   // What the robot offers: fetched from /v1/ai. Until it answers, both are
@@ -265,7 +242,9 @@
 
   function findPrevTimestampMsg(msgs, fromIdx) {
     for (let i = fromIdx; i >= 0; i--) {
-      if (getMsgTs(msgs[i])) return msgs[i];
+      // Agent step ts is device uptime, not wall-clock time. Comparing it with
+      // a reply's epoch timestamp made every reply look like a new day.
+      if (msgs[i].role !== "step" && getMsgTs(msgs[i])) return msgs[i];
     }
     return msgs[fromIdx];
   }
@@ -310,7 +289,7 @@
 
   // ── Conversation actions ──────────────────
   function openVoicePanel(id = null) {
-    voicePanelId = id || (voiceState.id?.startsWith("voice-") ? voiceState.id : latestVoice?.id || null);
+    voicePanelId = id || (voiceState.id?.startsWith("voice-") ? voiceState.id : null);
     voiceWakeError = "";
     showVoicePanel = true;
   }
@@ -1008,11 +987,12 @@
       <div
         class="seg"
         class:locked={brainLocked}
+        class:single={!SHOW_DEPRECATED_CLOUD_TAB}
         role="radiogroup"
         aria-label="Who answers this conversation"
         title={brainLocked
           ? `This conversation is with ${brainLabel(brain)}. Start a new one to change.`
-          : "Who answers the next message: Pupper (the robot's own agent) or the Cloud"}
+          : "Pupper, the robot's own agent, answers the next message"}
       >
         <button
           type="button"
@@ -1035,23 +1015,25 @@
           {/if}
           <span>Pupper</span>
         </button>
-        <button
-          type="button"
-          class:on={brain === BRAINS.CLOUD}
-          role="radio"
-          aria-checked={brain === BRAINS.CLOUD}
-          disabled={brainLocked}
-          onclick={() => setBrain(BRAINS.CLOUD)}
-        >
-          {#if brainLocked && brain === BRAINS.CLOUD}
-            {@render lockIcon()}
-          {:else}
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M7 18a4 4 0 0 1-.6-7.95A6 6 0 0 1 18 9.5a3.5 3.5 0 0 1 .5 7H7z"/>
-            </svg>
-          {/if}
-          <span>Cloud</span>
-        </button>
+        {#if SHOW_DEPRECATED_CLOUD_TAB}
+          <button
+            type="button"
+            class:on={brain === BRAINS.CLOUD}
+            role="radio"
+            aria-checked={brain === BRAINS.CLOUD}
+            disabled={brainLocked}
+            onclick={() => setBrain(BRAINS.CLOUD)}
+          >
+            {#if brainLocked && brain === BRAINS.CLOUD}
+              {@render lockIcon()}
+            {:else}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M7 18a4 4 0 0 1-.6-7.95A6 6 0 0 1 18 9.5a3.5 3.5 0 0 1 .5 7H7z"/>
+              </svg>
+            {/if}
+            <span>Cloud</span>
+          </button>
+        {/if}
       </div>
 
       <button
@@ -1110,28 +1092,7 @@
 
     <!-- Input bar -->
     <div class="input-bar">
-      {#if latestVoice || voiceState.state !== "idle"}
-        <button
-          type="button"
-          class="voice-chip"
-          class:live={latestVoiceLive}
-          aria-label={latestVoice ? "Open latest voice conversation" : "Open voice conversation in progress"}
-          title={latestVoice ? `Open voice conversation (${voiceWhen(latestVoice)})` : "Voice conversation in progress"}
-          onclick={() => openVoicePanel(latestVoice?.id || null)}
-        >
-          <span class="voice-chip-icon" aria-hidden="true">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="9" y="3" width="6" height="11" rx="3"/>
-              <path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>
-            </svg>
-          </span>
-          {#if latestVoiceLive}<span class="voice-dot" aria-hidden="true"></span>{/if}
-          <span class="voice-chip-title">
-            {latestVoice ? (latestVoiceLive ? `${voiceState.state} · ${voiceTitle(latestVoice)}` : voiceTitle(latestVoice)) : "Listening now…"}
-          </span>
-          <span class="voice-chip-when">{latestVoice ? voiceWhen(latestVoice) : "Now"}</span>
-        </button>
-      {/if}
+
       {#if voiceWakeError && !showVoicePanel}
         <div class="voice-wake-error" role="alert">{voiceWakeError}</div>
       {/if}
@@ -1195,61 +1156,6 @@
 </div>
 
 <style>
-  /* Newest voice transcript as a compact chip, not a banner: one line, so the
-   * transcript above stays the focus. Older transcripts live in History. */
-  .voice-chip {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    width: fit-content;
-    max-width: calc(var(--page-max) - 32px);
-    margin: 0 auto 8px;
-    padding: 4px 10px 4px 8px;
-    border: 1px solid var(--hair);
-    border-radius: 999px;
-    background: var(--panel, var(--page));
-    color: var(--sub);
-    font: inherit;
-    font-size: 12px;
-    cursor: pointer;
-  }
-
-  .voice-chip:hover { border-color: var(--sub); color: var(--ink); }
-  .voice-chip:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
-  .voice-chip.live { border-color: var(--accent, var(--sub)); color: var(--ink); }
-
-  .voice-chip-icon { display: grid; place-items: center; flex: 0 0 auto; }
-
-  .voice-chip-title {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--ink);
-    font-weight: 650;
-  }
-
-  .voice-chip-when {
-    flex: 0 0 auto;
-    color: var(--sub);
-    font-size: 11px;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .voice-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: currentColor;
-    flex: 0 0 auto;
-    animation: voice-pulse 1.2s ease-in-out infinite;
-  }
-
-  @keyframes voice-pulse {
-    0%, 100% { opacity: 0.25; }
-    50% { opacity: 1; }
-  }
-
   .chat-root {
     display: flex;
     flex: 1;
@@ -1329,6 +1235,7 @@
     border-radius: 16px;
     background: var(--hair);
   }
+  .seg.single { grid-template-columns: 1fr; }
   .seg button {
     height: 36px;
     border: none;
