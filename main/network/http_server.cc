@@ -1783,8 +1783,8 @@ static esp_err_t api_robot_diag_sweep(httpd_req_t *req)
  *
  * A skill calls mpx_trace("knee_err", v); this drains those samples so a
  * client can plot them. Sequence-numbered and polled over plain HTTP rather
- * than pushed down a held socket, because httpd runs with max_open_sockets=5
- * plus lru_purge_enable and a pinned trace socket would starve the PWA.
+ * than pushed down a held socket, because httpd session capacity is bounded
+ * and lru_purge_enable means a pinned trace socket could starve the PWA.
  *
  * Read-only, so it is not behind any write gate.
  */
@@ -2933,7 +2933,7 @@ static esp_err_t api_marketplace_proxy(httpd_req_t *req)
     bool ok = false;
     std::string resp_body = gateway_request(method_str, target_path.c_str(), body, ok);
 
-    ESP_LOGI(TAG, "Marketplace proxy [socketfix-v14]: %s %s → %s (ok=%d, body=%zu bytes)",
+    ESP_LOGI(TAG, "Marketplace proxy [socketfix-v15]: %s %s → %s (ok=%d, body=%zu bytes)",
              method_str, uri, target_path.c_str(), ok, resp_body.size());
 
     // Cache successful GET responses so repeated polls don't re-proxy.
@@ -2964,12 +2964,9 @@ static esp_err_t api_marketplace_proxy(httpd_req_t *req)
 }
 
 /* ── Dead-connection reaper ──────────────────────────────────────
- * The socket census proved the pool was exhausted by DEAD browser
- * connections on port 80 (peer=0.0.0.0) that httpd never freed.  This task
- * periodically peeks every port-80 socket; if the peer has closed (recv
- * returns 0 / the socket is no longer connected), it asks httpd to close that
- * session.  Using httpd_sess_trigger_close (not a raw close) keeps it safe —
- * httpd owns the actual close and ignores fds that aren't its sessions.
+ * Only httpd may classify and close its sessions.  In particular, never raw-
+ * close an apparently unlisted port-80 socket: another subsystem may own it,
+ * and lwIP can reuse the fd for a new connection before the close executes.
  */
 #ifndef LWIP_SOCKET_OFFSET
 #define LWIP_SOCKET_OFFSET 0
@@ -3003,87 +3000,80 @@ static int socket_census(const int *httpd_fds, size_t n_httpd, bool print)
     return count;
 }
 
+struct SocketReaperWork {
+    httpd_handle_t server;
+    SemaphoreHandle_t done;
+    int fds[CONFIG_LWIP_MAX_SOCKETS];
+    size_t count;
+};
+
+/* Runs on the httpd task.  httpd_get_client_list() has no locking of its own,
+ * so calling it from the reaper task raced accept/delete and could probe an fd
+ * after lwIP had reused it.  Session-table access and classification now stay
+ * in one server-context callback; the queued closes preserve that ordering. */
+static void socket_reaper_work(void *arg)
+{
+    auto *work = static_cast<SocketReaperWork *>(arg);
+    work->count = sizeof(work->fds) / sizeof(work->fds[0]);
+    if (httpd_get_client_list(work->server, &work->count, work->fds) != ESP_OK) {
+        work->count = 0;
+        xSemaphoreGive(work->done);
+        return;
+    }
+
+    int reaped = 0;
+    for (size_t i = 0; i < work->count; ++i) {
+        const int fd = work->fds[i];
+        char probe;
+        const int r = recv(fd, &probe, 1, MSG_PEEK | MSG_DONTWAIT);
+        const int error = r < 0 ? errno : 0;
+        // Be conservative: transient/resource errors are not proof of death.
+        // A readable EOF or one of these transport errors is definitive.
+        const bool dead = (r == 0) ||
+            (r < 0 && (error == ECONNRESET || error == ECONNABORTED ||
+                       error == ENOTCONN || error == ESHUTDOWN ||
+                       error == ETIMEDOUT));
+        if (dead && httpd_sess_trigger_close(work->server, fd) == ESP_OK) reaped++;
+    }
+    if (reaped) {
+        ESP_LOGW(TAG, "socket_reaper: queued %d dead web connection(s) for close", reaped);
+    }
+    xSemaphoreGive(work->done);
+}
+
+/* ESP-IDF calls a custom close_fn INSTEAD of its normal close().  Release PWA
+ * bookkeeping first, then always close the real socket, including plain HTTP
+ * sessions and the early-boot case where the PWA mutex does not exist yet. */
+static void close_http_session(httpd_handle_t hd, int sockfd)
+{
+    pwa_release_fd(hd, sockfd);
+    close(sockfd);
+}
+
 static void socket_reaper_task(void *)
 {
-    // Only httpd's own client sessions, and only through httpd. The version before this one
-    // close()d raw fds - port-80 sockets httpd still had in its session table, and any socket whose
-    // getsockname() failed, whoever owned it. httpd then select()ed on a closed fd ("error in
-    // select (9)", "Closing invalid socket -1"), and once lwIP reused the number for a new
-    // connection, httpd closed or answered the wrong socket: the app "could not reach the robot"
-    // after a run (21 Oct). httpd_sess_trigger_close() queues the close on httpd's own task.
-    static int fds[CONFIG_LWIP_MAX_SOCKETS];
+    static SocketReaperWork work{};
+    static StaticSemaphore_t done_storage;
+    static SemaphoreHandle_t done = xSemaphoreCreateBinaryStatic(&done_storage);
+
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(4000));
         if (!s_server) continue;
 
-        size_t n = sizeof(fds) / sizeof(fds[0]);
-        if (httpd_get_client_list(s_server, &n, fds) != ESP_OK) continue;
-        int reaped = 0;
-        for (size_t i = 0; i < n; ++i) {
-            const int fd = fds[i];
-            // Peek one byte, non-blocking: 0 = the peer closed (EOF); a hard error other than
-            // "would block" = the link is dead. A live idle client returns EWOULDBLOCK.
-            char probe;
-            const int r = recv(fd, &probe, 1, MSG_PEEK | MSG_DONTWAIT);
-            const bool dead = (r == 0) || (r < 0 && errno != EWOULDBLOCK && errno != EAGAIN);
-            if (dead && httpd_sess_trigger_close(s_server, fd) == ESP_OK) reaped++;
-        }
-        if (reaped) {
-            ESP_LOGW(TAG, "socket_reaper: closed %d dead web connection(s)", reaped);
-        }
-
-        // Orphans: a web (port 80) TCP socket httpd no longer has in its session table, or one whose
-        // connection is gone entirely (no local address), that nobody will ever close. The census of
-        // 14 Oct found the pool full of these; the 21 Oct version of this task stopped closing them
-        // (it had also closed sockets httpd still used), so they piled up until accept() failed with
-        // ENFILE ("error in accept (23)") and the app could not reach the robot (23 Oct).
-        // Safe by construction: never a socket httpd lists, never the listening socket (and not at all
-        // when lwIP cannot say whether it listens), and only once seen orphaned in consecutive scans
-        // 4 s apart - 2 for a port-80 socket (a connection httpd has just accepted is filed within
-        // milliseconds), 3 for one with no address at all (another task's dead link: it closes its own
-        // well within 8 s).
-        static uint8_t orphan_seen[CONFIG_LWIP_MAX_SOCKETS];
-        int orphans = 0;
-        for (int fd = LWIP_SOCKET_OFFSET; fd < LWIP_SOCKET_OFFSET + CONFIG_LWIP_MAX_SOCKETS; ++fd) {
-            const int k = fd - LWIP_SOCKET_OFFSET;
-            int need = 0;                                   // scans needed; 0 = not an orphan
-            int type = 0;
-            socklen_t tl = sizeof(type);
-            if (getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &tl) == 0 && type == SOCK_STREAM) {
-                bool web = false;
-                for (size_t i = 0; i < n; ++i) web |= (fds[i] == fd);
-                struct sockaddr_in l {};
-                socklen_t ll = sizeof(l);
-                if (!web) {
-                    if (getsockname(fd, (struct sockaddr *)&l, &ll) != 0) {
-                        need = 3;
-                    } else if (ntohs(l.sin_port) == 80) {
-                        int listening = 1;
-                        socklen_t al = sizeof(listening);
-                        if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, &listening, &al) == 0 && !listening)
-                            need = 2;
-                    }
-                }
-            }
-            if (!need) { orphan_seen[k] = 0; continue; }
-            if (orphan_seen[k] && network::chat_ws_owns_fd(fd)) { orphan_seen[k] = 0; continue; }
-            if (++orphan_seen[k] >= need) {
-                close(fd);
-                orphan_seen[k] = 0;
-                ++orphans;
-            }
-        }
-        if (orphans) {
-            ESP_LOGW(TAG, "socket_reaper: closed %d orphaned socket(s) nobody owned", orphans);
-        }
+        work.server = s_server;
+        work.done = done;
+        work.count = 0;
+        if (httpd_queue_work(work.server, socket_reaper_work, &work) != ESP_OK) continue;
+        xSemaphoreTake(done, portMAX_DELAY);
 
         // Nearly out of sockets: print who holds them (at most every 30 s).
+        // This is diagnostic only; an unlisted socket belongs to its creator.
         static uint32_t last_census_ms = 0;
         const uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
-        if (socket_census(fds, n, false) >= CONFIG_LWIP_MAX_SOCKETS - 3 &&
+        if (socket_census(work.fds, work.count, false) >= CONFIG_LWIP_MAX_SOCKETS - 3 &&
             (last_census_ms == 0 || now_ms - last_census_ms > 30000)) {
             last_census_ms = now_ms;
-            socket_census(fds, n, true);
+            socket_census(work.fds, work.count, true);
         }
     }
 }
@@ -3105,15 +3095,12 @@ bool start_http_server()
     // one short deletes a route without saying so. Each slot is a pointer, so
     // the headroom is cheap.
     config.max_uri_handlers = 96;
-    // LWIP has CONFIG_LWIP_MAX_SOCKETS (16) total.  HTTPD also reserves 3
-    // internal sockets on top of max_open_sockets.  At 5, HTTPD uses at most
-    // 5+3=8, GUARANTEEING ~8 sockets stay free for OUTBOUND use (upstream cloud
-    // WebSocket, marketplace proxy, DNS) plus the PWA WS clients.  A browser
-    // opens up to ~6 persistent connections per tab, so a lower cap here forces
-    // it to reuse/cycle connections instead of pinning the whole pool.  With
-    // lru_purge_enable the oldest idle connection is dropped when the cap is hit
-    // rather than starving everything else.
-    config.max_open_sockets = 5;
+    // LWIP has CONFIG_LWIP_MAX_SOCKETS=20. HTTPD reserves 3 internal sockets,
+    // so 12 sessions leave 5 for outbound cloud/proxy/DNS clients. The PWA can
+    // hold two WebSockets while a browser opens about six HTTP connections;
+    // the old cap of 5 made lru_purge_enable evict those quiet WebSockets even
+    // when they were healthy. Keep enough headroom for multiple PWA clients.
+    config.max_open_sockets = 12;
     config.stack_size = 8192;
     config.task_priority = 6;            // Priority 6 (per REQ-ROB-02)
     config.core_id = 0;                  // Pin to Core 0 (PRO_CPU)
@@ -3122,7 +3109,7 @@ bool start_http_server()
     config.lru_purge_enable = true;
     config.recv_wait_timeout = 60;       // Allow idle WS up to 60 s between frames
     config.send_wait_timeout = 30;       // Allow slow sends (e.g. large replies)
-    config.close_fn = pwa_release_fd;    // Clean up PWA client slots on session close
+    config.close_fn = close_http_session; // Release PWA state AND close the fd
 
     if (httpd_start(&s_server, &config) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start HTTP server");
@@ -3130,7 +3117,7 @@ bool start_http_server()
     }
 
     // ── BUILD MARKER — confirms which firmware is actually running ──
-    ESP_LOGW(TAG, "==== MPX BUILD socketfix-v14 : max_open_sockets=%d ====",
+    ESP_LOGW(TAG, "==== MPX BUILD socketfix-v15 : max_open_sockets=%d ====",
              config.max_open_sockets);
 
     // Start the dead-connection reaper so leaked port-80 sockets can't

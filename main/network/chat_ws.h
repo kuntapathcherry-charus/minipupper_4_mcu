@@ -52,19 +52,13 @@ esp_err_t chat_ws_handler(httpd_req_t *req);
 /**
  * @brief Release a PWA WebSocket client by socket fd.
  *
- * Called from the HTTP server's close_fn callback when ANY session
- * is closed.  This is the ONLY reliable way to detect that a PWA
- * WebSocket has disconnected, because with handle_ws_control_frames
- * = false the ESP-IDF HTTP server handles CLOSE frames internally
- * without calling the user handler, so release_pwa_client() via the
- * handler path is never reached for a normal browser close().
+ * The HTTP server's close wrapper calls this before closing ANY session.
+ * This is the ONLY reliable way to detect that a PWA WebSocket has
+ * disconnected, because with handle_ws_control_frames = false ESP-IDF
+ * handles CLOSE frames internally without calling the user handler.
+ * This function releases bookkeeping only; the wrapper owns close(sockfd).
  */
 void pwa_release_fd(httpd_handle_t hd, int sockfd);
-
-/** True while a live phone WebSocket owns this fd. The socket reaper must not
- *  treat a registered chat socket as an orphan: the two use the same fd table,
- *  and closing a live one shows up on the phone as "the web socket just dies". */
-bool chat_ws_owns_fd(int sockfd);
 
 /** Broadcast a pre-encoded voice event to every open chat socket, regardless
  *  of the text session each socket is viewing. Caller supplies JSON text. */

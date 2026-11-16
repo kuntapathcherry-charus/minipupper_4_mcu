@@ -104,8 +104,7 @@ static void load_allow_writes()
 
 /* ── PWA WebSocket client entry ──────────────────────────── */
 struct PwaWsClient {
-    httpd_req_t *req = nullptr;
-    int fd = -1;                // socket fd for cross-task sends
+    int fd = -1;                // socket identity for handlers and cross-task sends
     bool reply_ready = false;
     char session_id[64] = {};
     char pending_reply[2048] = {};
@@ -113,7 +112,9 @@ struct PwaWsClient {
     char frag_buf[4096] = {};
     size_t frag_len = 0;
     bool fragmenting = false;
-    uint32_t reg_seq = 0;       // registration order — used to evict the oldest
+    uint32_t reg_seq = 0;       // registration generation and eviction order
+    bool close_pending = false; // HTTPD accepted close; reject further sends
+    bool close_retry_queued = false; // one bounded close retry is in flight
     int step_seq = 0;           // local brain: progress notes sent this turn
 };
 
@@ -125,9 +126,9 @@ static constexpr size_t MAX_PWA_WS_CLIENTS = 4;
 /* ── PWA WebSocket client pool ─────────────────────────────── */
 static PwaWsClient s_pwa_clients[MAX_PWA_WS_CLIENTS] = {};
 static SemaphoreHandle_t s_pwa_mutex = nullptr;
-/* httpd_ws_send_data() is not safe to call on one socket from two tasks at
- * once: the JSON from the agent and the PCM from the playback task would
- * interleave inside one WebSocket frame. Every PWA send takes this first. */
+/* Text frames are queued onto the HTTPD task, which serializes whole-frame
+ * writes. Binary playback still uses synchronous sends, so only those audio
+ * producers take this mutex. HTTPD request handlers must never wait for it. */
 static SemaphoreHandle_t s_ws_send_mutex = nullptr;
 static httpd_handle_t s_httpd_handle = nullptr;
 static constexpr size_t REPLY_TEXT_MAX = 2048;
@@ -148,7 +149,6 @@ static constexpr size_t REPLY_TEXT_MAX = 2048;
 
 /* ── Forward declarations for PWA client helpers ──────────── */
 static PwaWsClient *get_pwa_client(httpd_req_t *req);
-static void release_pwa_client(httpd_req_t *req);
 static void broadcast_to_pwa(const char *session_id, const char *json_text);
 static void send_reply_to_pwa(const char *session_id, const char *text);
 
@@ -897,7 +897,7 @@ PwaWsClient *get_pwa_client(httpd_req_t *req)
 
     int slot = -1;
     for (size_t i = 0; i < MAX_PWA_WS_CLIENTS; ++i) {
-        if (s_pwa_clients[i].req == nullptr) { slot = (int)i; break; }
+        if (s_pwa_clients[i].fd < 0) { slot = (int)i; break; }
     }
 
     // ── No free slot: evict a DEAD client only ───────────────────
@@ -931,36 +931,178 @@ PwaWsClient *get_pwa_client(httpd_req_t *req)
         return nullptr;
     }
 
-    s_pwa_clients[slot].req = req;
+    s_pwa_clients[slot] = PwaWsClient{};
     s_pwa_clients[slot].fd = httpd_req_to_sockfd(req);
-    s_pwa_clients[slot].reply_ready = false;
-    s_pwa_clients[slot].session_id[0] = 0;
-    s_pwa_clients[slot].pending_reply[0] = 0;
     s_pwa_clients[slot].reg_seq = ++s_pwa_reg_counter;
     s_httpd_handle = req->handle;
     xSemaphoreGive(s_pwa_mutex);
     return &s_pwa_clients[slot];
 }
 
-void release_pwa_client(httpd_req_t *req)
+struct AsyncPwaTextSend {
+    int fd;
+    uint32_t reg_seq;
+    size_t slot;
+    bool close_only;
+    uint8_t close_attempts;
+    TickType_t retry_at;
+    char payload[];
+};
+
+static void async_pwa_text_send_work(void *arg);
+
+// Close completion is asynchronous too: ESP-IDF queues a session-deletion work
+// item.  Keep the failed registration until close_fn runs so a reused fd can
+// never inherit its generation.  Only one bounded retry work item per slot.
+static void close_failed_pwa_client(AsyncPwaTextSend *pending)
 {
-    if (!s_pwa_mutex) return;
+    bool current = false;
+    bool already_closing = false;
     xSemaphoreTake(s_pwa_mutex, portMAX_DELAY);
-    for (size_t i = 0; i < MAX_PWA_WS_CLIENTS; ++i) {
-        if (s_pwa_clients[i].req == req) {
-            s_pwa_clients[i].req = nullptr;
-            s_pwa_clients[i].fd = -1;
-            s_pwa_clients[i].reply_ready = false;
-            s_pwa_clients[i].session_id[0] = 0;
-            s_pwa_clients[i].pending_reply[0] = 0;
-            s_pwa_clients[i].fragmenting = false;
-            s_pwa_clients[i].frag_len = 0;
-            break;
+    current = s_pwa_clients[pending->slot].fd == pending->fd &&
+              s_pwa_clients[pending->slot].reg_seq == pending->reg_seq;
+    already_closing = current &&
+        (s_pwa_clients[pending->slot].close_pending ||
+         (s_pwa_clients[pending->slot].close_retry_queued && !pending->close_only));
+    xSemaphoreGive(s_pwa_mutex);
+    if (!current || already_closing) {
+        std::free(pending);
+        return;
+    }
+
+    const esp_err_t close_err =
+        httpd_sess_trigger_close(s_httpd_handle, pending->fd);
+    if (close_err == ESP_OK) {
+        xSemaphoreTake(s_pwa_mutex, portMAX_DELAY);
+        if (s_pwa_clients[pending->slot].fd == pending->fd &&
+            s_pwa_clients[pending->slot].reg_seq == pending->reg_seq) {
+            s_pwa_clients[pending->slot].close_pending = true;
+            s_pwa_clients[pending->slot].close_retry_queued = false;
         }
+        xSemaphoreGive(s_pwa_mutex);
+        std::free(pending);
+        return;
+    }
+
+    if (pending->close_attempts >= 5) {
+        ESP_LOGW(TAG, "  slot %zu close retries exhausted (%s); registration retained",
+                 pending->slot, esp_err_to_name(close_err));
+        xSemaphoreTake(s_pwa_mutex, portMAX_DELAY);
+        if (s_pwa_clients[pending->slot].fd == pending->fd &&
+            s_pwa_clients[pending->slot].reg_seq == pending->reg_seq) {
+            s_pwa_clients[pending->slot].close_retry_queued = false;
+        }
+        xSemaphoreGive(s_pwa_mutex);
+        std::free(pending);
+        return;
+    }
+
+    pending->close_attempts++;
+    pending->close_only = true;
+    pending->retry_at = xTaskGetTickCount() +
+                        pdMS_TO_TICKS(50 * pending->close_attempts);
+    xSemaphoreTake(s_pwa_mutex, portMAX_DELAY);
+    if (s_pwa_clients[pending->slot].fd == pending->fd &&
+        s_pwa_clients[pending->slot].reg_seq == pending->reg_seq) {
+        s_pwa_clients[pending->slot].close_retry_queued = true;
     }
     xSemaphoreGive(s_pwa_mutex);
+    const esp_err_t queue_err =
+        httpd_queue_work(s_httpd_handle, async_pwa_text_send_work, pending);
+    if (queue_err != ESP_OK) {
+        xSemaphoreTake(s_pwa_mutex, portMAX_DELAY);
+        if (s_pwa_clients[pending->slot].fd == pending->fd &&
+            s_pwa_clients[pending->slot].reg_seq == pending->reg_seq) {
+            s_pwa_clients[pending->slot].close_retry_queued = false;
+        }
+        xSemaphoreGive(s_pwa_mutex);
+        ESP_LOGW(TAG, "  slot %zu close retry queue failed (%s); registration retained",
+                 pending->slot, esp_err_to_name(queue_err));
+        std::free(pending);
+    }
 }
 
+// Runs on HTTPD.  Validate the registration here, not in the producer: an
+// fd can be closed and reused after a generic async send is queued.  Checking
+// both fd and registration sequence immediately before the write prevents an
+// old conversation's frame being delivered to a new client on the same fd.
+static void async_pwa_text_send_work(void *arg)
+{
+    auto *pending = static_cast<AsyncPwaTextSend *>(arg);
+    if (!s_httpd_handle || !s_pwa_mutex) {
+        std::free(pending);
+        return;
+    }
+    if (pending->close_only) {
+        const TickType_t now = xTaskGetTickCount();
+        if ((int32_t)(pending->retry_at - now) > 0) {
+            vTaskDelay(pending->retry_at - now);
+        }
+        close_failed_pwa_client(pending);
+        return;
+    }
+
+    bool current = false;
+    xSemaphoreTake(s_pwa_mutex, portMAX_DELAY);
+    current = s_pwa_clients[pending->slot].fd == pending->fd &&
+              s_pwa_clients[pending->slot].reg_seq == pending->reg_seq &&
+              !s_pwa_clients[pending->slot].close_pending &&
+              !s_pwa_clients[pending->slot].close_retry_queued;
+    xSemaphoreGive(s_pwa_mutex);
+
+    if (!current) {
+        ESP_LOGI(TAG, "  slot %zu stale text frame dropped (fd=%d)",
+                 pending->slot, pending->fd);
+        std::free(pending);
+        return;
+    }
+
+    // This work runs on HTTPD, and every PWA registration/close callback also
+    // runs there.  Neither slot reuse nor fd close can interleave this direct
+    // write, so the potentially blocking socket operation needs no registry
+    // lock.  The API does not queue another work item or invoke close_fn.
+    httpd_ws_frame_t pkt{};
+    pkt.payload = reinterpret_cast<uint8_t *>(pending->payload);
+    pkt.len = std::strlen(pending->payload);
+    pkt.type = HTTPD_WS_TYPE_TEXT;
+    const esp_err_t err = httpd_ws_send_frame_async(s_httpd_handle, pending->fd, &pkt);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "  slot %zu DELIVERED (fd=%d)", pending->slot, pending->fd);
+        std::free(pending);
+        return;
+    }
+
+    ESP_LOGW(TAG, "  slot %zu send failed (fd=%d: %s) — closing",
+             pending->slot, pending->fd, esp_err_to_name(err));
+    // Do not call close_fn while holding pwa_mutex.  The slot remains owned
+    // until HTTPD actually deletes the session and invokes close_fn.
+    close_failed_pwa_client(pending);
+}
+
+static esp_err_t queue_pwa_text_send(int fd, uint32_t reg_seq, size_t slot,
+                                     const char *json_text)
+{
+    const size_t len = std::strlen(json_text);
+    if (len > SIZE_MAX - sizeof(AsyncPwaTextSend) - 1) return ESP_ERR_INVALID_SIZE;
+    auto *pending = static_cast<AsyncPwaTextSend *>(
+        std::malloc(sizeof(AsyncPwaTextSend) + len + 1));
+    if (!pending) return ESP_ERR_NO_MEM;
+    pending->fd = fd;
+    pending->reg_seq = reg_seq;
+    pending->slot = slot;
+    pending->close_only = false;
+    pending->close_attempts = 0;
+    pending->retry_at = 0;
+    std::memcpy(pending->payload, json_text, len + 1);
+
+    // Queue insertion failure is backpressure, not evidence of a dead socket:
+    // free this frame but leave the client registered and connected.
+    const esp_err_t err = s_httpd_handle
+        ? httpd_queue_work(s_httpd_handle, async_pwa_text_send_work, pending)
+        : ESP_FAIL;
+    if (err != ESP_OK) std::free(pending);
+    return err;
+}
 
 void broadcast_to_pwa(const char *session_id, const char *json_text)
 {
@@ -973,7 +1115,7 @@ void broadcast_to_pwa(const char *session_id, const char *json_text)
     // that block froze the entire chat path — new connections, evictions and
     // other broadcasts all wait on the same mutex.  So we copy the target fds
     // out, release the mutex, then send lock-free.
-    struct Target { int fd; size_t slot; };
+    struct Target { int fd; uint32_t reg_seq; size_t slot; };
     Target targets[MAX_PWA_WS_CLIENTS];
     int n_targets = 0;
     int connected = 0;
@@ -982,14 +1124,19 @@ void broadcast_to_pwa(const char *session_id, const char *json_text)
     for (size_t i = 0; i < MAX_PWA_WS_CLIENTS; ++i) {
         if (s_pwa_clients[i].fd < 0) continue;
         connected++;
+        if (s_pwa_clients[i].close_pending ||
+            s_pwa_clients[i].close_retry_queued) {
+            continue;
+        }
         // Skip only clients already bound to a DIFFERENT non-empty session.
         if (session_id && session_id[0] != 0 &&
             s_pwa_clients[i].session_id[0] != 0 &&
             std::strcmp(s_pwa_clients[i].session_id, session_id) != 0) {
             continue;
         }
-        targets[n_targets].fd   = s_pwa_clients[i].fd;
-        targets[n_targets].slot = i;
+        targets[n_targets].fd      = s_pwa_clients[i].fd;
+        targets[n_targets].reg_seq = s_pwa_clients[i].reg_seq;
+        targets[n_targets].slot    = i;
         n_targets++;
     }
     xSemaphoreGive(s_pwa_mutex);
@@ -997,36 +1144,18 @@ void broadcast_to_pwa(const char *session_id, const char *json_text)
     ESP_LOGI(TAG, "broadcast_to_pwa: target_session='%s' connected=%d matched=%d",
              session_id ? session_id : "(null)", connected, n_targets);
 
-    // ── Phase 2: send WITHOUT holding the mutex ───────────────────
+    // ── Phase 2: queue owned frames onto the HTTPD task ────────────
+    // httpd_ws_send_data() waits for HTTPD to perform the write. Calling it
+    // from an HTTP handler (voice End/New/Clear) deadlocks the server against
+    // itself. Queue our own work instead: each item owns its JSON and HTTPD
+    // validates fd + registration sequence immediately before the direct send.
     for (int t = 0; t < n_targets; ++t) {
-        httpd_ws_frame_t pkt{};
-        pkt.payload = const_cast<uint8_t *>(
-            reinterpret_cast<const uint8_t *>(json_text));
-        pkt.len  = std::strlen(json_text);
-        pkt.type = HTTPD_WS_TYPE_TEXT;
-
-        xSemaphoreTake(s_ws_send_mutex, portMAX_DELAY);
-        esp_err_t ret = s_httpd_handle
-            ? httpd_ws_send_data(s_httpd_handle, targets[t].fd, &pkt)
-            : ESP_FAIL;
-        xSemaphoreGive(s_ws_send_mutex);
-
-        if (ret != ESP_OK) {
-            // Send failed → the client is dead.  Close its socket and free the
-            // slot (only if it still holds the same fd — it may have been
-            // reused while we were unlocked).
-            ESP_LOGW(TAG, "  slot %zu send failed (fd=%d: %s) — reaping",
-                     targets[t].slot, targets[t].fd, esp_err_to_name(ret));
-            xSemaphoreTake(s_pwa_mutex, portMAX_DELAY);
-            if (s_pwa_clients[targets[t].slot].fd == targets[t].fd) {
-                if (s_httpd_handle) {
-                    httpd_sess_trigger_close(s_httpd_handle, targets[t].fd);
-                }
-                s_pwa_clients[targets[t].slot] = PwaWsClient{};
-            }
-            xSemaphoreGive(s_pwa_mutex);
-        } else {
-            ESP_LOGI(TAG, "  slot %zu DELIVERED (fd=%d)", targets[t].slot, targets[t].fd);
+        const esp_err_t err = queue_pwa_text_send(targets[t].fd,
+                                                  targets[t].reg_seq,
+                                                  targets[t].slot, json_text);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "  slot %zu text frame dropped (%s); socket retained",
+                     targets[t].slot, esp_err_to_name(err));
         }
     }
 }
@@ -1483,7 +1612,7 @@ bool init_chat_pipeline()
         return false;
     }
 
-    // ── Serialise sends on the PWA sockets ─────────────────────
+    // ── Serialise synchronous binary-audio sends ─────────────────
     s_ws_send_mutex = xSemaphoreCreateMutex();
     if (!s_ws_send_mutex) {
         ESP_LOGE(TAG, "Failed to create WebSocket send mutex");
@@ -1564,24 +1693,6 @@ bool init_chat_pipeline()
     return true;
 }
 
-/* True while this fd is a registered PWA chat socket. The HTTP server's
- * orphan reaper uses this so a slow LittleFS read on the httpd task can
- * never make it close a phone connection that is still alive. */
-bool chat_ws_owns_fd(int fd)
-{
-    if (!s_pwa_mutex || fd < 0) return false;
-    bool owned = false;
-    xSemaphoreTake(s_pwa_mutex, portMAX_DELAY);
-    for (size_t i = 0; i < MAX_PWA_WS_CLIENTS; ++i) {
-        if (s_pwa_clients[i].fd == fd) {
-            owned = true;
-            break;
-        }
-    }
-    xSemaphoreGive(s_pwa_mutex);
-    return owned;
-}
-
 void pwa_release_fd(httpd_handle_t hd, int sockfd)
 {
     (void)hd;
@@ -1590,13 +1701,7 @@ void pwa_release_fd(httpd_handle_t hd, int sockfd)
     for (size_t i = 0; i < MAX_PWA_WS_CLIENTS; ++i) {
         if (s_pwa_clients[i].fd == sockfd) {
             ESP_LOGD(TAG, "PWA client fd=%d closed, releasing slot %zu", sockfd, i);
-            s_pwa_clients[i].req = nullptr;
-            s_pwa_clients[i].fd = -1;
-            s_pwa_clients[i].reply_ready = false;
-            s_pwa_clients[i].session_id[0] = 0;
-            s_pwa_clients[i].pending_reply[0] = 0;
-            s_pwa_clients[i].fragmenting = false;
-            s_pwa_clients[i].frag_len = 0;
+            s_pwa_clients[i] = PwaWsClient{};
             break;
         }
     }
@@ -1786,13 +1891,15 @@ esp_err_t chat_send_handler(httpd_req_t *req)
 
 esp_err_t chat_ws_handler(httpd_req_t *req)
 {
+    // ESP-IDF reuses one httpd_req_t for every session.  Only the socket fd
+    // identifies this connection beyond the current handler invocation.
+    const int fd = httpd_req_to_sockfd(req);
     if (req->method == HTTP_GET) {
         ESP_LOGI(TAG, "Chat WebSocket connected — registering client");
 
         // Enable TCP keepalive on the PWA WebSocket socket so dead
         // connections are detected promptly (10 s idle, 3 s interval,
         // 3 probes = ~19 s to detect a drop).
-        int fd = httpd_req_to_sockfd(req);
         if (fd >= 0) {
             int keepalive = 1;
             setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
@@ -1831,8 +1938,7 @@ esp_err_t chat_ws_handler(httpd_req_t *req)
     if (ret != ESP_OK) {
         ESP_LOGI(TAG, "Chat WebSocket recv header failed: %s",
                  esp_err_to_name(ret));
-        release_pwa_client(req);
-        return ret;
+        return ret;  // httpd closes the session; close_fn releases the slot
     }
 
     // Clamp oversized frames
@@ -1844,8 +1950,7 @@ esp_err_t chat_ws_handler(httpd_req_t *req)
     ret = httpd_ws_recv_frame(req, &ws_pkt, buf_size);
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "WS payload recv failed: %s", esp_err_to_name(ret));
-        release_pwa_client(req);
-        return ret;
+        return ret;  // httpd closes the session; close_fn releases the slot
     }
     buf[buf_size] = 0;  // null-terminate
 
@@ -1861,12 +1966,12 @@ esp_err_t chat_ws_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
-    // Store the client pointer by looking up the req handle
+    // Look up this exact connection, never the shared request object.
     PwaWsClient *client = nullptr;
     if (s_pwa_mutex) {
         xSemaphoreTake(s_pwa_mutex, portMAX_DELAY);
         for (size_t i = 0; i < MAX_PWA_WS_CLIENTS; ++i) {
-            if (s_pwa_clients[i].req == req) {
+            if (s_pwa_clients[i].fd == fd) {
                 client = &s_pwa_clients[i];
                 break;
             }
@@ -1955,9 +2060,7 @@ esp_err_t chat_ws_handler(httpd_req_t *req)
             pkt.payload = reinterpret_cast<uint8_t *>(const_cast<char *>(ack));
             pkt.len = sizeof(ack) - 1;
             pkt.type = HTTPD_WS_TYPE_TEXT;
-            if (s_ws_send_mutex) xSemaphoreTake(s_ws_send_mutex, portMAX_DELAY);
             httpd_ws_send_frame(req, &pkt);
-            if (s_ws_send_mutex) xSemaphoreGive(s_ws_send_mutex);
             return ESP_OK;
 #else
             const bool mic = std::strstr(input, "\"mic\":true") != nullptr;
@@ -2002,9 +2105,7 @@ esp_err_t chat_ws_handler(httpd_req_t *req)
                 pkt.payload = reinterpret_cast<uint8_t *>(ack);
                 pkt.len = n;
                 pkt.type = HTTPD_WS_TYPE_TEXT;
-                if (s_ws_send_mutex) xSemaphoreTake(s_ws_send_mutex, portMAX_DELAY);
                 httpd_ws_send_frame(req, &pkt);
-                if (s_ws_send_mutex) xSemaphoreGive(s_ws_send_mutex);
             }
 #endif  /* CONFIG_APP_VOICE_PHONE_AUDIO */
             return ESP_OK;
@@ -2197,7 +2298,7 @@ esp_err_t chat_ws_handler(httpd_req_t *req)
             client->fragmenting = false;
             client->frag_len = 0;
         }
-        release_pwa_client(req);
+        // httpd processes the CLOSE after this handler and invokes close_fn.
     } else {
         ESP_LOGW(TAG, "Unexpected WS frame type 0x%02x", ws_pkt.type);
     }

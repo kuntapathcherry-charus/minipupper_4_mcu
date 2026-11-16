@@ -338,6 +338,8 @@
   function startFresh(id = makeUUID(), nextBrain = getPreferredBrain()) {
     sessionId = id;
     messages = [];
+    pendingChunks = {};
+    pendingActions = [];
     conversationArchived = false;
     voiceWakeError = "";
     voiceWakeRequested = false;
@@ -347,22 +349,14 @@
     sendSessionReset(sessionId);
   }
 
-  async function newConversation() {
+  function newConversation() {
     if (messages.length > 0) saveConversation(sessionId, { messages, brain });
     sidebarRefreshKey++;
-    if (brain === BRAINS.LOCAL) {
-      try {
-        const res = await fetch("/v1/voice/history/new", { method: "POST" });
-        if (!res.ok) throw new Error("new voice conversation failed");
-        const data = await res.json();
-        startFresh(data.id, BRAINS.LOCAL);
-      } catch {
-        // MCP-only firmware or unavailable voice still supports local text.
-        startFresh(undefined, BRAINS.LOCAL);
-      }
-    } else {
-      startFresh(undefined, brain);
-    }
+    // Text chat owns a UUID, not the robot's voice session. In particular,
+    // do not wait for /v1/voice/history/new here: its firmware handler takes
+    // the voice-turn lock and can block for an entire in-flight agent reply.
+    // The voice panel has its own explicit newVoiceSession() for that path.
+    startFresh(undefined, brain);
     inputEl?.focus();
   }
 
@@ -556,6 +550,11 @@
       sidebarRefreshKey++;
       return;
     }
+
+    // A reply already in flight when the user changes conversation belongs
+    // to that old session. The firmware normally filters by socket binding,
+    // but this client-side guard also covers queued frames and older firmware.
+    if (data.session_id && data.session_id !== sessionId) return;
 
     // ── Chunked chat_reply reassembly (array-based like original) ──
     if (data.type === "chat_reply_chunk") {
