@@ -1024,6 +1024,43 @@ station → robot   @MPXPROV {"cmd":"lock"}                          # burn WR_D
 
 `S` and `K` never cross the UART. Only `key_fp` and the sealed blob do.
 
+### 6.6.1 Factory images without a station (first-boot self-provision)
+
+The station flow above needs one cable, one board, one run. A factory that
+flashes a tray with the **Flash Download Tool** cannot use it: that tool writes
+SPI flash only (eFuse is a separate peripheral, burned by `espefuse.py` / the
+app, never by a flash image), and it writes the *same* image to every board, so
+a per-board UUID cannot come from the image either.
+
+`CONFIG_APP_FACTORY_SELF_PROVISION` (`sdkconfig.defaults.factory`) moves the
+trigger into the firmware:
+
+1. Boot. `mpx_identity_init()` finds no record → `MPX_ID_UNPROVISIONED`.
+2. `mpx_selfprov_boot()` (`components/mpx_identity/mpx_selfprov.c`) checks the
+   fuses are blank (a record, or a key without a record, is refused), enables
+   the bootloader RNG (D9 — the radio is down this early), generates a random
+   `MPX-` ID (`mpx_id_generate()`) and a random 256-bit `S`, and calls the same
+   `mpx_efuse_burn_record()` the station path uses: one batch, `USR_DATA`
+   record + `HMAC_UP` key, `WR_DIS`/`RD_DIS` set.
+3. Read-back must match, or the boot logs the failure and continues without an
+   identity. Nothing is retried automatically: a partially burned board is a
+   bench decision, not something a boot loop should guess at.
+4. Success → `esp_restart()`. The HMAC peripheral does not see a key burned in
+   the running boot, so the identity has no usable key until the reset.
+5. Next boot loads the identity normally; `APP_ENROLL_ENABLE` seals `K_v` and
+   POSTs it on first connect, exactly as for a station-run unit.
+
+Consequences that are not negotiable:
+
+- **Irreversible, no human confirmation.** Keep the option out of the default,
+  pilot and shipped profiles. A bug in a factory image becomes a robot on
+  every blank board it boots on.
+- **The ID exists only on the board** (and in its first boot log). With a
+  multi-board flash nobody is watching ten consoles, so read it back later
+  over Wi-Fi/HTTP or from the screen; there is no label to print at flash time.
+- **One boot longer than usual**, and one extra reset compared with a plain
+  flash. That is the whole cost of dropping the station step.
+
 ### 6.7 Cloud API
 
 New router `cloud/core_gateway/provisioning.py`. All routes require a station or
@@ -1228,6 +1265,13 @@ QA: Wi-Fi test → robot connects ───────────────�
 Station output per unit: a log line with `robot_id, mac, key_fp, station_id,
 timestamp` and no secrets. That is enough to reconcile against the cloud and
 the production count.
+
+A build with `CONFIG_APP_FACTORY_SELF_PROVISION` (`sdkconfig.defaults.factory`)
+replaces the whole station column: the board mints its own `robot_id` and `S`
+at first boot and reboots (§6.6.1), and the cloud sees the identity for the
+first time in the enrolment POST once the robot is on Wi-Fi. The reconciliation
+then has no per-unit station log — the boot log is the only place the ID is
+printed, so capture it or read it back from the board.
 
 ---
 

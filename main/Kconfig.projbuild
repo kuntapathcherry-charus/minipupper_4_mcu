@@ -321,6 +321,28 @@ config APP_PROV_SEAL_KEY_ID
         firmware keeps sealing to slot 0, and the cloud holds both private
         keys during the overlap.
 
+config APP_FACTORY_SELF_PROVISION
+    bool "Burn a fresh identity on the first boot (factory image only)"
+    default n
+    depends on APP_IDENTITY_SOURCE_EFUSE
+    help
+        A blank board burns its own ID and root secret at the top of
+        app_main, then reboots. The operation is the same one the @MPXPROV
+        station performs -- random MPX- ID, random 256-bit S, one batch,
+        WR_DIS/RD_DIS set -- with the trigger moved into the image.
+
+        This is what makes one image usable for a tray of boards flashed
+        together (idf.py flash or the Flash Download Tool): the tool only
+        writes flash, and the same image cannot carry a different UUID per
+        board, so the board has to mint its own. APP_ENROLL_ENABLE then seals
+        and announces K_v on the first connect, as it does for a station-run
+        unit.
+
+        IRREVERSIBLE, and there is no human in the loop. Keep it in
+        sdkconfig.defaults.factory and never in the default, pilot or shipped
+        profiles. A board that already carries a record is left untouched; a
+        half-burned board is refused rather than "repaired".
+
 # ── First-connect enrolment ───────────────────────────────────────
 # The robot announces its own key instead of the factory carrying it: at first
 # boot it derives K_v from its fuse, seals it to the embedded KMS key, and posts

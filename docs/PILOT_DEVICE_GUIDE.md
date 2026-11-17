@@ -195,13 +195,14 @@ entries that matter; everything else can stay at its default.
 | Unique robot identifier | `APP_ROBOT_UUID` | `MPX-DOG-01`, or `32 tools/mpx_id.py new` | *irrelevant* (dimmed) | only read in Kconfig mode |
 | AES-256-GCM key | `APP_CHAT_AES_KEY_HEX` | dev key or one from `tools/mpx_id.py derive` | *irrelevant* (dimmed) | only read in Kconfig mode; the default is public and logs an error |
 | Accept `@MPXPROV` provisioning commands on UART0 | `APP_PROVISIONING_ENABLE` | **off** | **on** while it is on the bench | irreversible burn commands; a shipped robot must not accept them |
+| Burn a fresh identity on first boot | `APP_FACTORY_SELF_PROVISION` | **off** | **off** | factory images only (`sdkconfig.defaults.factory`); irreversible and needs no human, so it must never be in a shipped or bench build |
 | Seal public key slot | `APP_PROV_SEAL_KEY_ID` | 0 | 0 (1 is reserved for a KMS rotation) | which embedded public key the sealed blob uses |
 | Announce the identity to the cloud on first connect | `APP_ENROLL_ENABLE` | *off* (dimmed) | **on** | retries every 30 s until the gateway accepts the envelope |
 | Enrolment endpoint path | `APP_ENROLL_PATH` | `/v1/provisioning/enroll` | same | path on the gateway |
 
-Note the dependency: the bottom five are dimmed unless the identity source is
-**eFuse**. That is not a bug — a Kconfig build has nothing to provision and
-nothing to announce.
+Note the dependency: the provisioning and enrolment options are dimmed unless
+the identity source is **eFuse**. That is not a bug — a Kconfig build has nothing
+to provision and nothing to announce.
 
 ### Network
 
@@ -228,16 +229,17 @@ nothing to announce.
   physical block means different things to different images.
 - **Partition table** (`CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=partitions.csv`).
 
-## 3. The two profiles
+## 3. The three profiles
 
 You should almost never hand-edit menuconfig. The profiles are files:
 
-| | `sdkconfig.defaults` | `+ sdkconfig.defaults.pilot` |
-|---|---|---|
-| identity | Kconfig strings | eFuse record + `HMAC_UP` key |
-| `@MPXPROV` listener | off | **on** |
-| enrolment task | not compiled | on |
-| use it for | dev boards with no fuses, CI, unit work | pilot units, bench provisioning |
+| | `sdkconfig.defaults` | `+ sdkconfig.defaults.pilot` | `+ sdkconfig.defaults.factory` |
+|---|---|---|---|
+| identity | Kconfig strings | eFuse record + `HMAC_UP` key | eFuse, minted on the board's first boot |
+| `@MPXPROV` listener | off | **on** | off |
+| burns identity by itself | no | no | **yes** (`APP_FACTORY_SELF_PROVISION`) |
+| enrolment task | not compiled | on | on |
+| use it for | dev boards with no fuses, CI, unit work | pilot units, bench provisioning | blank boards flashed in bulk (Flash Download Tool or `idf.py flash`) |
 
 ```bash
 # development image (the default)
@@ -247,7 +249,18 @@ idf.py build flash monitor
 idf.py -B build/pilot \
        -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.pilot" \
        build flash
+
+# factory image — one binary for a tray of blank boards
+idf.py -B build/factory -DSDKCONFIG=build/factory/sdkconfig \
+       -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.factory" \
+       build
 ```
+
+A factory board burns its ID and root secret on the first boot, reboots, and
+enrols on its first network connection; see
+`docs/ROBOT_IDENTITY_AND_KEYS.md` §6.6.1. **Never ship that profile**: the first
+boot of a blank board irreversibly becomes a robot, with nobody confirming
+which board it is.
 
 Keep the pilot build in `build/pilot` so switching back and forth does not thrash
 `sdkconfig`. Both profiles set `CONFIG_EFUSE_CUSTOM_TABLE`, so the fuse map is
@@ -266,7 +279,9 @@ idf.py -p /dev/ttyUSB1 monitor  # 115200 8N1, Ctrl-] to quit
 ```
 
 `flash` writes images and nothing else. It does **not** touch fuses, and it cannot
-— provisioning is a runtime action over UART (§6). Flashing a provisioned board
+— provisioning is a runtime action over UART (§6), or by the board itself on
+first boot when it runs the factory image (`sdkconfig.defaults.factory`, see
+`docs/ROBOT_IDENTITY_AND_KEYS.md` §6.6.1). Flashing a provisioned board
 with the pilot image keeps its identity as long as you do not erase the `nvs`
 partition: `idf.py erase-flash` **does** erase NVS, which loses the enrolment
 marker and the stored seal (the unit re-enrols on next boot, so this is
@@ -419,10 +434,13 @@ Then reset the board and it re-enrols.
 - `idf.py erase-flash` on a `locked` pilot unit that has no cloud row.
 - `mpx_provision.py lock` on anything that is not leaving the building.
 - Ship `sdkconfig.defaults.pilot` (the listener burns fuses) or the dev image.
+- Flash `sdkconfig.defaults.factory` onto a board you have not decided to keep:
+  its first boot burns an irreversible identity with no confirmation.
 - Commit `sdkconfig`, `tools/secrets/*.pem`, or a station `label-*.json`.
 - Hand-edit `APP_CHAT_AES_KEY_HEX` to a real key and call it production: it is
   compiled into the image, so everyone with the binary has the key.
-- Assume `idf.py flash` provisions anything. It never does.
+- Assume `idf.py flash` provisions anything. It never does — the factory profile
+  is the one build whose *first boot* does.
 
 ## 12. Reading further
 

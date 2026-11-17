@@ -21,6 +21,12 @@ tools/mpx_provision.py           @MPXPROV {"cmd":"provision"}
 
 ## Why the robot posts it
 
+A factory that flashes blank boards in bulk has no station:
+`sdkconfig.defaults.factory` (`CONFIG_APP_FACTORY_SELF_PROVISION`) makes the
+first boot mint the ID and `S` itself and burn the same record, then reboot;
+the enrolment half below is unchanged. See
+[ROBOT_IDENTITY_AND_KEYS.md](./ROBOT_IDENTITY_AND_KEYS.md) §6.6.1.
+
 The alternative (A) was: the station derives `K_v`, writes it into the cloud's
 database and mounts the PEM holding the private key. That means the production
 gateway mounts a file that decrypts every seal ever made, the station needs a

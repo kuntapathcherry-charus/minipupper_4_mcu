@@ -236,6 +236,15 @@ different jobs and you need both:
 | `tools/mpx_provision.py` | generates ID + `S`, burns fuses, seals the key | host, over UART0 |
 | `mpx_enroll.c` | introduces the robot to the cloud | device, on first WiFi connect — automatic |
 
+A flash image never carries an identity: `esptool`/the Flash Download Tool write
+SPI flash only, and a multi-board flash writes the same bytes to every chip. The
+one exception is a **factory image** (`sdkconfig.defaults.factory`), where the
+firmware does the station's job on the first boot of a blank board: it mints a
+random ID + `S` and burns them with the same one-batch `WR_DIS` write
+([ROBOT_IDENTITY_AND_KEYS.md](./ROBOT_IDENTITY_AND_KEYS.md) §6.6.1). That is the
+route for flashing a tray of boards in one go — no per-unit step, no per-unit
+image.
+
 ```
 # build the pilot profile (listener on, eFuse source)
 idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.pilot" -B build/pilot flash

@@ -282,3 +282,79 @@ TEST_CASE(derive_key_accepts_an_adapter_that_owns_the_secret)
                  -1);
 }
 #endif /* MPX_HAVE_OPENSSL */
+
+/* ── ID generation (§6.6 factory self-provision) ───────────────────────────
+ * The generator is what a factory image burns into an eFuse with no human in
+ * the loop, so its output is checked here against the Python reference rather
+ * than on a board that can never be re-provisioned. The randomness itself is
+ * injected: a fixed byte sequence makes the result enumerable. */
+
+static uint8_t s_gen_byte;
+
+static void sequential_rng(uint8_t *buf, size_t len)
+{
+    for (size_t i = 0; i < len; i++) {
+        buf[i] = s_gen_byte++;
+    }
+}
+
+TEST_CASE(id_generate_matches_the_reference_for_a_fixed_sequence)
+{
+    char id[MPX_ID_STR_LEN + 1];
+
+    /* Bytes 0x00..0x0a: the low five bits select alphabet[0..10], and the
+     * trailing check symbol is tools/mpx_id.py's luhn32_check("0123456789A"). */
+    s_gen_byte = 0;
+    CHECK_EQ_INT(mpx_id_generate(sequential_rng, id), 0);
+    CHECK_EQ_STR(id, "MPX-0123456789AB");
+    CHECK(mpx_id_valid(id));
+    CHECK_EQ_INT(strlen(id), MPX_ID_STR_LEN);
+}
+
+TEST_CASE(id_generate_ignores_the_high_bits_of_each_byte)
+{
+    char a[MPX_ID_STR_LEN + 1];
+    char b[MPX_ID_STR_LEN + 1];
+
+    /* 32 symbols is exactly 5 bits, so the top three bits must not shift the
+     * distribution: 0xE0..0xEA selects the same body as 0x00..0x0a. */
+    s_gen_byte = 0x00;
+    CHECK_EQ_INT(mpx_id_generate(sequential_rng, a), 0);
+    s_gen_byte = 0xE0;
+    CHECK_EQ_INT(mpx_id_generate(sequential_rng, b), 0);
+    CHECK_EQ_STR(a, b);
+}
+
+static uint32_t s_xorshift = 0x12345678u;
+
+static void xorshift_rng(uint8_t *buf, size_t len)
+{
+    for (size_t i = 0; i < len; i++) {
+        s_xorshift ^= s_xorshift << 13;
+        s_xorshift ^= s_xorshift >> 17;
+        s_xorshift ^= s_xorshift << 5;
+        buf[i] = (uint8_t)s_xorshift;
+    }
+}
+
+TEST_CASE(id_generate_yields_distinct_valid_ids)
+{
+    enum { N = 128 };
+    char ids[N][MPX_ID_STR_LEN + 1];
+
+    for (size_t i = 0; i < N; i++) {
+        CHECK_EQ_INT(mpx_id_generate(xorshift_rng, ids[i]), 0);
+        CHECK(mpx_id_valid(ids[i]));
+        for (size_t j = 0; j < i; j++) {
+            CHECK_MSG(strcmp(ids[i], ids[j]) != 0, "duplicate %s", ids[i]);
+        }
+    }
+}
+
+TEST_CASE(id_generate_refuses_a_missing_rng)
+{
+    char id[MPX_ID_STR_LEN + 1];
+
+    CHECK_EQ_INT(mpx_id_generate(NULL, id), -1);
+    CHECK_EQ_INT(mpx_id_generate(sequential_rng, NULL), -1);
+}

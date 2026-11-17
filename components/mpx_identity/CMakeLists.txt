@@ -17,6 +17,7 @@ idf_component_register(
         "mpx_prov_json.c"
         "mpx_prov_sm.c"
         "mpx_provision.c"
+        "mpx_selfprov.c"
         "mpx_identity.cc"
     INCLUDE_DIRS
         "include"

@@ -51,6 +51,18 @@ bool mpx_id_to_frame(uint8_t out[MPX_ID_STR_LEN], const char *id);
  * shape this format can check. Exposed for tests. */
 int mpx_id_check_symbol(const char *id);
 
+/* Source of randomness for mpx_id_generate(). Injected so the generator is
+ * exercised on a laptop with a fixed sequence instead of on a board: the
+ * factory path that calls it burns what it produces into an eFuse, and a
+ * format bug must not be discovered there. */
+typedef void (*mpx_id_random_fn)(uint8_t *buf, size_t len);
+
+/* Writes a fresh production ID into `out` (MPX_ID_STR_LEN bytes plus NUL):
+ * `MPX-`, 11 symbols from `rng`, then the Luhn-mod-32 check symbol. Returns 0,
+ * or -1 when `rng` is NULL. The symbols are the low five bits of each random
+ * byte because the alphabet has exactly 32 entries -- no modulo bias. */
+int mpx_id_generate(mpx_id_random_fn rng, char out[MPX_ID_STR_LEN + 1]);
+
 #ifdef __cplusplus
 }
 #endif

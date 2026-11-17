@@ -103,6 +103,36 @@ bool mpx_id_valid_or_legacy(const char *id)
     return mpx_id_valid(id) || mpx_id_legacy_valid(id);
 }
 
+int mpx_id_generate(mpx_id_random_fn rng, char out[MPX_ID_STR_LEN + 1])
+{
+    uint8_t raw[MPX_ID_BODY_LEN];
+    int check;
+
+    if (rng == NULL || out == NULL) {
+        return -1;
+    }
+
+    rng(raw, sizeof raw);
+
+    memcpy(out, "MPX-", 4);
+    for (size_t i = 0; i < (size_t)MPX_ID_BODY_LEN; i++) {
+        out[MPX_ID_BODY_OFF + i] = mpx_id_alphabet[raw[i] & 0x1f];
+    }
+
+    /* A placeholder first: mpx_id_check_symbol() requires a 16-character
+     * string, and it never reads the check position itself (that is the whole
+     * point -- it computes what should be there). */
+    out[MPX_ID_CHECK_OFF] = mpx_id_alphabet[0];
+    out[MPX_ID_STR_LEN] = '\0';
+
+    check = mpx_id_check_symbol(out);
+    if (check < 0) {
+        return -1;
+    }
+    out[MPX_ID_CHECK_OFF] = (char)check;
+    return 0;
+}
+
 bool mpx_id_to_frame(uint8_t out[MPX_ID_STR_LEN], const char *id)
 {
     size_t len;

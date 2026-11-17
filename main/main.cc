@@ -2,6 +2,7 @@
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "nvs_flash.h"
 
 #include "audio/mpx_audio.h"
@@ -18,6 +19,7 @@
 #include "mpx_enroll.h"
 #include "mpx_identity.h"
 #include "mpx_provision.h"
+#include "mpx_selfprov.h"
 #include "robot/mpx_robot.h"
 #include "robot/robot.h"
 #include "sdk/wasm_host_functions.h"
@@ -81,6 +83,25 @@ extern "C" void app_main(void)
 	// talk to the cloud.
 	if (mpx_identity_init() != ESP_OK) {
 		ESP_LOGW(TAG, "No robot identity -- cloud chat, robot token and MPXE are off");
+	}
+	// Factory image only (CONFIG_APP_FACTORY_SELF_PROVISION, off everywhere but
+	// sdkconfig.defaults.factory): a blank board mints and burns its own ID and
+	// root secret here, so one image flashed onto a tray of boards needs no
+	// per-unit station run. The burn is irreversible and the HMAC peripheral
+	// cannot use a key burned in the running boot, so a successful burn restarts
+	// instead of continuing with the identity it just created; the next boot
+	// loads it and enrolment seals and announces it. A failure is not fatal --
+	// the robot boots without an identity, and the log says which board to
+	// inspect.
+	if (mpx_identity_state() == MPX_ID_UNPROVISIONED) {
+		const esp_err_t selfprov = mpx_selfprov_boot();
+		if (selfprov == ESP_OK) {
+			esp_restart();
+		} else if (selfprov != ESP_ERR_NOT_SUPPORTED &&
+		           selfprov != ESP_ERR_INVALID_STATE) {
+			ESP_LOGE(TAG, "Factory self-provisioning failed: %s",
+			         esp_err_to_name(selfprov));
+		}
 	}
 	// Provisioning listener: a no-op unless this is a factory build, and it
 	// runs before the network so a board that has never been provisioned can

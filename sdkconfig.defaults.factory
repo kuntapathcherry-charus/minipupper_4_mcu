@@ -1,0 +1,24 @@
+# Factory image: one binary for a tray of blank boards.
+#
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.factory" build
+#
+# The identity comes from eFuse, and a blank board burns its own ID and root
+# secret at the top of app_main (CONFIG_APP_FACTORY_SELF_PROVISION), then
+# reboots. No @MPXPROV station run, no per-unit image, no host tool -- which is
+# the only way the Flash Download Tool can hand a board a unique identity: it
+# writes flash only, and it writes the same image to every board it flashes.
+#
+# After the burn, first-connect enrolment (CONFIG_APP_ENROLL_ENABLE, on by
+# default with the eFuse source) seals K_v to the embedded KMS key and POSTs it
+# to the gateway, exactly as for a station-provisioned unit.
+#
+# Never ship this profile: the first boot of any blank board irreversibly
+# becomes a robot, with no human confirming which board it is.
+
+CONFIG_APP_IDENTITY_SOURCE_EFUSE=y
+CONFIG_APP_FACTORY_SELF_PROVISION=y
+# The UART listener is the bench path; a self-provisioning factory image does
+# not need it, and leaving it off keeps @MPXPROV from accepting commands on a
+# line that has no operator watching.
+CONFIG_APP_PROVISIONING_ENABLE=n
+CONFIG_APP_PROV_SEAL_KEY_ID=0
