@@ -128,6 +128,30 @@
   }
   $effect(() => { loadPower(); });
 
+  // ── Sleep: stop, lie down, servos off, screen off, ESP deep sleep ──
+  // phase: idle | confirm | sending | done | error
+  let sleepState = $state({ phase: "idle", msg: "" });
+  let sleepOpen = $state(false);
+  async function sendSleep() {
+    sleepState = { phase: "sending", msg: "" };
+    try {
+      const r = await fetch("/v1/robot/power", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "sleep" }),
+      });
+      const j = await r.json().catch(() => ({}));
+      sleepState = j.sleeping ? { phase: "done", msg: "" }
+        : { phase: "error", msg: r.status === 400 ? "This firmware has no Sleep yet. Update the robot." : `Failed (HTTP ${r.status}).` };
+    } catch {
+      sleepState = { phase: "error", msg: "Couldn't reach the robot." };
+    }
+  }
+  const sleepLabel = $derived(
+    sleepState.phase === "done" ? "Going to sleep · press WAKE on the board to start again"
+      : sleepState.phase === "error" ? "Didn't work · tap for details"
+      : "Lie down, switch everything off it can, and sleep");
+
   const restLabel = $derived.by(() => {
     if (!power) return "Lie down and switch the servos off when unused";
     const s = power.rest_after_s;
@@ -374,6 +398,32 @@
                   {/if}
                 </div>
                 <p class="note">Resting lowers the body and switches the servos off to save the battery. Any move or stick wakes it.</p>
+              </div>
+            {/if}
+            {@render row({ icon: iPower, dark: true, title: "Sleep", desc: sleepLabel, expanded: sleepOpen, onclick: () => (sleepOpen = !sleepOpen) })}
+            {#if sleepOpen}
+              <div class="rest">
+                {#if sleepState.phase === "confirm"}
+                  <p class="note strong">Put the robot to sleep?</p>
+                  <p class="note">It stops any RL walk, lies down, switches the servos and the screen off, and the controller sleeps. This app loses the robot until you press the <b>WAKE</b> button on the board (SW3), or RESET (SW1).</p>
+                  <div class="rest-actions">
+                    <button type="button" class="act danger" onclick={sendSleep}>Yes, sleep</button>
+                    <button type="button" class="act ghost" onclick={() => (sleepState = { phase: "idle", msg: "" })}>Cancel</button>
+                  </div>
+                {:else if sleepState.phase === "sending"}
+                  <p class="note">Asking the robot…</p>
+                {:else if sleepState.phase === "done"}
+                  <p class="note strong ok">The robot is lying down and going to sleep.</p>
+                  <p class="note">Press <b>WAKE</b> (SW3) on the board to start it again. It boots and stands up as usual.</p>
+                {:else}
+                  {#if sleepState.phase === "error"}
+                    <p class="note err">{sleepState.msg}</p>
+                  {/if}
+                  <div class="rest-actions">
+                    <button type="button" class="act danger" onclick={() => (sleepState = { phase: "confirm", msg: "" })}>Sleep</button>
+                  </div>
+                {/if}
+                <p class="note">This board can't cut its own power: asleep, the driver boards and servos still draw a little from the battery. For storage, unplug the battery.</p>
               </div>
             {/if}
           {/if}

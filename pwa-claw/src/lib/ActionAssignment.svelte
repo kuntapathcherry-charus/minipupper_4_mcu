@@ -89,6 +89,10 @@
     { id: "longjump", label: "Long Jump", emoji: "🦘", color: "#D97A29", category: "gait" },
     { id: "farjump", label: "Far Jump", emoji: "🚀", color: "#D97A29", category: "gait" },
     { id: "backflip", label: "Backflip", emoji: "🤸", color: "#D14949", category: "gait" },
+    { id: "backflip_k7_405", label: "Backflip K7 405g", emoji: "🤸", color: "#117a65", category: "gait" },
+    { id: "backflip_k7_405_k40", label: "Backflip K7 405g +40", emoji: "🤸", color: "#0b5345", category: "gait" },
+    { id: "backflip_k7_405_otplus", label: "Backflip OT+", emoji: "🤸", color: "#196f3d", category: "gait" },
+    { id: "backflip_k7_405_s3", label: "Backflip S3 (shoes)", emoji: "🤸", color: "#145a32", category: "gait" },
   ];
 
   // ── Merge built-in + custom actions ──────────────────────

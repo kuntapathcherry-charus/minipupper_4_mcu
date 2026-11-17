@@ -91,6 +91,50 @@ config APP_SERVO_HOLD_CURRENT_MA
         hold and powers the servos fully off (limp), exactly like the old
         behaviour.
 
+config APP_SERVO_SPI_KHZ
+    int "Servo boards' SPI clock (kHz)"
+    range 500 15000
+    default 12000
+    help
+        The clock of the SPI bus to the four servo driver boards (mode 0;
+        15 MHz is the boards' maximum). With the long shared lines a fast
+        clock and a strong drive ring and couple into the chip selects, and
+        the boards act on damaged frames: jitter that moves from motor to
+        motor. Softer edges (APP_SERVO_SPI_DRIVE) need a slower clock.
+        minipupperesp's settings:
+          12000 kHz + drive 2: the original
+           4000 kHz + drive 1: the first thing to try
+           2000 kHz + drive 0: the softest
+        A frame to a board is a few dozen bytes, so even 2 MHz keeps the
+        5 ms servo tick (and the RL walk's) well within time.
+
+choice APP_SERVO_SPI_DRIVE_CHOICE
+    prompt "Servo SPI output drive strength (GPIO drive cap)"
+    default APP_SERVO_SPI_DRIVE_2
+    help
+        gpio_set_drive_capability() on every line the ESP32 drives on the
+        servo bus (CLK, MOSI and the four chip selects). A weaker drive
+        softens the edges like a series resistor; pair it with a slower
+        clock (APP_SERVO_SPI_KHZ).
+
+config APP_SERVO_SPI_DRIVE_0
+    bool "0: ~5 mA (softest)"
+config APP_SERVO_SPI_DRIVE_1
+    bool "1: ~10 mA"
+config APP_SERVO_SPI_DRIVE_2
+    bool "2: ~20 mA (the ESP32's default)"
+config APP_SERVO_SPI_DRIVE_3
+    bool "3: ~40 mA (strongest)"
+
+endchoice
+
+config APP_SERVO_SPI_DRIVE
+    int
+    default 0 if APP_SERVO_SPI_DRIVE_0
+    default 1 if APP_SERVO_SPI_DRIVE_1
+    default 2 if APP_SERVO_SPI_DRIVE_2
+    default 3 if APP_SERVO_SPI_DRIVE_3
+
 config APP_STA_AUTO_CONNECT
     bool "Auto-connect to saved STA network on boot"
     default y
@@ -481,12 +525,51 @@ config APP_POLICY_TEMP_GUARD
     bool "Stop the RL walk on hot servos"
     default n
     help
-        On: a run does not start while a servo is at the policy's start
-        temperature (45 degC) or more, ramps down at its stop temperature
-        (55 degC), and goes limp after a second over 60 degC. Off (this
-        branch's default): no temperature check at all; the hottest servo is
-        still shown on the page and logged. Watch it: the servos can be
-        damaged by heat.
+        On: a run does not start while a servo is at APP_POLICY_TEMP_STOP_C
+        - 5 degC or more, ramps down at APP_POLICY_TEMP_STOP_C, and goes limp
+        after a second over APP_POLICY_TEMP_STOP_C + 5. Off (this branch's
+        default): no temperature check for the ordinary walks; the hottest
+        servo is still shown on the page and logged. The recovery walk and
+        get-up (mini_pupper_4_recovery) check always, with the same limits.
+        Watch it: the servos can be damaged by heat.
+
+config APP_POLICY_TEMP_STOP_C
+    int "RL walk: servo temperature stop (degC; 0 = no temperature check)"
+    range 0 120
+    default 85
+    help
+        Where a run checks temperatures (APP_POLICY_TEMP_GUARD, or always for
+        the recovery walk and get-up): no start with a servo at this - 5 degC
+        or more (only with APP_POLICY_TEMP_GUARD; a recovery run starts
+        anyway), a stop at this (a ramp to the stand; none during a get-up
+        unless APP_POLICY_TEMP_IN_GETUP),
+        and limp after a second at this + 5. 85: 80 / 85 / 90 degC. 0: no
+        temperature check at all, not even for the recovery policies; the
+        hottest servo is still shown on the page and logged.
+
+config APP_POLICY_TEMP_IN_GETUP
+    bool "RL get-up: check servo temperatures during the get-up too"
+    default n
+    help
+        Off (default): while the robot is getting up, no temperature stop
+        and no limp at APP_POLICY_TEMP_STOP_C + 5, so a hot servo cannot
+        drop it halfway up. The walk before and after the get-up checks as
+        before, and the hottest servo is still shown and logged. On: the
+        get-up checks like the walk (limp at APP_POLICY_TEMP_STOP_C).
+        Watch it: the servos can be damaged by heat.
+
+config APP_POLICY_AUTO_RIGHT
+    bool "RL get-up: always get back up (also outside a run)"
+    default y
+    help
+        On: whenever nothing drives the legs (no RL run, no move playing -
+        a backflip turns the robot over on purpose - no ROS or other host),
+        a robot lying still on its back or a side (over 60 deg) for 0.3 s
+        runs the get-up policy at once (the gyro bias from those 0.3 s),
+        then stands. At most 3 tries, 3 s apart,
+        until it has been upright for 2 s again. The RL page's "Always gets
+        back up" switch turns it off and on until the next restart.
+        Picked up and held still on its side or back, it starts too.
 
 config APP_POLICY_WEIGHT_BITS
     int "Network weights on the robot: 32 (floats), 16 or 8 bits"

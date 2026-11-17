@@ -13,6 +13,7 @@
 #include "driver_board.h"
 
 #include <string.h>
+#include "sdkconfig.h"
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
@@ -76,6 +77,18 @@ float driver_board_get_scale_dd(void){ return db_scale_dd; }
 #include "robot/board_config.h"
 
 #define SPI_MASTER_ID    SERVO_SPI_HOST
+
+/* The servo bus's clock and output drive (menuconfig: APP_SERVO_SPI_KHZ,
+ * APP_SERVO_SPI_DRIVE; minipupperesp's DB_SPI_HZ / DB_SPI_DRIVE). Until the
+ * build reruns menuconfig's step a new option is missing: its default. */
+#ifndef CONFIG_APP_SERVO_SPI_KHZ
+#define CONFIG_APP_SERVO_SPI_KHZ 12000
+#endif
+#ifndef CONFIG_APP_SERVO_SPI_DRIVE
+#define CONFIG_APP_SERVO_SPI_DRIVE 2
+#endif
+#define DB_SPI_HZ        (CONFIG_APP_SERVO_SPI_KHZ * 1000)
+#define DB_SPI_DRIVE     ((gpio_drive_cap_t)CONFIG_APP_SERVO_SPI_DRIVE)
 #define SPI_MASTER_MOSI  SERVO_SPI_MOSI_PIN
 #define SPI_MASTER_MISO  SERVO_SPI_MISO_PIN
 #define SPI_MASTER_CLK   SERVO_SPI_CLK_PIN
@@ -267,11 +280,11 @@ bool driver_board_init(void)
         return false;
     }
 
-    /* 4 driver-board devices (12 MHz, mode 0) */
+    /* 4 driver-board devices (APP_SERVO_SPI_KHZ, mode 0) */
     spi_device_interface_config_t dev = {
         .mode           = 0,
         .duty_cycle_pos = 128,
-        .clock_speed_hz = 12 * 1000 * 1000,   /* 15 MHz max */
+        .clock_speed_hz = DB_SPI_HZ,          /* 15 MHz max */
         .queue_size     = 2,
     };
     struct { int cs; spi_device_handle_t *out; const char *name; } devs[4] = {
@@ -289,6 +302,15 @@ bool driver_board_init(void)
             return false;
         }
     }
+
+    /* softer edges on every line the ESP32 drives on the servo bus
+     * (APP_SERVO_SPI_DRIVE; after spi_bus_add_device, which sets the CS pins up) */
+    static const gpio_num_t drive_pins[] = {
+        SPI_MASTER_CLK, SPI_MASTER_MOSI, SPI_MASTER_CS0, SPI_MASTER_CS1, SPI_MASTER_CS2, SPI_MASTER_CS3 };
+    for (size_t i = 0; i < sizeof drive_pins / sizeof drive_pins[0]; i++)
+        gpio_set_drive_capability(drive_pins[i], DB_SPI_DRIVE);
+    ESP_LOGI(TAG, "driver board SPI: %d kHz, output drive %d (0 = softest .. 3)",
+             DB_SPI_HZ / 1000, (int)DB_SPI_DRIVE);
 
     driver_board_power(true);
     ESP_LOGD(TAG, "driver board SPI init OK (4 boards, 12 servos, variant %d)",

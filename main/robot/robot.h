@@ -222,7 +222,7 @@ struct Config {
     int up_height = 10;  // Foot lift height (mm)
     int stride   = 10;   // Stride length (mm)
     int tilt     = 10;   // Body tilt angle (degrees)
-    int sg_speed = 50;   // Stanford walk / diagonal speed (mm/s, max 200)
+    int sg_speed = 100;  // Stanford walk / diagonal speed (mm/s, max 200): minipupperesp's sgspeed (as mpx)
 };
 
 // ── Servo bus configuration ──────────────────────────────────
@@ -689,6 +689,7 @@ void        set_rest_after(uint32_t seconds);   // 0 = never; saved
 uint32_t    rest_after();
 const char *power_state_name();
 bool        servos_resting();
+bool        servos_off();       // lain down and switched off (not still lowering)
 void        rest_now();
 void        wake_servos();
 // Powered down at SERVO_HOLD_CURRENT_MA (low current hold) instead of the

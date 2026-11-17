@@ -5,6 +5,7 @@
 #include "nvs_flash.h"
 
 #include "audio/mpx_audio.h"
+#include "util/deep_sleep.h"
 #include "display/display_glue.h"
 #include "fs/littlefs_manager.h"
 #include "lua/lua_vm.h"
@@ -87,6 +88,8 @@ extern "C" void app_main(void)
 #endif
 
 	// ── Robot HAL (servo bus, gait task on Core 1) ─────────────
+	// After a Sleep, the servo bus pins are still held parked: let go first.
+	mpx_sleep_release_pins();
 	mpx_robot_set_skill_hooks(&s_skill_hooks);
 	robot::set_master_observer(on_master_changed);
 	if (!robot::init()) {

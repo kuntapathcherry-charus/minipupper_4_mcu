@@ -549,6 +549,104 @@ static const uint16_t BF_T9_MOVE [12] = { 1000,  350,  350,  135,   96,   16,   
 static const uint16_t BF_T9_DELAY[12] = {  500,    0,    0,    0,    0,    0,    0,    0,    0,    0,  300,    0 };
 static const uint8_t  BF_T9_BLEND[12] = {  100,  100,  100,  100,  100,  100,  100,  100,  100,  100,  100,  100 };
 
+/* The three 405 g flips from minipupperesp (main.c, 2026-11-09) - the ones that flip your robot now:
+ *   backflip_k7_405         "Backflip K7 405"       K7 re-timed for the 405 g robot
+ *   backflip_k7_405_k40     "Backflip K7 405 K+40"  + 40 ticks rear-knee kick (real flip 62: 360 deg at 440 ms)
+ *   backflip_k7_405_otplus  "Backflip K7 405 OT+"   + a longer tuck (frame 5 held 25 ms more)
+ * Exactly what minipupperesp's one-button flip plays, with its two run-time changes written in:
+ *   - DELAY[5] + 6 ms: its fixed landing timing for "Backflip K7 405..." (bf_lt_def, +6 ms)
+ *   - the front calves (servos 3 and 6) fold at most 470 ticks (142 deg) from the stand, so the flip fits
+ *     a robot calibrated with every servo at 155 deg (the centre, offset 0). Sim: the same turn
+ *     (K+40 293 deg, OT+ 291), the paws touch first more often.
+ * bf_play() runs them at an 1800 mA current cap (minipupperesp's CUR_MAX_MA for the new motors). */
+static const uint16_t BF_T10_REF[13] =
+    {    0,  425,  514,  658,  495,  507,  367,  504,  590,  455,  499,  512,  603 };
+static const int16_t BF_T10_DELTA[8][13] = {
+    {    0,     0,  -101,  -244,     0,   101,   244,     0,  -152,   -38,     0,   152,    38},
+    {    0,     0,  -163,    85,     0,   163,   -85,     0,  -144,   -38,     0,   144,    38},
+    {    0,     0,  -192,    13,     0,   192,   -13,     0,  -281,    45,     0,   281,   -45},
+    {    0,     0,  -395,  -452,     0,   395,   452,     0,   169,   412,     0,  -169,  -412},
+    {    0,     0,  -275,  -470,     0,   275,   470,     0,   -48,  -152,     0,    48,   152},
+    {    0,     0,    61,    -9,     0,   -61,     9,     0,    61,     8,     0,   -61,    -8},
+    {    0,     0,    76,   -57,     0,   -76,    57,     0,    89,   -10,     0,   -89,    10},
+    {    0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0},
+};
+static const uint16_t BF_T10_MOVE [9] = {  1000,   600,    16,    27,    54,    40,    29,    60,   600 };
+static const uint16_t BF_T10_DELAY[9] = {   500,   300,    20,    42,    49,    48,    23,   243,   300 };
+static const uint8_t  BF_T10_BLEND[9] = {   100,   100,   100,   100,   100,   100,   100,   100,   100 };
+
+static const uint16_t BF_T11_REF[13] =
+    {    0,  425,  514,  658,  495,  507,  367,  504,  590,  455,  499,  512,  603 };
+static const int16_t BF_T11_DELTA[8][13] = {
+    {    0,     0,  -101,  -244,     0,   101,   244,     0,  -152,   -38,     0,   152,    38},
+    {    0,     0,  -163,    85,     0,   163,   -85,     0,  -144,   -38,     0,   144,    38},
+    {    0,     0,  -192,    13,     0,   192,   -13,     0,  -281,    45,     0,   281,   -45},
+    {    0,     0,  -395,  -452,     0,   395,   452,     0,   301,   412,     0,  -301,  -412},
+    {    0,     0,  -275,  -470,     0,   275,   470,     0,   -48,  -152,     0,    48,   152},
+    {    0,     0,    61,    -9,     0,   -61,     9,     0,    61,     8,     0,   -61,    -8},
+    {    0,     0,    76,   -57,     0,   -76,    57,     0,    89,   -10,     0,   -89,    10},
+    {    0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0},
+};
+static const uint16_t BF_T11_MOVE [9] = {  1000,   600,    16,    27,    54,    40,    29,    60,   600 };
+static const uint16_t BF_T11_DELAY[9] = {   500,   300,    20,    42,    49,    48,    23,   243,   300 };
+static const uint8_t  BF_T11_BLEND[9] = {   100,   100,   100,   100,   100,   100,   100,   100,   100 };
+
+static const uint16_t BF_T12_REF[13] =
+    {    0,  425,  514,  658,  495,  507,  367,  504,  590,  455,  499,  512,  603 };
+static const int16_t BF_T12_DELTA[8][13] = {
+    {    0,     0,  -101,  -244,     0,   101,   244,     0,  -152,   -38,     0,   152,    38},
+    {    0,     0,  -163,    85,     0,   163,   -85,     0,  -144,   -38,     0,   144,    38},
+    {    0,     0,  -192,    13,     0,   192,   -13,     0,  -281,    45,     0,   281,   -45},
+    {    0,     0,  -395,  -452,     0,   395,   452,     0,   301,   412,     0,  -301,  -412},
+    {    0,     0,  -275,  -470,     0,   275,   470,     0,   101,  -152,     0,  -101,   152},
+    {    0,     0,    61,    -9,     0,   -61,     9,     0,    61,     8,     0,   -61,    -8},
+    {    0,     0,    76,   -57,     0,   -76,    57,     0,    89,   -10,     0,   -89,    10},
+    {    0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0},
+};
+static const uint16_t BF_T12_MOVE [9] = {  1000,   600,    16,    27,    54,    40,    29,    60,   600 };
+static const uint16_t BF_T12_DELAY[9] = {   500,   300,    20,    42,    74,    48,    23,   243,   300 };
+static const uint8_t  BF_T12_BLEND[9] = {   100,   100,   100,   100,   100,   100,   100,   100,   100 };
+
+/* Backflip K7 405 S3 (minipupperesp "Backflip K7 405 S3", 2026-11-09, its BF_T65): S1 with only the timing
+ * re-tuned for rubber shoes - the front push held 14 ms longer, the rear push faster (move 62->39, hold 67->52),
+ * frame 6 faster, the landing pose held 63 ms longer; the same leg positions as S1. minipupperesp's sim: turns
+ * 258 deg (S1 252), upright 15/15 on 3 models (23/32 on 32 wider ones). No soft landing in its preset row. */
+static const uint16_t BF_T13_REF[13] =
+    {    0,  425,  514,  658,  495,  507,  367,  504,  590,  455,  499,  512,  603 };
+static const int16_t BF_T13_DELTA[8][13] = {
+    {   0,    0,  -92, -246,    0,   92,  246,    0, -152,  -31,    0,  152,   31},
+    {   0,    0, -173,   86,    0,  173,  -86,    0, -143,  -62,    0,  143,   62},
+    {   0,    0, -192,   -5,    0,  192,    5,    0, -205,   54,    0,  205,  -54},
+    {   0,    0, -397, -442,    0,  397,  442,    0,  165,  419,    0, -165, -419},
+    {   0,    0, -274, -470,    0,  274,  470,    0,  -52, -161,    0,   52,  161},
+    {   0,    0,   56,  -17,    0,  -56,   17,    0,   76,   11,    0,  -76,  -11},
+    {   0,    0,   99,  -60,    0,  -99,   60,    0,   83,  -16,    0,  -83,   16},
+    {   0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0},
+};
+static const uint16_t BF_T13_MOVE [9] = { 1000,  722,   24,   35,   39,   57,   18,   55,  600 };
+static const uint16_t BF_T13_DELAY[9] = {  500,  235,   37,   36,   52,   41,   48,  346,  300 };
+static const uint8_t  BF_T13_BLEND[9] = {  100,  100,  100,  100,  100,  100,  100,  100,  100 };
+
+/* Backflip K7 405 L2 (minipupper-backflip presets/k7_405_l2.json, minipupperesp "Backflip K7 405 L2", 2026-11-11):
+ * K7 405 g's push (frames 1-4 identical), the landing (frames 5-7 + timing of 4-7) re-tuned by CMA-ES on 30 sim
+ * robot models so it lands front paws first and settles level instead of sitting back 40-47 deg. Filmed on the
+ * real robot, with and without the display. The +6 ms landing shift and the 142 deg front-knee cap are written in. */
+static const uint16_t BF_T14_REF[13] =
+    {    0,  425,  514,  658,  495,  507,  367,  504,  590,  455,  499,  512,  603 };
+static const int16_t BF_T14_DELTA[8][13] = {
+    {   0,    0, -101, -244,    0,  101,  244,    0, -152,  -38,    0,  152,   38},
+    {   0,    0, -163,   85,    0,  163,  -85,    0, -144,  -38,    0,  144,   38},
+    {   0,    0, -192,   13,    0,  192,  -13,    0, -281,   45,    0,  281,  -45},
+    {   0,    0, -395, -452,    0,  395,  452,    0,  169,  412,    0, -169, -412},
+    {   0,    0, -311, -446,    0,  311,  446,    0,  -25, -181,    0,   25,  181},
+    {   0,    0,   51,  -38,    0,  -51,   38,    0,   52,   64,    0,  -52,  -64},
+    {   0,    0,   72,  -63,    0,  -72,   63,    0,   92,   97,    0,  -92,  -97},
+    {   0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0},
+};
+static const uint16_t BF_T14_MOVE [9] = { 1000,  600,   16,   27,   74,   36,   27,   93,  600 };
+static const uint16_t BF_T14_DELAY[9] = {  500,  300,   20,   42,   37,   43,   27,  158,  300 };
+static const uint8_t  BF_T14_BLEND[9] = {  100,  100,  100,  100,  100,  100,  100,  100,  100 };
+
 struct BfPreset {
     const char     *name;       // wire name
     const char     *note;
@@ -578,6 +676,16 @@ const BfPreset BF_PRESETS[] = {
       BF_T8_REF, &BF_T8_DELTA[0][0], BF_T8_MOVE, BF_T8_DELAY, BF_T8_BLEND },
     { "farjump_table",      "Far Jump (teach table): sim one hop 18-23 cm, hips fixed", 12,
       BF_T9_REF, &BF_T9_DELTA[0][0], BF_T9_MOVE, BF_T9_DELAY, BF_T9_BLEND },
+    { "backflip_k7_405", "Backflip K7 405 g: minipupperesp's one-button flip, 1800 mA, front knees <= 142 deg", 9,
+      BF_T10_REF, &BF_T10_DELTA[0][0], BF_T10_MOVE, BF_T10_DELAY, BF_T10_BLEND },
+    { "backflip_k7_405_k40", "Backflip K7 405 g kick +40: minipupperesp's one-button flip, 1800 mA, front knees <= 142 deg", 9,
+      BF_T11_REF, &BF_T11_DELTA[0][0], BF_T11_MOVE, BF_T11_DELAY, BF_T11_BLEND },
+    { "backflip_k7_405_otplus", "Backflip K7 405 g OT+: minipupperesp's one-button flip, 1800 mA, front knees <= 142 deg", 9,
+      BF_T12_REF, &BF_T12_DELTA[0][0], BF_T12_MOVE, BF_T12_DELAY, BF_T12_BLEND },
+    { "backflip_k7_405_s3", "Backflip K7 405 g S3: minipupperesp's shoes flip (S1 poses, re-timed), 1500 mA", 9,
+      BF_T13_REF, &BF_T13_DELTA[0][0], BF_T13_MOVE, BF_T13_DELAY, BF_T13_BLEND },
+    { "backflip_k7_405_l2", "Backflip K7 405 L2: K7 405 g's push + a re-tuned landing that settles level, 1500 mA, front knees <= 142 deg", 9,
+      BF_T14_REF, &BF_T14_DELTA[0][0], BF_T14_MOVE, BF_T14_DELAY, BF_T14_BLEND },
 };
 constexpr int BF_NPRESETS = sizeof(BF_PRESETS) / sizeof(BF_PRESETS[0]);
 constexpr int BF_MAX_FRAMES = 32;
@@ -585,6 +693,9 @@ static_assert(BF_NPRESETS <= GAIT_BF_MAX, "raise GAIT_BF_MAX in robot.h");
 static_assert(GAIT_BF_BASE + GAIT_BF_MAX <= GAIT_TJ_BASE, "BF and TJ gait ranges overlap");
 
 constexpr int BF_DEF_MOVE = 600, BF_DEF_DELAY = 300, BF_REF_MOVE = 1000, BF_REF_DELAY = 500;
+// The 405 g flips (backflip_k7_405*) were tuned and recorded in minipupperesp at an 1800 mA cap (CUR_MAX_MA,
+// the new motors). Every other move here keeps each servo's own cap (SERVO_CURRENT_MAX_MA = 1500 at most).
+constexpr uint16_t BF_405_CURRENT_MA = 1500;   // 2026-11-09: back to 1500 for the OLD servos (1800 was for the new motors)
 
 void bf_play(int k, GaitCmd cmd)
 {
@@ -613,6 +724,11 @@ void bf_play(int k, GaitCmd cmd)
 
     const bool pushed = gains_push(0);   // Strong for the flip, like bf_auto_strong
     set_all_servo_speed(0);
+    // 1800 mA for the 405 g flips only, for the flip only: each servo's own cap comes back after
+    uint16_t cur_saved[13];
+    std::memcpy(cur_saved, s_current_ma, sizeof cur_saved);
+    const bool hi_cur = std::strncmp(p.name, "backflip_k7_405", 15) == 0;
+    if (hi_cur) for (int i = 1; i <= 12; ++i) s_current_ma[i] = BF_405_CURRENT_MA;
     ESP_LOGI(TAG, "frame preset '%s': %d frames", p.name, n);
 
     float from[13], to[13];
@@ -644,6 +760,7 @@ void bf_play(int k, GaitCmd cmd)
             next = now + static_cast<uint32_t>(span_ms(f));
         }
     }
+    if (hi_cur) std::memcpy(s_current_ma, cur_saved, sizeof cur_saved);
     if (pushed) gains_pop();
 }
 

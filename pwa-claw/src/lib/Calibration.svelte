@@ -142,24 +142,38 @@
     for (const p of calProps) updateOffset(servoOf(p.id), 0);
   }
 
-  // Slider drag: values follow the finger; the robot is told on release.
+  // Slider drag: only a deliberate SIDEWAYS drag changes the value, and it moves it relative to where it was (a
+  // touch never jumps it to the finger). A tap, or a vertical swipe to scroll the page, changes nothing: a stray
+  // touch while scrolling used to set and save a calibration value. The robot is told on release.
   let dragJoint = null;
-  function valueAt(e) {
-    const r = e.currentTarget.getBoundingClientRect();
-    return MIN + ((e.clientX - r.left) / r.width) * (MAX - MIN);
-  }
+  let drag = null;   // { joint, x0, y0, v0, w, moving }
+  const DRAG_START_PX = 10;
   function sliderDown(e, joint) {
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
-    dragJoint = joint;
-    setJoint(joint, valueAt(e), { commit: false });
+    const r = e.currentTarget.getBoundingClientRect();
+    drag = { joint, x0: e.clientX, y0: e.clientY, v0: calValues[selectedLeg][joint], w: r.width, moving: false };
+    dragJoint = null;
   }
   function sliderMove(e, joint) {
-    if (dragJoint === joint) setJoint(joint, valueAt(e), { commit: false });
+    if (!drag || drag.joint !== joint) return;
+    const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
+    if (!drag.moving) {
+      if (Math.abs(dx) < DRAG_START_PX || Math.abs(dx) < Math.abs(dy)) return;
+      drag.moving = true;
+      dragJoint = joint;
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+    }
+    setJoint(joint, drag.v0 + (dx / drag.w) * (MAX - MIN), { commit: false });
   }
   function sliderUp(joint) {
-    if (dragJoint !== joint) return;
+    const moved = drag && drag.joint === joint && drag.moving;
+    drag = null;
     dragJoint = null;
-    updateOffset(servoOf(joint), calValues[selectedLeg][joint]);
+    if (moved) updateOffset(servoOf(joint), calValues[selectedLeg][joint]);
+  }
+  function sliderCancel(joint) {   // the browser took the touch (a scroll): put the value back, save nothing
+    if (drag && drag.joint === joint && drag.moving) setJoint(joint, drag.v0, { commit: false });
+    drag = null;
+    dragJoint = null;
   }
   function sliderKey(e, joint) {
     const keys = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1 };
@@ -250,7 +264,7 @@
                 onpointerdown={(e) => sliderDown(e, p.id)}
                 onpointermove={(e) => sliderMove(e, p.id)}
                 onpointerup={() => sliderUp(p.id)}
-                onpointercancel={() => sliderUp(p.id)}
+                onpointercancel={() => sliderCancel(p.id)}
                 onkeydown={(e) => sliderKey(e, p.id)}
               >
                 <span class="track" aria-hidden="true"></span>
@@ -316,7 +330,7 @@
   .ctl { display: flex; align-items: center; gap: 12px; }
   .step { width: 56px; height: 56px; border-radius: 18px; border: none; background: var(--ground); color: var(--ink); flex-shrink: 0; display: grid; place-items: center; cursor: pointer; transition: transform 60ms; }
   .step:active { transform: scale(0.95); background: var(--mpx-yellow); }
-  .slider { flex: 1; height: 56px; position: relative; cursor: pointer; touch-action: none; }
+  .slider { flex: 1; height: 56px; position: relative; cursor: pointer; touch-action: pan-y; }
   .track { position: absolute; left: 0; right: 0; top: 25px; height: 6px; border-radius: 3px; background: var(--hair); }
   .mid { position: absolute; left: 50%; top: 18px; width: 2px; height: 20px; margin-left: -1px; background: #B5AFA2; }
   .fill { position: absolute; top: 25px; height: 6px; border-radius: 3px; background: var(--ink); }

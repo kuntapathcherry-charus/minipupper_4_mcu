@@ -38,6 +38,22 @@
  * it instead of going limp, and the walk goes on once the robot stands. GETUP
  * has no tilt stop (lying on the back is where it starts), a higher current
  * guard, and a time limit; the servo, temperature and board guards stay.
+ *
+ * mini_pupper_4_recovery's walker and get-up (SKU2; files with its decoder
+ * block, MPXP_FLAG_DECODER: policies/sku2_recovery.mpxp and getup.mpxp)
+ * run as its Pi runner (deploy/runner.py) does, with the numbers the block
+ * carries: the robot's own calibration ("use my calibration", the default for
+ * this robot; the bounds' track limits move with it) or the file's; the
+ * walker's stand 12 deg wider at the abductions and its targets through the
+ * joint bounds; a fall
+ * from a complementary-filter tilt (60 deg for 0.3 s, or 45 deg turning faster
+ * than 2 rad/s) switches to the get-up at the next step, its decoder seeded
+ * from the measured pose and its phase clock from 0 (restarted after 1 s at
+ * its end while still tilted over 45 deg); 25 steps upright, still and near
+ * the stand hand back to the walker, seeded from the pose, the heading held
+ * again. No current guard in the get-up (1500 mA for 0.5 s walking), the
+ * temperature guard on (APP_POLICY_TEMP_STOP_C: 85 degC stop, 90 for 1 s limp), at most 10
+ * get-ups, 20 s each; any stop during the get-up goes limp at once.
  */
 #include "mpx_policy.h"
 
@@ -68,6 +84,18 @@ extern const uint8_t default_mpxp_end[] asm("_binary_default_mpxp_end");
 extern const uint8_t getup_mpxp_start[] asm("_binary_getup_mpxp_start");
 extern const uint8_t getup_mpxp_end[] asm("_binary_getup_mpxp_end");
 #endif
+#ifdef MPX_POLICY_HAVE_GETUP_SKU1
+extern const uint8_t getup_sku1_mpxp_start[] asm("_binary_getup_sku1_mpxp_start");
+extern const uint8_t getup_sku1_mpxp_end[] asm("_binary_getup_sku1_mpxp_end");
+#endif
+#ifdef MPX_POLICY_HAVE_SKU1V2_RECOVERY
+extern const uint8_t sku1v2_recovery_mpxp_start[] asm("_binary_sku1v2_recovery_mpxp_start");
+extern const uint8_t sku1v2_recovery_mpxp_end[] asm("_binary_sku1v2_recovery_mpxp_end");
+#endif
+#ifdef MPX_POLICY_HAVE_CLIMB
+extern const uint8_t climb_mpxp_start[] asm("_binary_climb_mpxp_start");
+extern const uint8_t climb_mpxp_end[] asm("_binary_climb_mpxp_end");
+#endif
 #ifdef MPX_POLICY_HAVE_TERRAIN
 extern const uint8_t terrain_mpxp_start[] asm("_binary_terrain_mpxp_start");
 extern const uint8_t terrain_mpxp_end[] asm("_binary_terrain_mpxp_end");
@@ -87,6 +115,30 @@ extern const uint8_t sku1_terr11k_mpxp_end[] asm("_binary_sku1_terr11k_mpxp_end"
 #ifdef MPX_POLICY_HAVE_SKU1_TERR15K
 extern const uint8_t sku1_terr15k_mpxp_start[] asm("_binary_sku1_terr15k_mpxp_start");
 extern const uint8_t sku1_terr15k_mpxp_end[] asm("_binary_sku1_terr15k_mpxp_end");
+#endif
+#ifdef MPX_POLICY_HAVE_SKU1V2_STAIRS
+extern const uint8_t sku1v2_stairs_mpxp_start[] asm("_binary_sku1v2_stairs_mpxp_start");
+extern const uint8_t sku1v2_stairs_mpxp_end[] asm("_binary_sku1v2_stairs_mpxp_end");
+#endif
+#ifdef MPX_POLICY_HAVE_SKU1V2_405_STAIRS
+extern const uint8_t sku1v2_405_stairs_mpxp_start[] asm("_binary_sku1v2_405_stairs_mpxp_start");
+extern const uint8_t sku1v2_405_stairs_mpxp_end[] asm("_binary_sku1v2_405_stairs_mpxp_end");
+#endif
+#ifdef MPX_POLICY_HAVE_SKU1V2_405_WALK
+extern const uint8_t sku1v2_405_walk_mpxp_start[] asm("_binary_sku1v2_405_walk_mpxp_start");
+extern const uint8_t sku1v2_405_walk_mpxp_end[] asm("_binary_sku1v2_405_walk_mpxp_end");
+#endif
+#ifdef MPX_POLICY_HAVE_SKU1V2_405V2_STAIRS
+extern const uint8_t sku1v2_405v2_stairs_mpxp_start[] asm("_binary_sku1v2_405v2_stairs_mpxp_start");
+extern const uint8_t sku1v2_405v2_stairs_mpxp_end[] asm("_binary_sku1v2_405v2_stairs_mpxp_end");
+#endif
+#ifdef MPX_POLICY_HAVE_SKU2_STAIRS
+extern const uint8_t sku2_stairs_mpxp_start[] asm("_binary_sku2_stairs_mpxp_start");
+extern const uint8_t sku2_stairs_mpxp_end[] asm("_binary_sku2_stairs_mpxp_end");
+#endif
+#ifdef MPX_POLICY_HAVE_SKU2_RECOVERY
+extern const uint8_t sku2_recovery_mpxp_start[] asm("_binary_sku2_recovery_mpxp_start");
+extern const uint8_t sku2_recovery_mpxp_end[] asm("_binary_sku2_recovery_mpxp_end");
 #endif
 }
 
@@ -111,8 +163,25 @@ constexpr bool    TEMP_GUARD     = true;
 #else
 constexpr bool    TEMP_GUARD     = false;
 #endif
-constexpr int     GUARD_TEMP_DC  = 600;
+// The limits themselves (menuconfig APP_POLICY_TEMP_STOP_C, default 85 degC; 0 = no temperature check at all), for
+// every run that checks (APP_POLICY_TEMP_GUARD, or a recovery policy, which always does): no start with a servo at
+// stop - 5 degC or more, the stop (a ramp down; limp in a get-up) at the stop temperature, limp after 1 s at stop + 5.
+// They replace the policy files' own (45 / 55 / 60 degC).
+#ifndef CONFIG_APP_POLICY_TEMP_STOP_C
+#define CONFIG_APP_POLICY_TEMP_STOP_C 85
+#endif
+constexpr int     TEMP_STOP_C    = CONFIG_APP_POLICY_TEMP_STOP_C;
+constexpr bool    TEMP_CHECKS    = TEMP_STOP_C > 0;
+constexpr float   TEMP_START_C   = TEMP_STOP_C - 5.0f;
+constexpr int     GUARD_TEMP_DC  = (TEMP_STOP_C + 5) * 10;
 constexpr int64_t GUARD_TEMP_US  = 1000000;
+// During a get-up (MPX_POLICY_GETUP) none of these checks run unless APP_POLICY_TEMP_IN_GETUP: pushing the body
+// over heats the servos, and a stop there drops the robot limp halfway up. The walk after it checks again.
+#ifdef CONFIG_APP_POLICY_TEMP_IN_GETUP
+constexpr bool    TEMP_IN_GETUP  = true;
+#else
+constexpr bool    TEMP_IN_GETUP  = false;
+#endif
 constexpr int     BOARD_LOST_TICKS = 20;   // ramps and holds: as rl_link
 constexpr int     BOARD_LOST_TICKS_RUN = 2; // the policy: its observation would be stale
 // GETUP: pushing the body over loads the servos for longer than a walk does.
@@ -125,6 +194,12 @@ constexpr double  GETUP_OK_GYRO     = 0.8;  // rad/s
 constexpr double  GETUP_OK_RMS_DEG  = 10.0; // joints from the stand, rms
 constexpr int     GETUP_OK_STEPS    = 25;
 constexpr double  GETUP_PHASE_LYING_DEG = 60.0;   // a tracked get-up motion starts from its beginning beyond this tilt
+// CLIMB (the climb policy, omniRL climb_track.py --residual-deg): as trained, the stand held before the trigger,
+// the motion (phase 0..1), then holding on top (training's hold_s) before the robot is given back.
+constexpr float   CLIMB_HOLD_IN_S = 1.0f;
+constexpr float   CLIMB_HOLD_TOP_S = 3.0f;
+// A recovery policy's clocks count policy steps of exactly this (the Pi runner's STATE ticks x 4).
+constexpr double  STEP_S = TICKS_PER_STEP * TICK_US * 1e-6;
 
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -147,13 +222,47 @@ int       s_bits = CONFIG_APP_POLICY_WEIGHT_BITS;
 pol_net_t s_gu_net;
 float    *s_gu_work = nullptr;
 bool      s_gu_ok = false;
+// The climb policy (policies/climb.mpxp), installed like the get-up's.
+pol_net_t s_cl_net;
+float    *s_cl_work = nullptr;
+bool      s_cl_ok = false;
 bool      s_auto_getup = false;
 
 // Requests from other tasks (under s_mux).
-bool  s_req_start = false, s_req_stop = false, s_req_dry = false, s_req_getup = false;
+bool  s_req_start = false, s_req_stop = false, s_req_dry = false, s_req_getup = false, s_req_climb = false;
 bool  s_bench_busy = false;   // the size test (or the Test button) has the network
 float s_req_seconds = 0.0f, s_req_hold = 0.0f;
 char  s_req_why[64];
+// "Always gets back up" (APP_POLICY_AUTO_RIGHT, mpx_policy_set_auto_right()): with nothing driving the legs (no run,
+// no move playing, no ROS or other host), a robot lying still on its back or a side for AR_HOLD_US starts the get-up
+// on its own (mpx_policy_getup(): from where it lies to the stand, then the robot is given back standing). At most
+// AR_TRIES in a row, AR_PAUSE_US apart; the count starts again once it has been upright for AR_UP_US.
+#ifdef CONFIG_APP_POLICY_AUTO_RIGHT
+constexpr bool    AUTO_RIGHT_DEFAULT = true;
+#else
+constexpr bool    AUTO_RIGHT_DEFAULT = false;
+#endif
+constexpr double  AR_TILT_DEG = 60.0;      // lying: a side is 90 deg, the back 180
+constexpr double  AR_UP_DEG   = 30.0;      // upright again
+constexpr double  AR_GYRO_DPS = 15.0;      // still: not rocking, turned over or carried about
+constexpr int64_t AR_HOLD_US  = 300000;    // still that long (its gyro readings are the run's bias)
+constexpr int64_t AR_UP_US    = 2000000;
+constexpr int64_t AR_PAUSE_US = 3000000;
+constexpr int64_t AR_REFUSED_US = 10000000;
+constexpr int     AR_TRIES    = 3;
+std::atomic<bool> s_auto_right{AUTO_RIGHT_DEFAULT};
+// The tick task's own: the run on now was started by it; lying / upright since; the next try not before; tries.
+bool     s_ar_run = false;
+int64_t  s_ar_since = -1, s_ar_up_since = -1, s_ar_next = 0;
+int      s_ar_tries = 0;
+// The gyro while lying still (rad/s, sensor frame, summed over the hold): the get-up's bias, so its PREP skips the
+// second of "keep still" a run otherwise measures (AR_PREP_S instead: the servos' first answers).
+double   s_ar_gsum[3];
+int      s_ar_gn = 0;
+bool     s_ar_bias_ready = false;
+double   s_ar_bias[3];
+constexpr float AR_PREP_S = 0.05f;
+constexpr int   AR_BIAS_MIN_N = 40;        // 0.2 s of ticks
 // The per-step log (mpx_policy_set_log). Written by the tick task during a
 // run only; read by others only while idle.
 struct LogRec {
@@ -179,6 +288,25 @@ bool     s_log_on = false;    // this run is logged
 // After a logged run (after_task): its summary on the serial port, and the
 // log saved to flash so it outlives a reboot (or a run without Wi-Fi).
 constexpr const char *LOG_FILE = "/fs/rl_last_run.csv";
+// The get-up's own log (every logged run that gets up): each servo's target as sent, its measured position (both in
+// AT32 dd, 10 per degree) and its current, every 20 ms step in GETUP, up to GU_LOG_MAX steps; saved after the run to
+// GU_LOG_FILE (GET /v1/policy/getup_log) with the calibration and bounds in its header, and summarised per servo on
+// the serial port. 80 bytes a step, 120 KB of PSRAM, taken at the first logged run.
+constexpr const char *GU_LOG_FILE = "/fs/getup_last.csv";
+constexpr size_t GU_LOG_MAX = 1500;   // 30 s of get-up
+struct GuRec {
+    uint32_t t_ms;
+    int16_t  tilt_cdeg;
+    uint8_t  getup;      // which get-up of the run (1, 2, ...)
+    uint8_t  fresh;      // legs answering this tick (bit per board)
+    uint16_t tgt[12];    // dd as sent
+    uint16_t pos[12];    // dd measured (0: none)
+    int16_t  cur[12];    // mA
+};
+GuRec   *s_gu = nullptr;
+size_t   s_gu_n = 0;
+char     s_gu_name[48];
+double   s_gu_off[12];   // the calibration this run used (deg)
 TaskHandle_t s_after = nullptr;
 volatile bool s_saving = false;
 
@@ -203,6 +331,8 @@ struct Run {
     int       gu_steps, gu_ok;        // GETUP: steps so far, consecutive steps standing
     int       gu_pstep, gu_back;      // GETUP_PHASE: steps since the motion (re)started, steps still on the back
     double    gu_phase0;              //   the phase it started at
+    bool      climb_only;             // Climb: stand, CLIMB, then give the robot back
+    uint32_t  cl_step;                // CLIMB: policy steps since the climb began (its phase step)
     float     seconds, hold_s;
     double    off[POL_N];
     int       stand_dd[POL_N];
@@ -219,6 +349,7 @@ struct Run {
     double    bias_sum[3];
     int       bias_n;
     double    bias[3];
+    bool      pre_bias;               // an "always gets back up" get-up: bias measured by its watcher, short PREP
     // feedback
     uint16_t  pos_dd[POL_N];
     bool      pos_ok[POL_N];          // ever had a fresh reading this run
@@ -228,6 +359,8 @@ struct Run {
     pol_velfilt_t vf;
     pol_decoder_t dec;
     pol_tilt_t    tilt;
+    pol_hist_t    hist;               // the observation history (a terrain / stairs walk: 10 steps)
+    pol_heading_t hd;                 // the heading loop (MPXP_FLAG_HEADING)
     double    acc[3], gyr[3];         // latest valid sample, sensor frame (g, rad/s)
     bool      imu_ok;
     int       late_run;
@@ -240,6 +373,15 @@ struct Run {
     int64_t   t0_us, last_step_us;
     uint32_t  log_fwd_us;
     bool      log_late;
+    // mini_pupper_4_recovery (MPXP_FLAG_DECODER files): its runner's rules
+    const mpxp_dec_t *rules;          // fall, tilt filter, hand-back, guards: the walk's block, else the get-up's
+    double    off_walk[POL_N];        // the walk's calibration (R.off is the driving network's)
+    double    off_gu[POL_N];          // a recovery get-up's: the robot's own, or its file's
+    pol_cf_t  cf;                     // estimators.GravityFilter: the tilt the rules use
+    pol_fall_t fall;                  // estimators.FallDetector (a recovery walk)
+    double    tilt_cf, gyro_norm;     // deg, rad/s
+    bool      fall_pending;           // fallen: the get-up takes over at the next step
+    uint32_t  ticks;                  // armed ticks (the fall detector's clock)
 };
 Run R;
 
@@ -248,8 +390,9 @@ enum : int { JOB_IDLE = 0, JOB_RUNNING = 1, JOB_DONE = 2 };
 struct Job {
     const pol_net_t *net;
     float    *work;
-    float     obs[POL_OBS];
+    float     obs[POL_OBS * POL_HIST_MAX];   // dims[0] floats: the observation, or its history
     float     raw[POL_ACT];
+    uint32_t  step;                   // CLIMB: the phase step of the observation (pol_climb_action)
     uint32_t  us;                     // the evaluation, start to end (ticks included)
     uint32_t  gen;                    // s_gen when handed over
     std::atomic<int> state{ JOB_IDLE };
@@ -379,6 +522,14 @@ void graceful_stop(const char *why)
         finish(why, false);
         return;
     }
+    if (s == MPX_POLICY_GETUP && R.net && R.net->dec) {
+        // recovery runner: during a get-up, limp at once (no ramp from a fallen pose)
+        char w[64];
+        std::snprintf(w, sizeof(w), "%.40s (in GETUP: limp)", why);
+        ESP_LOGE(TAG, "DISARM: %s", w);
+        finish(w, true);
+        return;
+    }
     begin_ramp(MPX_POLICY_RAMP_OUT, RAMP_OUT_S);
 }
 
@@ -411,6 +562,20 @@ void pos_rel(double rel[POL_N])
     for (int i = 0; i < POL_N; ++i) rel[i] = pol_rel_from_dd(R.pos_dd[i], h->signs[i], R.off[i]);
 }
 
+/* Falls a run gets up from: the recovery rules', else MPX_POLICY_MAX_GETUPS. */
+uint32_t max_getups()
+{
+    return R.rules ? R.rules->max_getups : static_cast<uint32_t>(MPX_POLICY_MAX_GETUPS);
+}
+
+/* The rules of a run with a recovery walk or get-up: the walk's block, else the get-up's when it can run. */
+const mpxp_dec_t *run_rules()
+{
+    if (s_net.dec) return s_net.dec;
+    if (s_gu_ok && s_gu_net.dec && (R.auto_up || R.getup_only)) return s_gu_net.dec;
+    return nullptr;
+}
+
 // ── the phases ──────────────────────────────────────────────────────────
 
 void start_run()
@@ -427,6 +592,8 @@ void start_run()
     const bool dry = s_req_dry;
     const bool getup_only = s_req_getup;
     s_req_getup = false;
+    const bool climb_only = s_req_climb;
+    s_req_climb = false;
     s_st.dry = dry;
     s_st.getups = 0;
     s_st.getups_ok = 0;
@@ -442,7 +609,15 @@ void start_run()
     R.net = &s_net;
     R.work = s_work;
     R.getup_only = getup_only && s_gu_ok;
-    R.auto_up = s_auto_getup && s_gu_ok && !getup_only;
+    // "always gets back up" measured the bias while the robot lay still: the get-up starts after AR_PREP_S
+    R.pre_bias = R.getup_only && s_ar_bias_ready;
+    if (R.pre_bias) std::memcpy(R.bias, s_ar_bias, sizeof(R.bias));
+    s_ar_bias_ready = false;
+    R.climb_only = climb_only && s_cl_ok && !R.getup_only;
+    // never stays down: with a get-up trained for the walk's robot (and its servo directions)
+    R.auto_up = s_auto_getup && s_gu_ok && !getup_only && !R.climb_only &&
+                std::strcmp(s_gu_net.h->robot, s_net.h->robot) == 0 &&
+                std::memcmp(s_gu_net.h->signs, s_net.h->signs, sizeof(s_net.h->signs)) == 0;
     R.seconds = seconds;
     R.hold_s = hold;
     R.dry = dry;
@@ -456,15 +631,34 @@ void start_run()
             ESP_LOGW(TAG, "no memory for the run log");
         }
     }
+    s_gu_n = 0;
+    if (s_log_on && !s_gu && s_gu_ok) {
+        s_gu = static_cast<GuRec *>(heap_caps_calloc(GU_LOG_MAX, sizeof(GuRec), MALLOC_CAP_SPIRAM));
+        if (!s_gu) ESP_LOGW(TAG, "no memory for the get-up log");
+    }
     R.unlimited = seconds <= 0.0f;
     R.steps_left = R.unlimited ? 0
                                : static_cast<uint32_t>(std::max(1L, std::lround(seconds / s_net.h->ctrl_dt)));
     const mpxp_header_t *h = s_net.h;
+    // The robot's own calibration or the file's (a recovery policy: its bounds' track limits follow it,
+    // pol_bounds_calibrate; mpx_policy_start() has run its decoder self-test on it).
+    const bool own = s_use_robot_offsets;
     for (int i = 0; i < POL_N; ++i) {
-        R.off[i] = s_use_robot_offsets ? robot::get_offset(i + 1) : h->offsets_deg[i];
-        R.stand_dd[i] = s_use_robot_offsets ? pol_dd_from_rel(0.0, h->signs[i], R.off[i]) : h->stand_dd[i];
+        R.off[i] = own ? robot::get_offset(i + 1) : h->offsets_deg[i];
+        R.off_walk[i] = R.off[i];
+        R.off_gu[i] = (own || !s_gu_ok) ? R.off[i] : s_gu_net.h->offsets_deg[i];
+        R.stand_dd[i] = own ? pol_dd_from_rel(0.0, h->signs[i], R.off[i]) : h->stand_dd[i];
     }
+    if (s_net.dec) {
+        pol_bounds_calibrate(&s_net, R.off_walk);
+        pol_stand_dd(&s_net, R.off, R.stand_dd);   // the stance offset, through the bounds
+    }
+    if (s_gu_ok && s_gu_net.dec) pol_bounds_calibrate(&s_gu_net, R.off_gu);
     pol_tilt_init(&R.tilt, h->tilt_tau_s, static_cast<double>(TICK_US) * 1e-6);
+    R.rules = run_rules();
+    if (R.rules) pol_cf_init(&R.cf, R.rules->cf_tau_s, R.rules->cf_gate_lo_g, R.rules->cf_gate_hi_g);
+    pol_fall_reset(&R.fall);
+    R.tilt_cf = NAN;
     set_state(MPX_POLICY_PREP);
 
     if (R.dry) {
@@ -485,19 +679,30 @@ void start_run()
         return;
     }
     R.t_prev = esp_timer_get_time();
-    ESP_LOGW(TAG, "run: %s, servos configured; measuring the gyro bias (%.0f s, keep still)",
-             h->name, BIAS_S);
+    if (R.pre_bias) {
+        ESP_LOGW(TAG, "run: %s, servos configured; the gyro bias from lying still, getting up", h->name);
+    } else {
+        ESP_LOGW(TAG, "run: %s, servos configured; measuring the gyro bias (%.0f s, keep still)",
+                 h->name, BIAS_S);
+    }
 }
 
-void enter_run()
+void enter_run(bool from_pose = false)
 {
     R.net = &s_net;
     R.work = s_work;
-    // runner.loop: decoder and observation reset at the stand.
-    pol_decoder_reset(&R.dec);
-    pol_vel_reset(&R.vf);
+    std::memcpy(R.off, R.off_walk, sizeof(R.off));
+    // runner.loop: decoder and observation reset at the stand; the history refilled from the first observation,
+    // the heading held from here. A recovery walk handed back from its get-up: its decoder seeded from the measured
+    // pose (runner.loop: walker_decoder.reset(pos)), the fall detector cleared.
+    pol_hist_reset(&R.hist, pol_history(s_net.h));
+    pol_heading_reset(&R.hd);
     double rel[POL_N];
     pos_rel(rel);
+    pol_decoder_seed(&R.dec, &s_net, from_pose ? rel : nullptr);
+    pol_fall_reset(&R.fall);
+    R.fall_pending = false;
+    pol_vel_reset(&R.vf);
     pol_vel_push(&R.vf, rel);
     R.late_run = 0;
     R.late_in_step = false;
@@ -512,10 +717,15 @@ void enter_getup()
 {
     R.net = &s_gu_net;
     R.work = s_gu_work;
-    pol_decoder_reset(&R.dec);
-    pol_vel_reset(&R.vf);
+    pol_hist_reset(&R.hist, pol_history(s_gu_net.h));
+    // A recovery get-up: the run's calibration for it (the robot's own, or its file's), its decoder seeded from the
+    // measured pose (runner.loop: getup.decoder.reset(pos)). Others start at the stand, as omniRL's training does.
+    if (s_gu_net.dec) std::memcpy(R.off, R.off_gu, sizeof(R.off));
     double rel[POL_N];
     pos_rel(rel);
+    pol_decoder_seed(&R.dec, &s_gu_net, rel);
+    R.fall_pending = false;
+    pol_vel_reset(&R.vf);
     pol_vel_push(&R.vf, rel);
     R.late_run = 0;
     R.late_in_step = false;
@@ -533,6 +743,30 @@ void enter_getup()
     ESP_LOGW(TAG, "getting up (%u)%s", static_cast<unsigned>(R.getups), R.dry ? " (dry: servos untouched)" : "");
 }
 
+/* The climb policy takes over from the stand (training's trigger: standing in front of the box, phase 0, the
+ * decoder at the stand). */
+void enter_climb()
+{
+    R.net = &s_cl_net;
+    R.work = s_cl_work;
+    pol_hist_reset(&R.hist, pol_history(s_cl_net.h));
+    pol_decoder_reset(&R.dec);
+    pol_vel_reset(&R.vf);
+    double rel[POL_N];
+    pos_rel(rel);
+    pol_vel_push(&R.vf, rel);
+    R.late_run = 0;
+    R.late_in_step = false;
+    R.sub = 0;
+    R.cl_step = 0;
+    portENTER_CRITICAL(&s_mux);
+    s_st.climb_phase = 0.0f;
+    portEXIT_CRITICAL(&s_mux);
+    set_state(MPX_POLICY_CLIMB);
+    ESP_LOGW(TAG, "climbing: %s, %.1f s%s", s_cl_net.h->name, static_cast<double>(s_cl_net.h->cmd_max[0]),
+             R.dry ? " (dry: servos untouched)" : "");
+}
+
 void tick_prep()
 {
     uint8_t answered = 0, fresh = 0;
@@ -542,9 +776,9 @@ void tick_prep()
         for (int k = 0; k < 3; ++k) R.bias_sum[k] += R.gyr[k];
         ++R.bias_n;
     }
-    if (++R.prep_ticks < static_cast<int>(BIAS_S * 1e6 / TICK_US)) return;
+    const int prep_need = static_cast<int>((R.pre_bias ? AR_PREP_S : BIAS_S) * 1e6f / TICK_US);
+    if (++R.prep_ticks < prep_need) return;
 
-    const mpxp_header_t *h = s_net.h;
     if (R.dry) {
         if (R.bias_n < static_cast<int>(0.5 * BIAS_S * 1e6 / TICK_US)) {
             finish("too few valid IMU samples for the gyro bias", false);
@@ -562,6 +796,7 @@ void tick_prep()
         R.t_prev = esp_timer_get_time();
         ESP_LOGW(TAG, "gyro bias %.4f %.4f %.4f rad/s", R.bias[0], R.bias[1], R.bias[2]);
         if (R.getup_only) enter_getup();
+        else if (R.climb_only) enter_climb();
         else enter_run();
         return;
     }
@@ -576,19 +811,24 @@ void tick_prep()
         }
         int16_t t = 0;
         driver_board_raw_feedback(i + 1, nullptr, nullptr, &t, nullptr);
-        if (TEMP_GUARD && t >= static_cast<int16_t>(h->temp_start_c * 10.0f) && t < 1500) {
+        // The "wait below" only with APP_POLICY_TEMP_GUARD: a recovery run starts whatever the temperature (its walk
+        // still stops at APP_POLICY_TEMP_STOP_C). One reading here, unchecked for freshness, so a glitch could block it.
+        const float t_start = TEMP_START_C;
+        if (TEMP_CHECKS && TEMP_GUARD && t >= static_cast<int16_t>(t_start * 10.0f) && t < 1500) {
             char why[64];
             std::snprintf(why, sizeof(why), "servo %d at %.1f degC: wait below %.0f", i + 1, t / 10.0,
-                          h->temp_start_c);
+                          static_cast<double>(t_start));
             finish(why, false);
             return;
         }
     }
-    if (R.bias_n < static_cast<int>(0.5 * BIAS_S * 1e6 / TICK_US)) {
-        finish("too few valid IMU samples for the gyro bias", false);
-        return;
+    if (!R.pre_bias) {
+        if (R.bias_n < static_cast<int>(0.5 * BIAS_S * 1e6 / TICK_US)) {
+            finish("too few valid IMU samples for the gyro bias", false);
+            return;
+        }
+        for (int k = 0; k < 3; ++k) R.bias[k] = R.bias_sum[k] / R.bias_n;
     }
-    for (int k = 0; k < 3; ++k) R.bias[k] = R.bias_sum[k] / R.bias_n;
     portENTER_CRITICAL(&s_mux);
     for (int k = 0; k < 3; ++k) s_st.gyro_bias[k] = static_cast<float>(R.bias[k]);
     portEXIT_CRITICAL(&s_mux);
@@ -603,10 +843,24 @@ void tick_prep()
         return;
     }
     begin_ramp(MPX_POLICY_RAMP_IN, RAMP_IN_S);
-    ESP_LOGW(TAG, "gyro bias %.4f %.4f %.4f rad/s; ramping to the stand", R.bias[0], R.bias[1], R.bias[2]);
+    ESP_LOGW(TAG, "gyro bias %.4f %.4f %.4f rad/s; ramping to the stand%s", R.bias[0], R.bias[1], R.bias[2],
+             R.climb_only ? " (then the climb)" : "");
 }
 
 void policy_apply();
+
+/* Every tick of a RUN with a heading loop: the heading integrated from the gyro about the low-passed gravity
+ * (runner.HeadingLoop.push, every STATE frame). */
+void heading_tick()
+{
+    const mpxp_header_t *h = s_net.h;
+    const bool rec_loop = s_net.dec && s_net.dec->heading_wz_max > 0.0f;   // the recovery runner's --heading-loop
+    if (!h || !((h->flags & MPXP_FLAG_HEADING) || rec_loop) || !R.imu_ok) return;
+    double gb[3], grav[3];
+    pol_gyro_body(h, R.gyr, R.bias, gb);
+    if (!pol_gravity_body(h, R.acc, grav)) return;
+    pol_heading_push(&R.hd, gb, grav, static_cast<double>(h->state_dt));
+}
 
 /* A policy step (runner.loop body). */
 void policy_step()
@@ -615,7 +869,7 @@ void policy_step()
     // the servo bus) goes in first: the observation carries the last action.
     if (s_job.state.load() == JOB_DONE) {
         policy_apply();
-        if (s_state != MPX_POLICY_RUN && s_state != MPX_POLICY_GETUP) return;
+        if (s_state != MPX_POLICY_RUN && s_state != MPX_POLICY_GETUP && s_state != MPX_POLICY_CLIMB) return;
     }
     const pol_net_t *net = R.net;
     const mpxp_header_t *h = net->h;
@@ -625,7 +879,28 @@ void policy_step()
     portEXIT_CRITICAL(&s_mux);
     double cmd[3] = { cmdf[0], cmdf[1], cmdf[2] };
     if (!(h->flags & MPXP_FLAG_OMNI)) cmd[1] = cmd[2] = 0.0;
-    if (h->flags & MPXP_FLAG_GETUP) {
+    if (h->flags & MPXP_FLAG_HEADING) {
+        // A terrain / stairs walk was trained with its yaw rate from a heading loop (runner.HeadingLoop): the
+        // app's turn steers (and the heading it ends on is held from then on); no turn: back to the held heading.
+        if (std::fabs(cmd[2]) > 0.02) pol_heading_reset(&R.hd);
+        else cmd[2] = pol_heading_wz(&R.hd, h->ctrl_dt, h->cmd_max[2]);
+        if (cmd[0] < 0.0) cmd[0] = 0.0;                              // trained forward only (0 .. cmd_max[0])
+        cmd[1] = 0.0;
+    }
+    if (net->dec && !(h->flags & MPXP_FLAG_GETUP) && net->dec->heading_wz_max > 0.0f) {
+        // the recovery walker (omni): the stick's vx, vy as they are; no turn on the stick: the heading loop's yaw
+        // rate (runner.HeadingLoop, wz_max 0.4), a turn: sent alone, and the heading it ends on held from then on
+        if (std::fabs(cmd[2]) > 0.02) pol_heading_reset(&R.hd);
+        else cmd[2] = pol_heading_wz(&R.hd, h->ctrl_dt, net->dec->heading_wz_max);
+    }
+    if ((h->flags & MPXP_FLAG_GETUP) && net->dec) {
+        // the recovery get-up's clock: phi = t / getup_phase_s from this attempt's start, held at 1 (estimators.getup_phase)
+        double ph = R.gu_pstep * STEP_S / static_cast<double>(net->dec->phase_s);
+        if (ph > 1.0) ph = 1.0;
+        cmd[0] = ph;
+        cmd[1] = std::sin(2.0 * M_PI * ph);
+        cmd[2] = std::cos(2.0 * M_PI * ph);
+    } else if (h->flags & MPXP_FLAG_GETUP) {
         cmd[0] = cmd[1] = cmd[2] = 0.0;                                // trained with no command ...
         if ((h->flags & MPXP_FLAG_GETUP_PHASE) && h->cmd_max[0] > 0.0f) {
             // ... or with the motion's phase in its place (getup_track.py obs_phase)
@@ -636,11 +911,24 @@ void policy_step()
             cmd[2] = std::cos(2.0 * M_PI * ph);
         }
     }
+    if (h->flags & MPXP_FLAG_CLIMB) {
+        // climb_track.py obs_phase: phi = steps since the trigger / (rows - 1), capped at 1
+        double ph = static_cast<double>(R.cl_step) * h->ctrl_dt / h->cmd_max[0];
+        if (ph > 1.0) ph = 1.0;
+        cmd[0] = ph;
+        cmd[1] = std::sin(2.0 * M_PI * ph);
+        cmd[2] = std::cos(2.0 * M_PI * ph);
+        portENTER_CRITICAL(&s_mux);
+        s_st.climb_phase = static_cast<float>(ph);
+        portEXIT_CRITICAL(&s_mux);
+    }
 
     double gb[3], grav[3], rel[POL_N], vel[POL_N];
     pol_gyro_body(h, R.gyr, R.bias, gb);
     pol_gravity_body(h, R.acc, grav);
     pos_rel(rel);
+    if (net->dec)   // a recovery policy observes its positions about its own stand (the stance offset)
+        for (int i = 0; i < POL_N; ++i) rel[i] -= pol_obs_offset(net, i);
     pol_vel_get(&R.vf, vel);
     if (s_job.state.load() == JOB_RUNNING) {
         // The last step's network is not done: no new observation this step,
@@ -648,9 +936,13 @@ void policy_step()
         R.late_in_step = true;
         R.log_late = true;
     } else {
-        pol_observe(gb, grav, cmd, rel, vel, R.dec.prev_action, s_job.obs);
+        float obs1[POL_OBS];
+        pol_observe(gb, grav, cmd, rel, vel, R.dec.prev_action, obs1);
+        if (pol_history(h) > 1) pol_hist_stack(&R.hist, obs1, s_job.obs);   // contract.py HistoryStacker
+        else std::memcpy(s_job.obs, obs1, sizeof(obs1));
         s_job.net = net;
         s_job.work = R.work;
+        s_job.step = R.cl_step;
         s_job.gen = s_gen;
         s_job.state.store(JOB_RUNNING);
         xTaskNotifyGive(s_infer);
@@ -670,7 +962,9 @@ void policy_step()
 void policy_apply()
 {
     if (s_job.state.load() != JOB_DONE) return;
-    const bool ours = s_job.gen == s_gen && (s_state == MPX_POLICY_RUN || s_state == MPX_POLICY_GETUP);
+    const bool ours = s_job.gen == s_gen &&
+                      (s_state == MPX_POLICY_RUN || s_state == MPX_POLICY_GETUP || s_state == MPX_POLICY_CLIMB);
+    const uint32_t step = s_job.step;
     const uint32_t us = s_job.us;
     float raw[POL_ACT];
     std::memcpy(raw, s_job.raw, sizeof(raw));
@@ -687,7 +981,28 @@ void policy_apply()
             return;
         }
     }
-    pol_decode(&R.dec, net->h, R.off, raw, R.target);
+    if (net->h->flags & MPXP_FLAG_CLIMB) {
+        // the correction on the reference's next servo command (climb_track.py ResidualServoAction)
+        float full[POL_ACT];
+        pol_climb_action(net, step, raw, full);
+        pol_decode(&R.dec, net->h, R.off, full, R.target);
+        return;
+    }
+    pol_decode_net(&R.dec, net, R.off, raw, R.target);   // a recovery policy's decoder, else pol_decode()
+    if (net->dec) {
+        // recovery checks.target_refusal: no target within target_end_deg of a track end (by construction never)
+        const double m = 10.0 * static_cast<double>(net->dec->target_end_deg);
+        for (int i = 0; i < POL_ACT; ++i) {
+            if (R.target[i] < m || R.target[i] > 3100.0 - m) {
+                char why[64];
+                std::snprintf(why, sizeof(why), "target check: servo %d at %d dd, near its track end", i + 1,
+                              R.target[i]);
+                if (R.dry) graceful_stop(why);
+                else immediate_stop(why);
+                return;
+            }
+        }
+    }
 }
 
 void infer_task(void *)
@@ -705,8 +1020,68 @@ void infer_task(void *)
 /* A GETUP step: the get-up network, then is the robot standing (upright,
  * still, the joints near the stand, for GETUP_OK_STEPS steps)? Then back to
  * the walk, or (Get up alone) to the stand and the end of the run. */
+/* A GETUP step of a recovery get-up (runner.loop's MODE_GETUP branch, then its step): from the second step on, the
+ * hand-back (the filtered tilt, |gyro| and the pose's rms from the stand, held handback_steps steps: the walk takes
+ * over in this same step, seeded from the pose), the time limit (limp) and the phase clock's retry; then the network
+ * at the clock's phase. */
+void getup_step_rec()
+{
+    const mpxp_dec_t *g = s_gu_net.dec;
+    const mpxp_dec_t *r = R.rules ? R.rules : g;
+    if (R.gu_steps > 0) {
+        double rel[POL_N], r2 = 0.0;
+        pos_rel(rel);
+        for (int i = 0; i < POL_N; ++i) r2 += rel[i] * rel[i];
+        const bool ok = R.tilt_cf < r->handback_tilt_deg && R.gyro_norm < r->handback_gyro &&
+                        std::sqrt(r2 / POL_N) / DEG < r->handback_rms_deg;
+        R.gu_ok = ok ? R.gu_ok + 1 : 0;
+        const double t_in = R.gu_steps * STEP_S;
+        if (R.gu_ok >= static_cast<int>(r->handback_steps)) {
+            portENTER_CRITICAL(&s_mux);
+            s_st.getups_ok++;
+            portEXIT_CRITICAL(&s_mux);
+            ESP_LOGW(TAG, "hand-back after %.2f s in GETUP %u", t_in, static_cast<unsigned>(R.getups));
+            if (R.getup_only) {
+                // Get up alone: the robot stands, so the ramp to the walk's stand (graceful_stop would go limp in GETUP)
+                if (R.dry) {
+                    graceful_stop("stood up");
+                } else {
+                    note_stop("stood up");
+                    begin_ramp(MPX_POLICY_RAMP_OUT, RAMP_OUT_S);
+                }
+                return;
+            }
+            enter_run(true);
+            policy_step();
+            return;
+        }
+        if (t_in > static_cast<double>(g->getup_timeout_s)) {
+            char why[64];
+            std::snprintf(why, sizeof(why), "get-up: not up after %.0f s (limp)", static_cast<double>(g->getup_timeout_s));
+            if (R.dry) graceful_stop(why);
+            else immediate_stop(why);
+            return;
+        }
+        if (g->phase_restart_s > 0.0f &&
+            R.gu_pstep * STEP_S >= static_cast<double>(g->phase_s + g->phase_restart_s) - 1e-9 &&
+            R.tilt_cf > static_cast<double>(g->phase_restart_tilt_deg)) {
+            ESP_LOGW(TAG, "GETUP %u: phase restarted after %.2f s (tilt %.0f deg)", static_cast<unsigned>(R.getups),
+                     t_in, R.tilt_cf);
+            R.gu_pstep = 0;
+        }
+    }
+    policy_step();
+    if (s_state != MPX_POLICY_GETUP) return;
+    ++R.gu_steps;
+    ++R.gu_pstep;
+}
+
 void getup_step(double tilt)
 {
+    if (s_gu_net.dec) {
+        getup_step_rec();
+        return;
+    }
     const mpxp_header_t *gh = s_gu_net.h;
     const bool phased = (gh->flags & MPXP_FLAG_GETUP_PHASE) != 0;
     if (phased && R.gu_steps == 0) {
@@ -757,6 +1132,20 @@ void getup_step(double tilt)
     }
 }
 
+/* A CLIMB step: the climb network at the climb's phase; after the motion and the hold on top, the robot is
+ * given back (ramp to the stand it already nearly is in, hold, limp). */
+void climb_step()
+{
+    policy_step();
+    if (s_state != MPX_POLICY_CLIMB) return;
+    ++R.cl_step;
+    const mpxp_header_t *ch = s_cl_net.h;
+    if (R.cl_step * ch->ctrl_dt >= ch->cmd_max[0] + CLIMB_HOLD_TOP_S) {
+        ESP_LOGW(TAG, "climb done (%.1f s)", R.cl_step * static_cast<double>(ch->ctrl_dt));
+        graceful_stop("climbed");
+    }
+}
+
 int16_t clamp16(double v)
 {
     return static_cast<int16_t>(v > 32767 ? 32767 : v < -32768 ? -32768 : std::lround(v));
@@ -768,6 +1157,23 @@ void log_step(int64_t tick_start, mpx_policy_state_t phase, uint32_t ex_us, uint
 {
     if (!s_log_on) return;
     const int64_t now = esp_timer_get_time();
+    if (phase == MPX_POLICY_GETUP && s_gu && s_gu_n < GU_LOG_MAX) {
+        if (s_gu_n == 0) {
+            std::snprintf(s_gu_name, sizeof(s_gu_name), "%s", s_gu_net.h ? s_gu_net.h->name : "?");
+            for (int i = 0; i < POL_N; ++i) s_gu_off[i] = R.off[i];
+        }
+        GuRec &g = s_gu[s_gu_n++];
+        g.t_ms = static_cast<uint32_t>((now - R.t0_us) / 1000);
+        g.tilt_cdeg = std::isfinite(tilt) ? clamp16(tilt * 100.0) : INT16_MIN;
+        g.getup = static_cast<uint8_t>(std::min<uint32_t>(R.getups, 255));
+        g.fresh = fresh;
+        for (int i = 0; i < POL_N; ++i) {
+            g.tgt[i] = static_cast<uint16_t>(R.target_sent[i] < 0 ? 0 : R.target_sent[i]);
+            g.pos[i] = R.pos_ok[i] ? R.pos_dd[i] : 0;
+            int16_t c = 0;
+            g.cur[i] = driver_board_raw_feedback(i + 1, nullptr, &c, nullptr, nullptr) ? c : 0;
+        }
+    }
     if (s_log_n >= MPX_POLICY_LOG_MAX) {
         ++s_log_dropped;
         return;
@@ -778,7 +1184,7 @@ void log_step(int64_t tick_start, mpx_policy_state_t phase, uint32_t ex_us, uint
     R.last_step_us = tick_start;
     r.tick_us = static_cast<uint16_t>(std::min<int64_t>(now - tick_start, 65535));
     r.ex_us = static_cast<uint16_t>(std::min<uint32_t>(ex_us, 65535));
-    r.fwd_us = static_cast<uint16_t>(phase == MPX_POLICY_RUN || phase == MPX_POLICY_GETUP
+    r.fwd_us = static_cast<uint16_t>(phase == MPX_POLICY_RUN || phase == MPX_POLICY_GETUP || phase == MPX_POLICY_CLIMB
                                          ? std::min<uint32_t>(R.log_fwd_us, 65535) : 0);
     r.phase = static_cast<uint8_t>(phase);
     r.flags = static_cast<uint8_t>((R.log_late ? 1u : 0u) | ((fresh & 0x0Fu) << 4));
@@ -809,6 +1215,51 @@ void log_step(int64_t tick_start, mpx_policy_state_t phase, uint32_t ex_us, uint
     r.wz_mrad = clamp16(c[2] * 1000.0f);
 }
 
+/* Every tick of a run with recovery rules (runner.imu_update): the complementary-filter tilt from the body-frame gyro
+ * and accelerometer, |gyro|, and while the walk's side has the robot (the ramps and holds included) the fall
+ * detector. */
+void rec_imu_tick(uint32_t missed, mpx_policy_state_t st)
+{
+    const uint32_t gap = 1 + missed;
+    R.ticks += gap;
+    if (!R.rules || !R.imu_ok) return;
+    const mpxp_header_t *h = s_net.h;
+    double gb[3], ab[3];
+    pol_gyro_body(h, R.gyr, R.bias, gb);
+    for (int r = 0; r < 3; ++r)
+        ab[r] = h->imu_R[3 * r] * R.acc[0] + h->imu_R[3 * r + 1] * R.acc[1] + h->imu_R[3 * r + 2] * R.acc[2];
+    R.tilt_cf = pol_cf_update(&R.cf, gb, ab, std::min<uint32_t>(gap, 20) * (TICK_US * 1e-6));
+    R.gyro_norm = std::sqrt(gb[0] * gb[0] + gb[1] * gb[1] + gb[2] * gb[2]);
+    // the walk's side of the run (runner MODE_WALK: its stand ramp and the ramp down after a stop included)
+    const bool walking = st == MPX_POLICY_RUN || st == MPX_POLICY_RAMP_IN || st == MPX_POLICY_HOLD_IN ||
+                         st == MPX_POLICY_RAMP_OUT || st == MPX_POLICY_HOLD_OUT;
+    if (walking && s_net.dec && pol_fall_update(&R.fall, R.rules, R.tilt_cf, R.gyro_norm, R.ticks * (TICK_US * 1e-6)) &&
+        !R.fall_pending) {
+        R.fall_pending = true;
+        ESP_LOGW(TAG, "fall (%s, tilt %.0f deg)",
+                 R.fall.trigger == 1 ? "tilt held" : "tilt and a fast turn", R.tilt_cf);
+    }
+}
+
+/* A recovery walk has fallen: at this step boundary the get-up takes over (it computes this step), or, without one
+ * or after max_getups, limp. Returns true if it handled the step. */
+bool rec_fall_step()
+{
+    if (!R.fall_pending) return false;
+    if (R.auto_up && R.getups < max_getups()) {
+        enter_getup();
+        getup_step(R.tilt_cf);
+        return true;
+    }
+    char why[64];
+    if (R.auto_up) std::snprintf(why, sizeof(why), "fall %u: %u get-ups reached (limp)",
+                                 static_cast<unsigned>(R.getups + 1), static_cast<unsigned>(max_getups()));
+    else std::snprintf(why, sizeof(why), "fell (tilt %.0f deg)", R.tilt_cf);
+    if (R.dry) graceful_stop(why);
+    else immediate_stop(why);
+    return true;
+}
+
 /* A dry tick: the IMU, the tilt (reported, not acted on), the policy on its
  * 50 Hz steps; no servo, so no servo guard. An IMU dropout and late steps
  * still end the run, as they would a real one. */
@@ -826,15 +1277,16 @@ void tick_dry(int64_t now)
         const double as_sensor[3] = { b[0], b[1], -b[2] };
         tilt = pol_tilt_push(&R.tilt, as_sensor);
     }
+    rec_imu_tick(missed, s_state);
     portENTER_CRITICAL(&s_mux);
-    s_st.tilt_deg = static_cast<float>(tilt);
+    s_st.tilt_deg = static_cast<float>(R.rules ? R.tilt_cf : tilt);
     portEXIT_CRITICAL(&s_mux);
-    if (std::isfinite(tilt) && tilt > h->tilt_limit_deg && !R.dry_tilt_noted) {
+    if (std::isfinite(tilt) && tilt > h->tilt_limit_deg && !R.dry_tilt_noted && !s_net.dec) {
         R.dry_tilt_noted = true;
         ESP_LOGW(TAG, "tilt %.0f deg: a real run would disarm here (dry run goes on)", tilt);
     }
     const mpx_policy_state_t st = s_state;
-    if (st != MPX_POLICY_RUN && st != MPX_POLICY_GETUP) return;
+    if (st != MPX_POLICY_RUN && st != MPX_POLICY_GETUP && st != MPX_POLICY_CLIMB) return;
     if (!R.imu_ok) {
         graceful_stop("IMU sample invalid");
         return;
@@ -845,10 +1297,15 @@ void tick_dry(int64_t now)
     if (missed) R.late_in_step = true;
     R.log_late |= missed > 0;
     pol_vel_push(&R.vf, rel);
+    if (st == MPX_POLICY_RUN) heading_tick();
     if (++R.sub < TICKS_PER_STEP) return;
     R.sub = 0;
-    if (st == MPX_POLICY_GETUP) {
+    if (st == MPX_POLICY_RUN && rec_fall_step()) {
+        // the recovery get-up took over (or the run ended)
+    } else if (st == MPX_POLICY_GETUP) {
         getup_step(tilt);
+    } else if (st == MPX_POLICY_CLIMB) {
+        climb_step();
     } else {
         policy_step();
         if (s_state == MPX_POLICY_RUN && !R.unlimited && R.steps_left > 0 && --R.steps_left == 0) {
@@ -885,8 +1342,24 @@ void tick_armed(int64_t now)
 
     // Guards (rl_link.cc's): current, temperature, a silent board.
     const bool up_now = s_state == MPX_POLICY_GETUP;
-    const int cur_ma = up_now ? GETUP_CUR_MA : GUARD_CUR_MA;
-    const int64_t cur_us = up_now ? GETUP_CUR_US : GUARD_CUR_US;
+    const bool climbing = s_state == MPX_POLICY_CLIMB;
+    // the climb pushes the body up a box: the get-up's current guard. A stairs / terrain walk (MPXP_FLAG_HEADING)
+    // has none: it lifts the body up each step, and the servos' own cap (the policy's cap_ma, 2000 mA) limits them.
+    const bool terrain_walk = s_state == MPX_POLICY_RUN && s_net.h && (s_net.h->flags & MPXP_FLAG_HEADING);
+    int cur_ma = (up_now || climbing) ? GETUP_CUR_MA : GUARD_CUR_MA;
+    int64_t cur_us = (up_now || climbing) ? GETUP_CUR_US : GUARD_CUR_US;
+    bool cur_off = terrain_walk;
+    // A recovery policy's own current guard (its firmware's: walking 1500 mA for 0.5 s, none in the get-up), the
+    // walk's in its ramps and holds; and the temperature guard always on.
+    const mpxp_dec_t *drv = up_now ? s_gu_net.dec : climbing ? nullptr : s_net.dec;
+    if (drv) {
+        cur_ma = static_cast<int>(drv->cur_ma);
+        cur_us = static_cast<int64_t>(static_cast<double>(drv->cur_s) * 1e6);
+        cur_off = !(drv->cur_ma > 0.0f);
+    }
+    const bool temp_on = TEMP_CHECKS && (TEMP_GUARD || R.rules) && (TEMP_IN_GETUP || !up_now);
+    const int temp_guard_dc = GUARD_TEMP_DC;
+    const int64_t temp_guard_us = GUARD_TEMP_US;
     float tmax = 0.0f;
     int cur_max = 0;
     for (int i = 0; i < POL_N; ++i) {
@@ -895,9 +1368,9 @@ void tick_armed(int64_t now)
         if (!valid) continue;
         const int ac = c < 0 ? -c : c;
         if (ac > cur_max) cur_max = ac;
-        R.over_cur_us[i] = ac > cur_ma ? R.over_cur_us[i] + dt : 0;
+        R.over_cur_us[i] = (ac > cur_ma && !cur_off) ? R.over_cur_us[i] + dt : 0;
         const bool real_t = t < 1500;
-        R.over_temp_us[i] = (real_t && t > GUARD_TEMP_DC) ? R.over_temp_us[i] + dt : 0;
+        R.over_temp_us[i] = (real_t && t > temp_guard_dc) ? R.over_temp_us[i] + dt : 0;
         if (real_t && t / 10.0f > tmax) tmax = t / 10.0f;
         char why[64];
         if (R.over_cur_us[i] > cur_us) {
@@ -906,13 +1379,13 @@ void tick_armed(int64_t now)
             immediate_stop(why);
             return;
         }
-        if (TEMP_GUARD && R.over_temp_us[i] > GUARD_TEMP_US) {
-            std::snprintf(why, sizeof(why), "servo %d over %.0f degC", i + 1, GUARD_TEMP_DC / 10.0);
+        if (temp_on && R.over_temp_us[i] > temp_guard_us) {
+            std::snprintf(why, sizeof(why), "servo %d over %.0f degC", i + 1, temp_guard_dc / 10.0);
             immediate_stop(why);
             return;
         }
     }
-    const int lost_max = s_state == MPX_POLICY_RUN || up_now ? BOARD_LOST_TICKS_RUN : BOARD_LOST_TICKS;
+    const int lost_max = s_state == MPX_POLICY_RUN || up_now || climbing ? BOARD_LOST_TICKS_RUN : BOARD_LOST_TICKS;
     for (int b = 0; b < 4; ++b) {
         R.lost[b] = (fresh >> b & 1u) ? 0 : R.lost[b] + 1;
         if (R.lost[b] > lost_max) {
@@ -934,14 +1407,25 @@ void tick_armed(int64_t now)
         const double as_sensor[3] = { b[0], b[1], -b[2] };
         tilt = pol_tilt_push(&R.tilt, as_sensor);
     }
+    rec_imu_tick(missed, s_state);
     portENTER_CRITICAL(&s_mux);
-    s_st.tilt_deg = static_cast<float>(tilt);
+    s_st.tilt_deg = static_cast<float>(R.rules ? R.tilt_cf : tilt);
     s_st.temp_max_c = tmax;
     portEXIT_CRITICAL(&s_mux);
-    if (std::isfinite(tilt) && tilt > h->tilt_limit_deg && !up_now) {
+    // climbing: the climb policy's own tilt stop (the motion pitches the body ~30 deg)
+    const double tilt_limit = climbing ? static_cast<double>(s_cl_net.h->tilt_limit_deg) : h->tilt_limit_deg;
+    // A recovery walk: its fall detector instead (rec_imu_tick; the get-up takes over at the step boundary), and
+    // limp at once on a fall while the robot ramps down after a stop.
+    const bool rec_walk = s_net.dec != nullptr && !climbing;
+    const bool stopping_now = s_state == MPX_POLICY_RAMP_OUT || s_state == MPX_POLICY_HOLD_OUT;
+    if (rec_walk && stopping_now && R.fall_pending) {
+        immediate_stop("fell while stopping");
+        return;
+    }
+    if (std::isfinite(tilt) && tilt > tilt_limit && !up_now && !rec_walk) {
         const mpx_policy_state_t s0 = s_state;
         const bool walking = s0 == MPX_POLICY_RUN || s0 == MPX_POLICY_RAMP_IN || s0 == MPX_POLICY_HOLD_IN;
-        if (R.auto_up && walking && R.getups < MPX_POLICY_MAX_GETUPS) {
+        if (R.auto_up && walking && R.getups < max_getups()) {
             ESP_LOGW(TAG, "fell (tilt %.0f deg)", tilt);
             enter_getup();
         } else {
@@ -960,7 +1444,7 @@ void tick_armed(int64_t now)
         graceful_stop("IMU sample invalid");
         return;
     }
-    if (TEMP_GUARD && tmax >= h->temp_stop_c && !stopping) {
+    if (temp_on && tmax >= static_cast<float>(TEMP_STOP_C) && !stopping) {
         char why[64];
         std::snprintf(why, sizeof(why), "servo at %.1f degC", tmax);
         graceful_stop(why);
@@ -969,7 +1453,7 @@ void tick_armed(int64_t now)
 
     // The velocity filter sees every tick; a missed tick repeats the last
     // sample (runner ObservationBuilder.push).
-    if (st == MPX_POLICY_RUN || st == MPX_POLICY_GETUP) {
+    if (st == MPX_POLICY_RUN || st == MPX_POLICY_GETUP || st == MPX_POLICY_CLIMB) {
         double rel[POL_N];
         pos_rel(rel);
         for (uint32_t k = 0; k < missed && k < 6; ++k) {
@@ -980,10 +1464,16 @@ void tick_armed(int64_t now)
         if (missed) R.late_in_step = true;
         pol_vel_push(&R.vf, rel);
     }
+    if (st == MPX_POLICY_RUN) heading_tick();
 
     if (++R.sub < TICKS_PER_STEP) return;
     R.sub = 0;
 
+    // a recovery walk (or its stand ramp) fell: the get-up computes this step
+    if ((st == MPX_POLICY_RUN || st == MPX_POLICY_RAMP_IN || st == MPX_POLICY_HOLD_IN) && rec_fall_step()) {
+        if (s_state != MPX_POLICY_IDLE) log_step(now, MPX_POLICY_GETUP, ex_us, fresh, R.tilt_cf, tmax, cur_max);
+        return;
+    }
     switch (st) {
     case MPX_POLICY_RAMP_IN:
     case MPX_POLICY_RAMP_OUT: {
@@ -1010,7 +1500,8 @@ void tick_armed(int64_t now)
                 finish(why, true);
                 return;
             }
-            enter_run();
+            if (R.climb_only) enter_climb();
+            else enter_run();
         }
         break;
     case MPX_POLICY_RUN:
@@ -1022,10 +1513,80 @@ void tick_armed(int64_t now)
     case MPX_POLICY_GETUP:
         getup_step(tilt);
         break;
+    case MPX_POLICY_CLIMB:
+        climb_step();
+        break;
     default:
         break;
     }
-    log_step(now, st, ex_us, fresh, tilt, tmax, cur_max);
+    log_step(now, st, ex_us, fresh, R.rules ? R.tilt_cf : tilt, tmax, cur_max);
+}
+
+/* Every idle tick (5 ms): "always gets back up" (see s_auto_right), from the IMU alone. */
+void auto_right_tick(int64_t now)
+{
+    if (s_ar_run) {   // the get-up it started has ended (stood, timed out or was stopped)
+        s_ar_run = false;
+        s_ar_next = now + AR_PAUSE_US;
+        s_ar_since = -1;
+    }
+    if (!s_auto_right.load() || !s_gu_ok || !s_gu_net.h) {
+        s_ar_since = -1;
+        return;
+    }
+    const robot::ImuData d = robot::imu_read();
+    const double a[3] = { d.ax, d.ay, d.az };
+    const double an = std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+    if (d.seq == 0 || now - d.t_us > IMU_MAX_AGE_US || !(an > ACC_DROPOUT_G)) {
+        s_ar_since = -1;
+        return;
+    }
+    // the tilt as a run measures it (the get-up's IMU mount, then runner.tilt_deg)
+    const float *m = s_gu_net.h->imu_R;
+    double b[3];
+    for (int r = 0; r < 3; ++r) b[r] = m[3 * r] * a[0] + m[3 * r + 1] * a[1] + m[3 * r + 2] * a[2];
+    const double as_sensor[3] = { b[0], b[1], -b[2] };
+    const double tilt = pol_tilt_deg(as_sensor);
+    const double gn = std::sqrt(static_cast<double>(d.gx) * d.gx + static_cast<double>(d.gy) * d.gy +
+                                static_cast<double>(d.gz) * d.gz);
+    if (std::isfinite(tilt) && tilt < AR_UP_DEG) {
+        if (s_ar_up_since < 0) s_ar_up_since = now;
+        if (now - s_ar_up_since >= AR_UP_US) s_ar_tries = 0;
+    } else {
+        s_ar_up_since = -1;
+    }
+    const bool lying = std::isfinite(tilt) && tilt >= AR_TILT_DEG && an > 0.75 && an < 1.3 && gn < AR_GYRO_DPS;
+    if (!lying) {
+        s_ar_since = -1;
+        return;
+    }
+    if (s_ar_since < 0) {
+        s_ar_since = now;
+        s_ar_gsum[0] = s_ar_gsum[1] = s_ar_gsum[2] = 0.0;
+        s_ar_gn = 0;
+    }
+    s_ar_gsum[0] += d.gx * DEG;
+    s_ar_gsum[1] += d.gy * DEG;
+    s_ar_gsum[2] += d.gz * DEG;
+    ++s_ar_gn;
+    if (now - s_ar_since < AR_HOLD_US || now < s_ar_next || s_ar_tries >= AR_TRIES) return;
+    // Nothing else may be moving the legs: a move still playing (a backflip turns the robot over on purpose), ROS,
+    // or another host.
+    if (robot::playing_move(nullptr) || robot::master_active() || robot::host::active()) return;
+    s_ar_since = -1;
+    ++s_ar_tries;
+    s_ar_bias_ready = s_ar_gn >= AR_BIAS_MIN_N;
+    for (int k = 0; k < 3; ++k) s_ar_bias[k] = s_ar_gn > 0 ? s_ar_gsum[k] / s_ar_gn : 0.0;
+    char why[96] = "";
+    mpx_policy_set_log(true);   // every automatic get-up is logged (the get-up log: GET /v1/policy/getup_log)
+    if (mpx_policy_getup(false, why, sizeof(why)) == ESP_OK) {
+        s_ar_run = true;
+        ESP_LOGI(TAG, "always gets back up: lying at %.0f deg, get-up %d of %d", tilt, s_ar_tries, AR_TRIES);
+    } else {
+        s_ar_next = now + AR_REFUSED_US;
+        s_ar_bias_ready = false;
+        ESP_LOGW(TAG, "always gets back up: the get-up was refused: %s", why);
+    }
 }
 
 void tick_cb(void *)
@@ -1054,13 +1615,17 @@ void tick_task(void *)
             start_run();
             continue;
         }
-        if (s_state == MPX_POLICY_IDLE) continue;
+        if (s_state == MPX_POLICY_IDLE) {
+            auto_right_tick(now);
+            continue;
+        }
         read_imu(now);
         if (stop) {
             graceful_stop(why[0] ? why : "stop");
             if (s_state == MPX_POLICY_IDLE) continue;
         }
-        if (deadman && s_state != MPX_POLICY_RAMP_OUT && s_state != MPX_POLICY_HOLD_OUT) {
+        // (a get-up "always gets back up" started has no app behind it to answer)
+        if (deadman && !s_ar_run && s_state != MPX_POLICY_RAMP_OUT && s_state != MPX_POLICY_HOLD_OUT) {
             graceful_stop("the app stopped answering");
             if (s_state == MPX_POLICY_IDLE) continue;
         }
@@ -1076,7 +1641,8 @@ void tick_task(void *)
     }
 }
 
-bool place_layers(pol_net_t *net, int bits, void *blk[MPXP_MAX_LAYERS], size_t *bytes_int, size_t *bytes_all);
+bool place_layers(pol_net_t *net, int bits, void *blk[MPXP_MAX_LAYERS], size_t *bytes_int, size_t *bytes_all,
+                  bool internal = true);
 void free_blocks(void *blk[MPXP_MAX_LAYERS]);
 
 // What the self-test accepts for each weight format: floats match training to
@@ -1110,6 +1676,13 @@ esp_err_t install(uint8_t *file, size_t len, bool builtin, int bits, char *why, 
     for (int i = 0; i < POL_N && !bad; ++i) {
         if (!(hh->scale[i] > 0.0f) || !(hh->band_deg[i] > 0.0f) || (hh->signs[i] != 1.0f && hh->signs[i] != -1.0f))
             bad = "bad action scale, band or sign";
+    }
+    if (!bad && net.dec && (hh->flags & MPXP_FLAG_GETUP)) bad = "a get-up policy, not a walk (build it in as getup.mpxp)";
+    if (!bad && net.dec) {
+        // recovery checks.decoder_selftest, on the file's calibration (the one it runs on)
+        double off[POL_N];
+        for (int i = 0; i < POL_N; ++i) off[i] = hh->offsets_deg[i];
+        bad = pol_decoder_selftest(&net, off);
     }
     if (bad) {
         if (why) std::snprintf(why, why_len, "%s", bad);
@@ -1153,6 +1726,7 @@ esp_err_t install(uint8_t *file, size_t len, bool builtin, int bits, char *why, 
     // A policy trained for this robot runs on this robot's own calibration; one
     // for another robot on its contract's (as omniRL's Pi runner does).
     // mpx_policy_set_own_calibration() changes it until the next load.
+    // (a recovery policy too: its bounds' track limits follow the robot's calibration, pol_bounds_calibrate)
     s_use_robot_offsets = std::strcmp(net.h->robot, CONFIG_APP_POLICY_ROBOT) == 0;
     portENTER_CRITICAL(&s_mux);
     s_st.robot_offsets = s_use_robot_offsets;
@@ -1194,11 +1768,31 @@ uint8_t *alloc_file(size_t len)
  * self-test. */
 void install_getup()
 {
+#if defined(MPX_POLICY_HAVE_GETUP) || defined(MPX_POLICY_HAVE_GETUP_SKU1)
+    // The get-ups built in (getup.mpxp, getup_sku1.mpxp): the one trained for this robot (APP_POLICY_ROBOT, the
+    // header's robot), else the first.
+    struct { const uint8_t *start, *end; } cand[] = {
 #ifdef MPX_POLICY_HAVE_GETUP
-    const size_t len = static_cast<size_t>(getup_mpxp_end - getup_mpxp_start);
+        { getup_mpxp_start, getup_mpxp_end },
+#endif
+#ifdef MPX_POLICY_HAVE_GETUP_SKU1
+        { getup_sku1_mpxp_start, getup_sku1_mpxp_end },
+#endif
+    };
+    size_t pick = 0;
+    for (size_t i = 0; i < sizeof(cand) / sizeof(cand[0]); ++i) {
+        mpxp_header_t hd;
+        if (static_cast<size_t>(cand[i].end - cand[i].start) < sizeof(hd)) continue;
+        std::memcpy(&hd, cand[i].start, sizeof(hd));
+        if (std::strncmp(hd.robot, CONFIG_APP_POLICY_ROBOT, sizeof(hd.robot)) == 0) {
+            pick = i;
+            break;
+        }
+    }
+    const size_t len = static_cast<size_t>(cand[pick].end - cand[pick].start);
     uint8_t *f = alloc_file(len);
     if (!f) return;
-    std::memcpy(f, getup_mpxp_start, len);
+    std::memcpy(f, cand[pick].start, len);
     pol_net_t net;
     const char *err = pol_parse(f, len, &net);
     const mpxp_header_t *h = err ? nullptr : net.h;
@@ -1207,6 +1801,89 @@ void install_getup()
         err = "timing other than 50 Hz policy / 200 Hz tick";
     if (!err && (!(h->step_limit_deg > 0.0f) || !(h->cap_ma > 0.0f) || h->cap_ma > 32767.0f))
         err = "bad step limit or current cap";
+    // A recovery get-up (its decoder block) reaches 180 deg about the stand, inside its joint bounds; the others 150.
+    const float band_max = (!err && net.dec && net.dec->has_bounds) ? 180.0f : 150.0f;
+    for (int i = 0; i < POL_N && !err; ++i) {
+        if (!(h->scale[i] > 0.0f) || !(h->band_deg[i] > 0.0f) || h->band_deg[i] > band_max)
+            err = "bad action scale or band";
+        else if (!net.dec && s_net.h && h->signs[i] != s_net.h->signs[i])
+            err = "servo directions differ from the walk policy's";   // a recovery get-up: checked at each start
+    }
+    if (!err && net.dec) {
+        double off[POL_N];
+        for (int i = 0; i < POL_N; ++i) off[i] = h->offsets_deg[i];
+        err = pol_decoder_selftest(&net, off);
+        if (!err && net.dec->kind != 1) err = "its decoder block is not a get-up's";
+    }
+    float *work = err ? nullptr
+                      : static_cast<float *>(heap_caps_malloc(sizeof(float) * 2 * net.max_width, MALLOC_CAP_8BIT));
+    if (!err && !work) err = "out of memory";
+    // A big get-up (the recovery one: 45-512-256-128-12, 190k weights) reads every weight from PSRAM each step: the
+    // walk's 16- or 8-bit copies (in PSRAM; internal RAM stays the walk's) halve or quarter that, if they pass.
+    int gbits = 32;
+    float gworst = 0.0f;
+    if (!err && net.dec && s_bits != 32) {
+        void *blk[MPXP_MAX_LAYERS];
+        size_t b_int = 0, b_all = 0;
+        if (place_layers(&net, s_bits, blk, &b_int, &b_all, false)) {
+            float mean_deg = 0.0f;
+            const float e = pol_selftest(&net, work);
+            gworst = pol_selftest_deg(&net, work, &mean_deg);
+            if (selftest_ok(s_bits, e, gworst)) {
+                gbits = s_bits;
+            } else {
+                free_blocks(blk);
+                (void)pol_parse(f, len, &net);   // back to the file's floats
+            }
+        }
+    }
+    if (!err && gbits == 32) {
+        const float e = pol_selftest(&net, work);
+        if (!(e < 1e-4f)) err = "self-test failed";
+    }
+    if (err) {
+        ESP_LOGE(TAG, "built-in get-up policy refused: %s", err);
+        if (work) heap_caps_free(work);
+        heap_caps_free(f);
+        return;
+    }
+    if (gbits != 32)
+        ESP_LOGI(TAG, "get-up weights: %d-bit copies in PSRAM, self-test %.3f deg worst", gbits,
+                 static_cast<double>(gworst));
+    s_gu_net = net;
+    s_gu_work = work;
+    s_gu_ok = true;
+    // The recovery get-up is what its walker is for: "never stays down" starts on (the page can turn it off). It
+    // only acts on a walk for the same robot and servo directions (start_run).
+    if (net.dec) s_auto_getup = true;
+    portENTER_CRITICAL(&s_mux);
+    s_st.getup_ready = true;
+    s_st.auto_getup = s_auto_getup;
+    std::snprintf(s_st.getup_name, sizeof(s_st.getup_name), "%s", h->name);
+    portEXIT_CRITICAL(&s_mux);
+    ESP_LOGI(TAG, "get-up policy %s (for %s), band %.0f deg", h->name, h->robot, static_cast<double>(h->band_deg[0]));
+    ESP_LOGI(TAG, "always gets back up: %s", s_auto_right.load() ? "on" : "off (menuconfig APP_POLICY_AUTO_RIGHT, "
+             "or the RL page's switch)");
+#endif
+}
+
+/* The built-in climb policy, once at init (PSRAM, like the get-up's): a CLIMB policy with its reference, on the
+ * walk's timing and servo directions, passing its own self-test. */
+void install_climb()
+{
+#ifdef MPX_POLICY_HAVE_CLIMB
+    const size_t len = static_cast<size_t>(climb_mpxp_end - climb_mpxp_start);
+    uint8_t *f = alloc_file(len);
+    if (!f) return;
+    std::memcpy(f, climb_mpxp_start, len);
+    pol_net_t net;
+    const char *err = pol_parse(f, len, &net);
+    const mpxp_header_t *h = err ? nullptr : net.h;
+    if (!err && !(h->flags & MPXP_FLAG_CLIMB)) err = "not a climb policy";
+    if (!err && (std::fabs(h->ctrl_dt - 0.020f) > 1e-6f || std::fabs(h->state_dt - 0.005f) > 1e-7f))
+        err = "timing other than 50 Hz policy / 200 Hz tick";
+    if (!err && !(h->step_limit_deg > 0.0f)) err = "bad step limit";
+    if (!err && !(h->tilt_limit_deg > 0.0f && h->tilt_limit_deg < 90.0f)) err = "bad tilt stop";
     for (int i = 0; i < POL_N && !err; ++i) {
         if (!(h->scale[i] > 0.0f) || !(h->band_deg[i] > 0.0f) || h->band_deg[i] > 150.0f)
             err = "bad action scale or band";
@@ -1221,19 +1898,21 @@ void install_getup()
         if (!(e < 1e-4f)) err = "self-test failed";
     }
     if (err) {
-        ESP_LOGE(TAG, "built-in get-up policy refused: %s", err);
+        ESP_LOGE(TAG, "built-in climb policy refused: %s", err);
         if (work) heap_caps_free(work);
         heap_caps_free(f);
         return;
     }
-    s_gu_net = net;
-    s_gu_work = work;
-    s_gu_ok = true;
+    s_cl_net = net;
+    s_cl_work = work;
+    s_cl_ok = true;
     portENTER_CRITICAL(&s_mux);
-    s_st.getup_ready = true;
-    std::snprintf(s_st.getup_name, sizeof(s_st.getup_name), "%s", h->name);
+    s_st.climb_ready = true;
+    s_st.climb_s = h->cmd_max[0];
+    std::snprintf(s_st.climb_name, sizeof(s_st.climb_name), "%s", h->name);
     portEXIT_CRITICAL(&s_mux);
-    ESP_LOGI(TAG, "get-up policy %s (for %s), band %.0f deg", h->name, h->robot, static_cast<double>(h->band_deg[0]));
+    ESP_LOGI(TAG, "climb policy %s (for %s), %.1f s, %u reference rows, correction +-%.0f deg", h->name, h->robot,
+             static_cast<double>(h->cmd_max[0]), static_cast<unsigned>(net.n_ref), static_cast<double>(h->cmd_max[2]));
 #endif
 }
 
@@ -1245,7 +1924,8 @@ void install_getup()
  * the same rule (else the layer reads the file). Separate blocks fit a
  * fragmented heap better than one. False: a 16-/8-bit block found no room
  * anywhere (nothing kept). */
-bool place_layers(pol_net_t *net, int bits, void *blk[MPXP_MAX_LAYERS], size_t *bytes_int, size_t *bytes_all)
+bool place_layers(pol_net_t *net, int bits, void *blk[MPXP_MAX_LAYERS], size_t *bytes_int, size_t *bytes_all,
+                  bool internal)
 {
     constexpr uint32_t caps_int = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
     const size_t reserve = static_cast<size_t>(CONFIG_APP_POLICY_INTERNAL_RESERVE_KB) * 1024u;
@@ -1267,7 +1947,7 @@ bool place_layers(pol_net_t *net, int bits, void *blk[MPXP_MAX_LAYERS], size_t *
             if (!done[l] && (best < 0 || sz[l] > sz[best])) best = static_cast<int>(l);
         done[best] = true;
         void *p = nullptr;
-        if (reserve > 0 && heap_caps_get_free_size(caps_int) >= sz[best] + reserve &&
+        if (internal && reserve > 0 && heap_caps_get_free_size(caps_int) >= sz[best] + reserve &&
             heap_caps_get_largest_free_block(caps_int) >= sz[best] + 16) {
             p = heap_caps_aligned_alloc(4, sz[best], caps_int);
             if (p) *bytes_int += sz[best];
@@ -1329,6 +2009,30 @@ const Builtin BUILTINS[] = {
 #ifdef MPX_POLICY_HAVE_SKU1_TERR15K
     { "sku1_terr15k", sku1_terr15k_mpxp_start, sku1_terr15k_mpxp_end },
 #endif
+#ifdef MPX_POLICY_HAVE_SKU1V2_STAIRS
+    { "sku1v2_stairs", sku1v2_stairs_mpxp_start, sku1v2_stairs_mpxp_end },
+#endif
+#ifdef MPX_POLICY_HAVE_SKU1V2_405_STAIRS
+    { "sku1v2_405_stairs", sku1v2_405_stairs_mpxp_start, sku1v2_405_stairs_mpxp_end },
+#endif
+#ifdef MPX_POLICY_HAVE_SKU1V2_405_WALK
+    { "sku1v2_405_walk", sku1v2_405_walk_mpxp_start, sku1v2_405_walk_mpxp_end },
+#endif
+#ifdef MPX_POLICY_HAVE_SKU1V2_405V2_STAIRS
+    { "sku1v2_405v2_stairs", sku1v2_405v2_stairs_mpxp_start, sku1v2_405v2_stairs_mpxp_end },
+#endif
+#ifdef MPX_POLICY_HAVE_SKU2_RECOVERY
+    // mini_pupper_4_recovery's walker (SKU2): with getup.mpxp (its get-up) and "never stays down", its Pi runner;
+    // before the SKU2 stairs, so an sku2 robot boots with it (the first built-in made for the robot)
+    { "sku2_recovery", sku2_recovery_mpxp_start, sku2_recovery_mpxp_end },
+#endif
+#ifdef MPX_POLICY_HAVE_SKU2_STAIRS
+    { "sku2_stairs", sku2_stairs_mpxp_start, sku2_stairs_mpxp_end },
+#endif
+#ifdef MPX_POLICY_HAVE_SKU1V2_RECOVERY
+    // the same for SKU1 v2 (405 g; trained with the recovery recipe on SKU1 v2), with getup_sku1.mpxp
+    { "sku1v2_recovery", sku1v2_recovery_mpxp_start, sku1v2_recovery_mpxp_end },
+#endif
 };
 constexpr int N_BUILTINS = static_cast<int>(sizeof(BUILTINS) / sizeof(BUILTINS[0]));
 int s_builtin_sel = 0;
@@ -1379,7 +2083,7 @@ void time_task(void *arg)
         int64_t total = 0, worst = 0;
         for (int k = 0; k < j->n; ++k) {
             const int64_t t0 = esp_timer_get_time();
-            pol_forward(&s_net, s_net.fix_obs + (size_t)(k % std::max<uint32_t>(1, s_net.h->n_fixtures)) * POL_OBS,
+            pol_forward(&s_net, s_net.fix_obs + (size_t)(k % std::max<uint32_t>(1, s_net.h->n_fixtures)) * s_net.h->dims[0],
                         act, work);
             const int64_t us = esp_timer_get_time() - t0;
             total += us;
@@ -1711,6 +2415,77 @@ void save_log_file()
     ESP_LOGI(TAG, "run log saved: %s (%u steps)", LOG_FILE, static_cast<unsigned>(i));
 }
 
+/* The get-up log to flash (GU_LOG_FILE), and per servo on the serial port: how far it stayed from its target, its
+ * largest current, and where its targets went (to see a servo that does not follow or a range that is cut). */
+void save_getup_file()
+{
+    static const char *const NAMES[12] = { "FR abd", "FR thigh", "FR calf", "FL abd", "FL thigh", "FL calf",
+                                           "RR abd", "RR thigh", "RR calf", "RL abd", "RL thigh", "RL calf" };
+    const pol_net_t &gn = s_gu_net;
+    ESP_LOGW(TAG, "get-up log: %u steps (%.1f s) of %s", static_cast<unsigned>(s_gu_n), s_gu_n * 0.02, s_gu_name);
+    ESP_LOGW(TAG, "  servo     | track err mean / max | target min..max | measured min..max | current max (mA)");
+    for (int i = 0; i < POL_N; ++i) {
+        double sum = 0.0, mx = 0.0;
+        int n = 0, tlo = 65535, thi = 0, plo = 65535, phi = 0, cmx = 0;
+        for (size_t k = 0; k < s_gu_n; ++k) {
+            const GuRec &g = s_gu[k];
+            tlo = std::min<int>(tlo, g.tgt[i]);
+            thi = std::max<int>(thi, g.tgt[i]);
+            cmx = std::max<int>(cmx, g.cur[i] < 0 ? -static_cast<int>(g.cur[i]) : static_cast<int>(g.cur[i]));
+            if (!g.pos[i]) continue;
+            plo = std::min<int>(plo, g.pos[i]);
+            phi = std::max<int>(phi, g.pos[i]);
+            const double e = std::fabs(static_cast<double>(g.tgt[i]) - g.pos[i]) / 10.0;
+            sum += e;
+            mx = std::max(mx, e);
+            ++n;
+        }
+        const double sg = gn.h ? gn.h->signs[i] : 1.0;
+        const auto rel = [&](int dd) { return pol_rel_from_dd(dd, sg, s_gu_off[i]) / DEG; };
+        double a = rel(tlo), b = rel(thi), c = rel(plo), d = rel(phi);
+        if (a > b) std::swap(a, b);
+        if (c > d) std::swap(c, d);
+        ESP_LOGW(TAG, "  %-9s | %6.1f / %6.1f deg   | %+5.0f..%+5.0f deg  | %+5.0f..%+5.0f deg    | %5d", NAMES[i],
+                 n ? sum / n : 0.0, mx, a, b, c, d, cmx);
+    }
+    FILE *f = std::fopen(GU_LOG_FILE, "w");
+    if (!f) {
+        ESP_LOGW(TAG, "could not save the get-up log to %s", GU_LOG_FILE);
+        return;
+    }
+    std::fprintf(f, "# get-up log of %s, %u steps of 20 ms; dd = AT32 units, 10 per degree\n", s_gu_name,
+                 static_cast<unsigned>(s_gu_n));
+    std::fprintf(f, "# offsets_deg");
+    for (int i = 0; i < POL_N; ++i) std::fprintf(f, ",%.2f", s_gu_off[i]);
+    std::fprintf(f, "\n# signs");
+    for (int i = 0; i < POL_N; ++i) std::fprintf(f, ",%.0f", gn.h ? gn.h->signs[i] : 0.0);
+    if (gn.dec) {
+        std::fprintf(f, "\n# bounds_lo_model_rad");
+        for (int i = 0; i < POL_N; ++i) std::fprintf(f, ",%.4f", gn.blo[i]);
+        std::fprintf(f, "\n# bounds_hi_model_rad");
+        for (int i = 0; i < POL_N; ++i) std::fprintf(f, ",%.4f", gn.bhi[i]);
+        std::fprintf(f, "\n# stand_model_rad");
+        for (int i = 0; i < POL_N; ++i) std::fprintf(f, ",%.4f", static_cast<double>(gn.dec->stand_model[i]));
+    }
+    std::fprintf(f, "\nt_ms,getup,tilt_deg,fresh_legs");
+    for (int i = 1; i <= 12; ++i) std::fprintf(f, ",tgt%d", i);
+    for (int i = 1; i <= 12; ++i) std::fprintf(f, ",pos%d", i);
+    for (int i = 1; i <= 12; ++i) std::fprintf(f, ",cur%d", i);
+    std::fputc('\n', f);
+    for (size_t k = 0; k < s_gu_n; ++k) {
+        const GuRec &g = s_gu[k];
+        std::fprintf(f, "%lu,%u,%.2f,%u", static_cast<unsigned long>(g.t_ms), static_cast<unsigned>(g.getup),
+                     g.tilt_cdeg == INT16_MIN ? -1.0 : g.tilt_cdeg / 100.0,
+                     static_cast<unsigned>(__builtin_popcount(g.fresh & 0x0Fu)));
+        for (int i = 0; i < 12; ++i) std::fprintf(f, ",%u", static_cast<unsigned>(g.tgt[i]));
+        for (int i = 0; i < 12; ++i) std::fprintf(f, ",%u", static_cast<unsigned>(g.pos[i]));
+        for (int i = 0; i < 12; ++i) std::fprintf(f, ",%d", static_cast<int>(g.cur[i]));
+        std::fputc('\n', f);
+    }
+    std::fclose(f);
+    ESP_LOGW(TAG, "get-up log saved: %s (GET /v1/policy/getup_log)", GU_LOG_FILE);
+}
+
 void after_task(void *)
 {
     for (;;) {
@@ -1719,6 +2494,7 @@ void after_task(void *)
             log_summary();
             save_log_file();
         }
+        if (s_gu && s_gu_n > 0 && s_state == MPX_POLICY_IDLE) save_getup_file();
         s_saving = false;
     }
 }
@@ -1731,6 +2507,14 @@ extern "C" const char *mpx_policy_log_file(void)
     if (!f) return nullptr;
     std::fclose(f);
     return LOG_FILE;
+}
+
+extern "C" const char *mpx_policy_getup_log_file(void)
+{
+    FILE *f = std::fopen(GU_LOG_FILE, "r");
+    if (!f) return nullptr;
+    std::fclose(f);
+    return GU_LOG_FILE;
 }
 
 extern "C" bool mpx_policy_log_saving(void)
@@ -1762,6 +2546,7 @@ extern "C" esp_err_t mpx_policy_init(void)
         ESP_LOGE(TAG, "built-in policy refused: %s", why);
     }
     install_getup();
+    install_climb();
 
     const esp_timer_create_args_t ta = { .callback = tick_cb, .arg = nullptr,
                                          .dispatch_method = ESP_TIMER_TASK, .name = "policy",
@@ -1806,6 +2591,29 @@ extern "C" esp_err_t mpx_policy_start(float seconds, float hold_s, bool force, b
                       static_cast<double>(driver_board_get_scale_dd()));
         return ESP_ERR_INVALID_STATE;
     }
+    // A recovery policy on the calibration this run uses (the robot's own or the file's): its bounds moved to it,
+    // and its decoder self-test (recovery checks.decoder_selftest: no target within 15 deg of a track end) passed.
+    if (s_net.dec || (s_gu_ok && s_gu_net.dec)) {
+        double off[POL_N], off_gu[POL_N];
+        for (int i = 0; i < POL_N; ++i) {
+            off[i] = s_use_robot_offsets ? robot::get_offset(i + 1) : s_net.h->offsets_deg[i];
+            off_gu[i] = (s_use_robot_offsets || !s_gu_ok) ? off[i] : s_gu_net.h->offsets_deg[i];
+        }
+        const char *bad = nullptr;
+        if (s_net.dec) {
+            pol_bounds_calibrate(&s_net, off);
+            bad = pol_decoder_selftest(&s_net, off);
+        }
+        if (!bad && s_gu_ok && s_gu_net.dec) {
+            pol_bounds_calibrate(&s_gu_net, off_gu);
+            if (pol_decoder_selftest(&s_gu_net, off_gu)) bad = "the get-up: a target too near a servo's track end";
+        }
+        if (bad) {
+            std::snprintf(why, why_len, "%s with the %s calibration", bad,
+                          s_use_robot_offsets ? "robot's own" : "policy file's");
+            return ESP_ERR_INVALID_STATE;
+        }
+    }
     if (!force && !dry && std::strcmp(s_net.h->robot, CONFIG_APP_POLICY_ROBOT) != 0) {
         std::snprintf(why, why_len, "this policy is for %s, the robot is %s (add `force` to run it anyway)",
                       s_net.h->robot, CONFIG_APP_POLICY_ROBOT);
@@ -1848,6 +2656,12 @@ extern "C" bool mpx_policy_set_auto_getup(bool on)
     return true;
 }
 
+extern "C" void mpx_policy_set_auto_right(bool on)
+{
+    s_auto_right.store(on);
+    ESP_LOGI(TAG, "always gets back up: %s", on ? "on" : "off");
+}
+
 extern "C" esp_err_t mpx_policy_getup(bool force, char *why, int why_len)
 {
     if (!s_gu_ok) {
@@ -1857,6 +2671,11 @@ extern "C" esp_err_t mpx_policy_getup(bool force, char *why, int why_len)
     if (!force && std::strcmp(s_gu_net.h->robot, CONFIG_APP_POLICY_ROBOT) != 0) {
         std::snprintf(why, why_len, "the get-up policy is for %s, the robot is %s (add `force` to run it anyway)",
                       s_gu_net.h->robot, CONFIG_APP_POLICY_ROBOT);
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (s_net.h && std::memcmp(s_gu_net.h->signs, s_net.h->signs, sizeof(s_net.h->signs)) != 0) {
+        std::snprintf(why, why_len, "the get-up's servo directions differ from the walk's (%s): choose a %s walk",
+                      s_net.h->name, s_gu_net.h->robot);
         return ESP_ERR_INVALID_ARG;
     }
     portENTER_CRITICAL(&s_mux);
@@ -1869,10 +2688,46 @@ extern "C" esp_err_t mpx_policy_getup(bool force, char *why, int why_len)
     }
     // The walk's checks and start (its servo configuration, calibration and
     // gyro bias); `force` also covers the walk policy's robot.
-    const esp_err_t e = mpx_policy_start(GETUP_MAX_S + 5.0f, 0.0f, true, false, why, why_len);
+    const float gmax = s_gu_net.dec ? s_gu_net.dec->getup_timeout_s : GETUP_MAX_S;
+    const esp_err_t e = mpx_policy_start(gmax + 5.0f, 0.0f, true, false, why, why_len);
     if (e != ESP_OK) {
         portENTER_CRITICAL(&s_mux);
         s_req_getup = false;
+        portEXIT_CRITICAL(&s_mux);
+    }
+    return e;
+}
+
+extern "C" esp_err_t mpx_policy_climb(bool force, char *why, int why_len)
+{
+    if (!s_cl_ok) {
+        std::snprintf(why, why_len, "no climb policy (policies/climb.mpxp) is built in");
+        return ESP_ERR_NOT_FOUND;
+    }
+    // trained for this robot, or a variant of it (sku1_lidar on an sku1)
+    const char *pr = s_cl_net.h->robot;
+    const size_t n = std::strlen(CONFIG_APP_POLICY_ROBOT);
+    const bool same = std::strncmp(pr, CONFIG_APP_POLICY_ROBOT, n) == 0 && (pr[n] == '\0' || pr[n] == '_');
+    if (!force && !same) {
+        std::snprintf(why, why_len, "the climb policy is for %s, the robot is %s (add `force` to run it anyway)", pr,
+                      CONFIG_APP_POLICY_ROBOT);
+        return ESP_ERR_INVALID_ARG;
+    }
+    portENTER_CRITICAL(&s_mux);
+    const bool busy = s_state != MPX_POLICY_IDLE || s_req_start || s_bench_busy || s_job.state.load() == JOB_RUNNING;
+    if (!busy) s_req_climb = true;
+    portEXIT_CRITICAL(&s_mux);
+    if (busy) {
+        std::snprintf(why, why_len, "a run or the size test is on");
+        return ESP_ERR_INVALID_STATE;
+    }
+    // The walk's checks and start (servo configuration, calibration, gyro bias, the ramp to the stand), then a
+    // 1 s hold, then CLIMB (which ends the run itself).
+    const float total = RAMP_IN_S + CLIMB_HOLD_IN_S + s_cl_net.h->cmd_max[0] + CLIMB_HOLD_TOP_S + 10.0f;
+    const esp_err_t e = mpx_policy_start(total, CLIMB_HOLD_IN_S, true, false, why, why_len);
+    if (e != ESP_OK) {
+        portENTER_CRITICAL(&s_mux);
+        s_req_climb = false;
         portEXIT_CRITICAL(&s_mux);
     }
     return e;
@@ -2071,13 +2926,13 @@ extern "C" bool mpx_policy_log_row(size_t i, char *buf, size_t len)
 {
     if (!s_log || i >= s_log_n || s_state != MPX_POLICY_IDLE) return false;
     static const char *const ph[] = { "idle", "prep", "ramp_in", "hold_in", "run", "ramp_out", "hold_out",
-                                      "getup" };
+                                      "getup", "climb" };
     const LogRec &r = s_log[i];
     char tilt[12];
     tilt[0] = '\0';
     if (r.tilt_cdeg != INT16_MIN) std::snprintf(tilt, sizeof(tilt), "%.2f", r.tilt_cdeg / 100.0);
     std::snprintf(buf, len, "%lu,%s,%lu,%u,%u,%u,%u,%u,%s,%.1f,%d,%.2f,%.2f,%.3f,%.3f,%.3f",
-                  static_cast<unsigned long>(r.t_ms), r.phase < 8 ? ph[r.phase] : "?",
+                  static_cast<unsigned long>(r.t_ms), r.phase < 9 ? ph[r.phase] : "?",
                   static_cast<unsigned long>(r.dt_us), r.tick_us, r.ex_us, r.fwd_us, r.flags & 1u,
                   __builtin_popcount(r.flags >> 4), tilt, r.temp_dc / 10.0, r.cur_ma,
                   r.trk_mean_cdeg / 100.0, r.trk_max_cdeg / 100.0, r.vx_mm / 1000.0, r.vy_mm / 1000.0,
@@ -2122,12 +2977,30 @@ extern "C" bool mpx_policy_active(void)
     return s_state != MPX_POLICY_IDLE;
 }
 
+/* The tilt as auto_right_tick() measures it (the get-up's IMU mount, else the walk policy's): the stress test's
+ * "landed / still down" check. */
+extern "C" float mpx_policy_tilt_now(void)
+{
+    const pol_net_t &n = (s_gu_ok && s_gu_net.h) ? s_gu_net : s_net;
+    if (!n.h) return NAN;
+    const robot::ImuData d = robot::imu_read();
+    const double a[3] = { d.ax, d.ay, d.az };
+    const double an = std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+    if (d.seq == 0 || esp_timer_get_time() - d.t_us > IMU_MAX_AGE_US || !(an > ACC_DROPOUT_G)) return NAN;
+    const float *m = n.h->imu_R;
+    double b[3];
+    for (int r = 0; r < 3; ++r) b[r] = m[3 * r] * a[0] + m[3 * r + 1] * a[1] + m[3 * r + 2] * a[2];
+    const double as_sensor[3] = { b[0], b[1], -b[2] };
+    return static_cast<float>(pol_tilt_deg(as_sensor));
+}
+
 extern "C" void mpx_policy_get_status(mpx_policy_status_t *out)
 {
     portENTER_CRITICAL(&s_mux);
     *out = s_st;
     portEXIT_CRITICAL(&s_mux);
     out->state = s_state;
+    out->auto_right = s_auto_right.load() && s_gu_ok;
     constexpr uint32_t caps_int = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
     out->ram_free = static_cast<uint32_t>(heap_caps_get_free_size(caps_int));
     out->ram_min_free = static_cast<uint32_t>(heap_caps_get_minimum_free_size(caps_int));
@@ -2145,6 +3018,7 @@ extern "C" const char *mpx_policy_state_name(mpx_policy_state_t s)
     case MPX_POLICY_RAMP_OUT: return "stopping: ramping to the stand";
     case MPX_POLICY_HOLD_OUT: return "stopping: holding the stand";
     case MPX_POLICY_GETUP:    return "GETTING UP";
+    case MPX_POLICY_CLIMB:    return "CLIMBING";
     }
     return "?";
 }

@@ -3,6 +3,7 @@
 #include "network/chat_ws.h"
 #include "network/http_display.h"
 #include "network/http_policy.h"
+#include "network/http_stress.h"
 #include "network/http_uros.h"
 #include "network/http_voice.h"
 #include "network/marketplace_proxy.h"
@@ -23,6 +24,7 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -37,6 +39,7 @@
 #include "robot/driver_board.h"
 #include "util/sys_monitor.h"
 #include "util/trace_ring.h"
+#include "util/deep_sleep.h"
 #include "wasm/registry.h"
 #include "wasm/wasm_sandbox.h"
 
@@ -163,9 +166,14 @@ esp_err_t send_file(httpd_req_t *req, const char *fs_path,
         }
     }
 
-    // Set Cache-Control for static assets
+    // Set Cache-Control for static assets. The app itself (html, js, css) changes with every
+    // firmware: "no-cache" makes the browser fetch it again (a few hundred KB on the LAN) rather
+    // than keep an old copy for a year ("immutable" showed a stale RL page after a flash).
+    // Icons and the 3D model stay cached.
+    const bool app_shell = std::strstr(mime, "html") || std::strstr(mime, "javascript") ||
+                           std::strstr(mime, "css");
     if (httpd_resp_set_hdr(req, "Cache-Control",
-                           "public, max-age=31536000, immutable") != ESP_OK) {
+                           app_shell ? "no-cache" : "public, max-age=31536000, immutable") != ESP_OK) {
         std::fclose(f);
         return ESP_FAIL;
     }
@@ -1093,7 +1101,11 @@ static esp_err_t api_robot_look(httpd_req_t *req)
  * POST {"action":"hold"}    power down: drop the current cap to the
  *                            configured hold value while staying in position
  *                            control — the controller's Power button
- * POST {"action":"wake"}    stand back up */
+ * POST {"action":"wake"}    stand back up
+ * POST {"action":"sleep"}   stop, lie down, servos off, screen off, ESP deep
+ *                            sleep; the WAKE button (SW3) starts it again.
+ *                            The board can't cut its own power: the regulator,
+ *                            driver boards and servos still draw a little */
 static void send_power_json(httpd_req_t *req)
 {
     char resp[220];
@@ -1127,6 +1139,14 @@ static esp_err_t api_robot_power_post(httpd_req_t *req)
     const std::string action = json_get_str(buf, "action");
     const int rest_after = json_get_int(buf, "rest_after_s", -1);
 
+    if (action == "sleep") {
+        const bool ok = mpx_sleep_start();
+        ESP_LOGW(TAG, "POST /v1/robot/power  action=sleep (%s)", ok ? "starting" : "already going");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, ok ? R"({"ok":true,"sleeping":true})"
+                                : R"({"ok":true,"sleeping":true,"already":true})", -1);
+        return ESP_OK;
+    }
     if (action == "rest") {
         robot::rest_now();
     } else if (action == "hold") {
@@ -1137,7 +1157,7 @@ static esp_err_t api_robot_power_post(httpd_req_t *req)
         robot::set_rest_after(static_cast<uint32_t>(rest_after));
     } else {
         httpd_resp_set_status(req, "400 Bad Request");
-        httpd_resp_send(req, "expected rest_after_s or action rest|hold|wake", -1);
+        httpd_resp_send(req, "expected rest_after_s or action rest|hold|wake|sleep", -1);
         return ESP_OK;
     }
     ESP_LOGI(TAG, "POST /v1/robot/power  action=%s rest_after_s=%d",
@@ -2587,6 +2607,38 @@ static esp_err_t api_marketplace_proxy(httpd_req_t *req)
  * session.  Using httpd_sess_trigger_close (not a raw close) keeps it safe —
  * httpd owns the actual close and ignores fds that aren't its sessions.
  */
+#ifndef LWIP_SOCKET_OFFSET
+#define LWIP_SOCKET_OFFSET 0
+#endif
+
+/* Every open lwIP socket: its local and remote end, and whether httpd owns it. When the pool runs out,
+ * httpd cannot accept() ("error in accept (23)", ENFILE) and the app shows "Can't reach the robot";
+ * this says who is holding them. Returns the number open. */
+static int socket_census(const int *httpd_fds, size_t n_httpd, bool print)
+{
+    int count = 0;
+    if (print) ESP_LOGW(TAG, "==== socket census: who holds the %d lwIP sockets ====", CONFIG_LWIP_MAX_SOCKETS);
+    for (int fd = LWIP_SOCKET_OFFSET; fd < LWIP_SOCKET_OFFSET + CONFIG_LWIP_MAX_SOCKETS; ++fd) {
+        int type = 0;
+        socklen_t tl = sizeof(type);
+        if (getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &tl) != 0) continue;     // not open
+        ++count;
+        if (!print) continue;
+        struct sockaddr_in l {}, r {};
+        socklen_t ll = sizeof(l), rl = sizeof(r);
+        char lb[16] = "-", rb[16] = "-";
+        int lp = -1, rp = -1;
+        if (getsockname(fd, (struct sockaddr *)&l, &ll) == 0) { inet_ntoa_r(l.sin_addr, lb, sizeof(lb)); lp = ntohs(l.sin_port); }
+        if (getpeername(fd, (struct sockaddr *)&r, &rl) == 0) { inet_ntoa_r(r.sin_addr, rb, sizeof(rb)); rp = ntohs(r.sin_port); }
+        bool web = false;
+        for (size_t i = 0; i < n_httpd; ++i) web |= (httpd_fds[i] == fd);
+        ESP_LOGW(TAG, "  fd %2d %s  %s:%d <- %s:%d%s", fd, type == SOCK_DGRAM ? "udp" : "tcp",
+                 lb, lp, rb, rp, web ? "  (web session)" : "");
+    }
+    if (print) ESP_LOGW(TAG, "==== %d / %d sockets open ====", count, CONFIG_LWIP_MAX_SOCKETS);
+    return count;
+}
+
 static void socket_reaper_task(void *)
 {
     // Only httpd's own client sessions, and only through httpd. The version before this one
@@ -2615,6 +2667,59 @@ static void socket_reaper_task(void *)
         if (reaped) {
             ESP_LOGW(TAG, "socket_reaper: closed %d dead web connection(s)", reaped);
         }
+
+        // Orphans: a web (port 80) TCP socket httpd no longer has in its session table, or one whose
+        // connection is gone entirely (no local address), that nobody will ever close. The census of
+        // 14 Oct found the pool full of these; the 21 Oct version of this task stopped closing them
+        // (it had also closed sockets httpd still used), so they piled up until accept() failed with
+        // ENFILE ("error in accept (23)") and the app could not reach the robot (23 Oct).
+        // Safe by construction: never a socket httpd lists, never the listening socket (and not at all
+        // when lwIP cannot say whether it listens), and only once seen orphaned in consecutive scans
+        // 4 s apart - 2 for a port-80 socket (a connection httpd has just accepted is filed within
+        // milliseconds), 3 for one with no address at all (another task's dead link: it closes its own
+        // well within 8 s).
+        static uint8_t orphan_seen[CONFIG_LWIP_MAX_SOCKETS];
+        int orphans = 0;
+        for (int fd = LWIP_SOCKET_OFFSET; fd < LWIP_SOCKET_OFFSET + CONFIG_LWIP_MAX_SOCKETS; ++fd) {
+            const int k = fd - LWIP_SOCKET_OFFSET;
+            int need = 0;                                   // scans needed; 0 = not an orphan
+            int type = 0;
+            socklen_t tl = sizeof(type);
+            if (getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &tl) == 0 && type == SOCK_STREAM) {
+                bool web = false;
+                for (size_t i = 0; i < n; ++i) web |= (fds[i] == fd);
+                struct sockaddr_in l {};
+                socklen_t ll = sizeof(l);
+                if (!web) {
+                    if (getsockname(fd, (struct sockaddr *)&l, &ll) != 0) {
+                        need = 3;
+                    } else if (ntohs(l.sin_port) == 80) {
+                        int listening = 1;
+                        socklen_t al = sizeof(listening);
+                        if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, &listening, &al) == 0 && !listening)
+                            need = 2;
+                    }
+                }
+            }
+            if (!need) { orphan_seen[k] = 0; continue; }
+            if (++orphan_seen[k] >= need) {
+                close(fd);
+                orphan_seen[k] = 0;
+                ++orphans;
+            }
+        }
+        if (orphans) {
+            ESP_LOGW(TAG, "socket_reaper: closed %d orphaned socket(s) nobody owned", orphans);
+        }
+
+        // Nearly out of sockets: print who holds them (at most every 30 s).
+        static uint32_t last_census_ms = 0;
+        const uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+        if (socket_census(fds, n, false) >= CONFIG_LWIP_MAX_SOCKETS - 3 &&
+            (last_census_ms == 0 || now_ms - last_census_ms > 30000)) {
+            last_census_ms = now_ms;
+            socket_census(fds, n, true);
+        }
     }
 }
 
@@ -2634,7 +2739,7 @@ bool start_http_server()
     // See the note on register_uri() - this number is load-bearing, and being
     // one short deletes a route without saying so. Each slot is a pointer, so
     // the headroom is cheap.
-    config.max_uri_handlers = 96;
+    config.max_uri_handlers = 104;
     // LWIP has CONFIG_LWIP_MAX_SOCKETS (16) total.  HTTPD also reserves 3
     // internal sockets on top of max_open_sockets.  At 5, HTTPD uses at most
     // 5+3=8, GUARANTEEING ~8 sockets stay free for OUTBOUND use (upstream cloud
@@ -2658,6 +2763,16 @@ bool start_http_server()
         ESP_LOGE(TAG, "Failed to start HTTP server");
         return false;
     }
+
+    // Unknown URIs: a 404 without ESP-IDF's "httpd_resp_send_err: 404 Not Found" warning per request (an app or
+    // browser tab polling an address this build does not have printed it every 2 s). The URI goes to the debug log.
+    httpd_register_err_handler(s_server, HTTPD_404_NOT_FOUND, [](httpd_req_t *req, httpd_err_code_t) -> esp_err_t {
+        ESP_LOGD(TAG, "404: %s", req->uri);
+        httpd_resp_set_status(req, "404 Not Found");
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_send(req, "Not found", HTTPD_RESP_USE_STRLEN);
+        return ESP_FAIL;   // close the connection, as the default 404 does
+    });
 
     // ── BUILD MARKER — confirms which firmware is actually running ──
     ESP_LOGW(TAG, "==== MPX BUILD socketfix-v14 : max_open_sockets=%d ====",
@@ -2787,6 +2902,7 @@ bool start_http_server()
 
     // ── RL walk on the ESP32-S3 (from mpv2-uros): 3 routes, in http_policy.cc ──
     network::register_policy_routes(s_server, register_uri);
+    network::register_stress_routes(s_server, register_uri);   // /stress: the backflip stress test
 
     // ── micro-ROS settings (from mpv2-uros): 2 routes, in http_uros.cc ──
     network::register_uros_routes(s_server, register_uri);

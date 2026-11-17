@@ -8,8 +8,8 @@ ESP32-S3 and drives the twelve servos. No Raspberry Pi. The app's
 
 | | |
 |---|---|
-| On | the RL walk (`CONFIG_APP_POLICY_ENABLE`), the robot's own gait (before and after a run), Wi-Fi and the app, LittleFS, sysmon |
-| Off | the face and GIFs (`DISPLAY`), the on-robot agent and skills (`AGENT`), Lua (`LUA`), speaker and microphones (`AUDIO`), voice (`VOICE`), the Raspberry Pi link (`PI_LINK`, `RL_LINK`), micro-ROS (`UROS`), the IMU log (`IMU_LOG`) |
+| On | the RL walk (`CONFIG_APP_POLICY_ENABLE`), the robot's own gait (before and after a run), Wi-Fi and the app, LittleFS, sysmon, the screen (`DISPLAY`: one looping GIF, its LVGL task on core 0 away from the walk) |
+| Off | the on-robot agent and skills (`AGENT`), Lua (`LUA`), speaker and microphones (`AUDIO`), voice (`VOICE`), the Raspberry Pi link (`PI_LINK`, `RL_LINK`), micro-ROS (`UROS`), the IMU log (`IMU_LOG`) |
 
 All `CONFIG_APP_*` in `main/Kconfig.projbuild`. The choices are at the end of
 `sdkconfig.defaults` (`sdkconfig` itself is not in git), so a fresh clone
@@ -61,7 +61,9 @@ Built in (`main/rl/policies/`):
 | `sku1.mpxp` | `sku1_368_stops_s2` | SKU1 |
 | `default.mpxp` | `bam_t5ub06_stops_v1`, the first walk | SKU2 |
 | `terrain.mpxp` | `bam_terrain_s2`, the terrain walk | SKU2 |
-| `getup.mpxp` | the get-up policy, built in when the file is there (omniRL `docs/GETUP.md`) | |
+| `getup.mpxp` | the get-up policy, built in when the file is there: mini_pupper_4_recovery's get-up (`sku2_recovery_getup`) | SKU2 |
+| `sku2_recovery.mpxp` | mini_pupper_4_recovery's walker (`sku2_recovery_walker`, "Walk + get-up · SKU2") | SKU2 |
+| `sku1v2_recovery.mpxp`, `getup_sku1.mpxp` | the recovery recipe trained on SKU1 v2 (405 g; the `sku1v2_recovery_4090` bundle): the walker ("Walk + get-up · SKU1 v2") and its get-up, built in when the files are there. With both get-ups built in, the firmware installs the one made for its `APP_POLICY_ROBOT` | SKU1 |
 
 All three walks are the same size (45 → 128 → 128 → 64 → 12, about 31k
 weights) and omnidirectional: trained to follow forward, sideways and turning
@@ -72,6 +74,16 @@ At boot the robot picks the first one made for itself (`APP_POLICY_ROBOT`,
 `sku1` or `sku2`, default `sku1`); the page switches between them. A policy
 for the other robot needs "Run a policy for …" on the page: another body can
 do anything on this one.
+
+**Walk + get-up · SKU2** (mini_pupper_4_recovery): with "never stays down" on, it walks, gets up after a fall and
+walks on, as the recovery repository's Pi runner does, on the ESP32 alone. "Use my calibration" runs it on the robot's
+own offsets (the joint limits near the pots' track ends follow them); off, on the recovery contract's. The walk's
+temperature guard is on (`APP_POLICY_TEMP_STOP_C`, default 85 degC; 0 = off; none during the get-up unless
+`APP_POLICY_TEMP_IN_GETUP`) and there is no current guard while getting up; any stop during a get-up goes limp.
+"Always gets back up" (`APP_POLICY_AUTO_RIGHT`, on by default; the page's switch until the next restart) works
+outside any run: with no move playing and no host holding the robot, lying still on its back or a side (over
+60 deg) for 0.3 s starts the get-up at once, which ends standing; at most 3 tries, 3 s apart, until it has been upright
+for 2 s again. Details: [tools/policy/README.md](../tools/policy/README.md#mini_pupper_4_recovery-the-sku2-walker-and-get-up).
 
 A new policy: export it from omniRL with `tools/policy/export_mpxp.py` into
 `main/rl/policies/` and rebuild ([tools/policy/README.md](../tools/policy/README.md),

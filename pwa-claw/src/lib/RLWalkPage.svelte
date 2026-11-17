@@ -34,8 +34,10 @@
   // "forward": one button, a fixed forward speed. "omni": the stick.
   let mode = $state("forward");
   const FWD_SPEEDS = [
+    { v: 0.0, label: "Stand" },     // stand in place and take pushes (with "Never stays down": falls, gets up, stands)
     { v: 0.05, label: "Slow" },
     { v: 0.08, label: "Normal" },
+    { v: 0.10, label: "Stairs" },   // the stairs policy's test speed (RLmp4 terrain_eval --vx 0.10)
     { v: 0.12, label: "Fast" },
   ];
   let fwdSpeed = $state(0.08);
@@ -47,6 +49,7 @@
   // Never stays down: a walk that falls gets back up (the get-up policy) and walks on.
   let getupAuto = $state(null);     // null until the first status
   let getupRun = $state(false);     // the run on now is a "Get up" (no walking after it)
+  let climbRun = $state(false);     // the run on now is a "Climb" (onto a box, then the stand)
 
   // The log of the last run, fetched when a logged run ends.
   let logged = $state(null);        // { summary, csv }
@@ -78,8 +81,9 @@
     if (ownCal === null && st && st.available !== false) ownCal = !!st.own_calibration;
     if (getupAuto === null && st && st.available !== false && st.getup_ready !== undefined) getupAuto = !!st.getup_auto;
   });
-  $effect(() => { if (!active) getupRun = false; });
+  $effect(() => { if (!active) { getupRun = false; climbRun = false; } });
   const canGetUp = $derived(!!st?.getup_ready);
+  const canClimb = $derived(!!st?.climb_ready);
   // Without Wi-Fi nothing can steer it: walk forward, for a set time.
   const offlineOk = $derived(mode === "forward" && seconds > 0 && seconds <= (st?.offline_max_s ?? 120));
 
@@ -94,6 +98,7 @@
     ramp_out: "Stopping",
     hold_out: "Stopping",
     getup: "Getting up",
+    climb: "Climbing",
   };
 
   async function call(body) {
@@ -206,6 +211,41 @@
     busy = false;
   }
 
+  // Balance and get up: the recovery walk made for this robot ("Walk + get-up"), standing still or walking forward at
+  // 0.10 m/s (the speeds of the recovery repository's simulation tests and of its robot runs), "Never stays down" on,
+  // until Stop. Pushed, it rides out what it can; fallen, it gets up by itself and goes back to standing or walking.
+  const BAL_SPEEDS = [{ v: 0.0, label: "Stand · 0" }, { v: 0.10, label: "Walk · 0.10 m/s" }];
+  let balSpeed = $state(0.0);
+  const recoveryWalk = $derived.by(() => {
+    const b = st?.builtins || [];
+    const mine = st?.this_robot === "sku1" ? "sku1v2_recovery" : "sku2_recovery";
+    return b.includes(mine) ? mine : b.find((n) => n.endsWith("_recovery")) || null;
+  });
+  const canBalance = $derived(canGetUp && !!recoveryWalk);
+
+  async function balance() {
+    if (busy || !recoveryWalk) return;
+    if (st?.builtin !== recoveryWalk) await selectPolicy(recoveryWalk);
+    if (st?.builtin !== recoveryWalk) return;   // could not load it (selectPolicy said why)
+    mode = "forward";
+    fwdSpeed = balSpeed;
+    seconds = 0;
+    getupAuto = true;
+    noWifi = false;
+    await start();
+  }
+
+  // "Always gets back up": the robot's own watcher (outside any run), on or off until the robot restarts.
+  async function toggleAutoRight() {
+    if (!st) return;
+    try {
+      const { r, j } = await call({ action: "settings", auto_right: !st.auto_right });
+      if (!r.ok) say(j?.error || "Could not change it.", true);
+    } catch {
+      say("Could not reach the robot.", true);
+    }
+  }
+
   async function getUp() {
     if (busy) return;
     busy = true;
@@ -218,6 +258,24 @@
       if (!r.ok) runMeta = null;
       if (!r.ok) say(j?.error ? `The robot said no: ${j.error}` : `The robot said no (HTTP ${r.status}).`, true);
       else { getupRun = true; say("Getting up. Keep clear of the legs."); }
+    } catch {
+      say("The robot did not answer.", true);
+    }
+    busy = false;
+  }
+
+  async function climb() {
+    if (busy) return;
+    busy = true;
+    test = null;
+    logged = null;
+    sx = sy = turn = 0;
+    runMeta = { mode: "climb", seconds: st?.climb_s || 0, dry: false, ownCal, name: st?.climb_name, robot: st?.robot };
+    try {
+      const { r, j } = await call({ action: "climb", force, log: wantLog });
+      if (!r.ok) runMeta = null;
+      if (!r.ok) say(j?.error ? `The robot said no: ${j.error}` : `The robot said no (HTTP ${r.status}).`, true);
+      else { climbRun = true; say("Climbing. Keep the robot still for 1 s, then keep clear of the box."); }
     } catch {
       say("The robot did not answer.", true);
     }
@@ -332,7 +390,7 @@
   const deg = (v) => (v < 0.01 ? v.toFixed(3) : v.toFixed(2));
 
   // ── The built-in walk policies (main/rl/policies/) ──
-  const POLICY_LABEL = { walk: "Walk · SKU2", terrain: "Terrain · SKU2", sku1: "Walk · SKU1", sku1_terrain: "Terrain · SKU1", sku1_terr11k: "Terrain 2 · SKU1 · 11k", sku1_terr15k: "Terrain 2 · SKU1 · 15k" };
+  const POLICY_LABEL = { walk: "Walk · SKU1 v2 · 405 g", terrain: "Terrain · SKU2", sku1: "Walk · SKU1", sku1_terrain: "Terrain · SKU1", sku1_terr11k: "Terrain 2 · SKU1 · 11k", sku1_terr15k: "Terrain 2 · SKU1 · 15k", sku1v2_stairs: "Stairs · SKU1 v2", sku1v2_405_stairs: "Stairs · SKU1 v2 · 405 g", sku1v2_405_walk: "Walk · SKU1 v2 · 405 g", sku1v2_405v2_stairs: "Stairs · SKU1 v2 · v3", sku2_stairs: "Stairs · SKU2", sku2_recovery: "Walk + get-up · SKU2", sku1v2_recovery: "Walk + get-up · SKU1 v2" };
   async function selectPolicy(name) {
     if (busy || st?.builtin === name) return;
     busy = true;
@@ -411,7 +469,7 @@
     const cur = stats(pick(rows, "current_ma"));
     const vx = stats(pick(walking, "vx")), vy = stats(pick(walking, "vy")), wz = stats(pick(walking, "wz"));
     const offline = meta ? meta.offline : status?.last_offline;
-    const what = meta?.mode === "getup" ? "get up" : meta?.mode === "forward" ? `walk forward ${meta.speed} m/s` : "omni (stick)";
+    const what = meta?.mode === "climb" ? "climb onto a box" : meta?.mode === "getup" ? "get up" : meta?.mode === "forward" ? `walk forward ${meta.speed} m/s` : "omni (stick)";
     const out = [
       `RL walk log · ${meta?.name || status?.name} (for ${meta?.robot || status?.robot}) · ${meta?.ownCal ? "own calibration" : "policy's calibration"} · ${what} · ${meta?.seconds ? meta.seconds + " s" : "until Stop"}${meta?.dry ? " · DRY" : ""}${offline ? " · WI-FI OFF" : ""}`,
       `ended: ${status?.last_stop || "?"}`,
@@ -566,7 +624,7 @@
             <span class="txt">
               <span class="t">{away ? "On its own · Wi-Fi off" : PHASE[st.phase] || st.state}{st.dry && active ? " · dry" : ""}</span>
               <span class="d">
-                {getupRun ? `${st.getup_name} · the get-up policy` : st.loaded ? `${st.name} · for ${st.robot}` : "No policy loaded"}
+                {climbRun ? `${st.climb_name} · the climb policy` : getupRun ? `${st.getup_name} · the get-up policy` : st.loaded ? `${st.name} · for ${st.robot}` : "No policy loaded"}
                 {st.own_calibration ? " · your calibration" : " · the policy's calibration"}
               </span>
             </span>
@@ -607,6 +665,12 @@
           <button type="button" class="act ghost" onclick={() => { runMeta = null; fetchLog(); }}>Show the last saved log{st.last_offline ? " (run without Wi-Fi)" : ""}</button>
         </section>
       {/if}
+      {#if !active && !away && canGetUp}
+        <section>
+          <button type="button" class="act ghost" onclick={() => window.open("/v1/policy/getup_log", "_blank")}>Download the last get-up log (every servo, every 20 ms)</button>
+          <p class="note">Saved on the robot after every get-up, the automatic ones too. Send the CSV to check which servo does not follow or hits its limit.</p>
+        </section>
+      {/if}
 
       {#if away}
         <section>
@@ -622,6 +686,14 @@
           {/if}
         </section>
         <button type="button" class="act ghost" onclick={() => { away = null; msg = ""; load(); }}>Stop waiting</button>
+      {:else if active && climbRun}
+        <section>
+          <h2>{st.phase === "climb" ? "Climbing" : "Wait"}</h2>
+          <div class="drive">
+            <p class="big">{st.phase === "climb" ? `Climbing… ${Math.round((st.climb_phase || 0) * 100)} %` : PHASE[st.phase] || st.state}</p>
+          </div>
+        </section>
+        <button type="button" class="stop" onclick={stop}>Stop</button>
       {:else if active && getupRun}
         <section>
           <h2>{st.phase === "getup" ? "Getting up" : "Wait"}</h2>
@@ -632,10 +704,10 @@
         <button type="button" class="stop" onclick={stop}>Stop</button>
       {:else if active && mode === "forward"}
         <section>
-          <h2>{running ? "Walking forward" : st.phase === "getup" ? "It fell: getting up" : "Wait for it to stand"}</h2>
+          <h2>{running ? (cmd[0] === 0 ? "Standing, taking pushes" : "Walking forward") : st.phase === "getup" ? "It fell: getting up" : "Wait for it to stand"}</h2>
           <div class="drive" class:off={!running}>
-            <p class="big">{running ? `${cmd[0]} m/s forward` : st.phase === "getup" ? "Getting up…" : "Standing up…"}</p>
-            <div class="seg three" role="radiogroup" aria-label="Speed">
+            <p class="big">{running ? (cmd[0] === 0 ? "Standing still" : `${cmd[0]} m/s forward`) : st.phase === "getup" ? "Getting up…" : "Standing up…"}</p>
+            <div class="seg" role="radiogroup" aria-label="Speed" style="grid-template-columns: repeat(5, minmax(0, 1fr))">
               {#each FWD_SPEEDS as f}
                 <button type="button" role="radio" aria-checked={fwdSpeed === f.v} class:on={fwdSpeed === f.v} onclick={() => (fwdSpeed = f.v)}>{f.label}</button>
               {/each}
@@ -677,6 +749,33 @@
           </section>
         {/if}
 
+        {#if canBalance}
+          <section>
+            <h2>Balance and get up</h2>
+            <div class="seg two" role="radiogroup" aria-label="Balance speed">
+              {#each BAL_SPEEDS as b}
+                <button type="button" role="radio" aria-checked={balSpeed === b.v} class:on={balSpeed === b.v} onclick={() => (balSpeed = b.v)}>{b.label}</button>
+              {/each}
+            </div>
+            <button type="button" class="go" disabled={busy || !st.loaded} onclick={balance}>Start · {balSpeed === 0 ? "stand" : "walk 0.10 m/s"}, get up when it falls</button>
+            <p class="note">{POLICY_LABEL[recoveryWalk] || recoveryWalk}, until you press Stop. Push it from the front or the side: it rides out what it can, and when it falls it gets up by itself (up to 10 times) and goes back to {balSpeed === 0 ? "standing" : "walking"}. Clear space around it, and a soft floor for the first tries.</p>
+          </section>
+        {/if}
+
+        {#if canGetUp && st.auto_right !== undefined}
+          <section>
+            <div class="group">
+              <div class="row">
+                <span class="txt">
+                  <span class="t">Always gets back up</span>
+                  <span class="d">Also with nothing running: lying still on its back or side (a failed backflip, a fall), it gets up by itself within half a second and stands. Up to 3 tries until it has stood again. Held upside down in your hand, it starts too.</span>
+                </span>
+                <button type="button" class="switch" class:on={!!st.auto_right} role="switch" aria-checked={!!st.auto_right} aria-label="Always gets back up" onclick={toggleAutoRight}><span class="knob2"></span></button>
+              </div>
+            </div>
+          </section>
+        {/if}
+
         <section>
           <h2>Mode</h2>
           <div class="seg two" role="radiogroup" aria-label="Mode">
@@ -684,7 +783,7 @@
             <button type="button" role="radio" aria-checked={mode === "omni"} class:on={mode === "omni"} onclick={() => (mode = "omni")}>Omni (stick)</button>
           </div>
           {#if mode === "forward"}
-            <div class="seg three" role="radiogroup" aria-label="Forward speed">
+            <div class="seg" role="radiogroup" aria-label="Forward speed" style="grid-template-columns: repeat(5, minmax(0, 1fr))">
               {#each FWD_SPEEDS as f}
                 <button type="button" role="radio" aria-checked={fwdSpeed === f.v} class:on={fwdSpeed === f.v} onclick={() => (fwdSpeed = f.v)}>{f.label} · {f.v}</button>
               {/each}
@@ -752,8 +851,16 @@
           </div>
         </section>
 
-        <button type="button" class="go" disabled={busy || !st.loaded} onclick={start}>{mode === "forward" ? `Start · walk forward ${fwdSpeed} m/s${noWifi && offlineOk ? " · no Wi-Fi" : ""}` : "Start"}</button>
+        <button type="button" class="go" disabled={busy || !st.loaded} onclick={start}>{mode === "forward" ? `Start · ${fwdSpeed === 0 ? "stand and take pushes" : "walk forward " + fwdSpeed + " m/s"}${noWifi && offlineOk ? " · no Wi-Fi" : ""}` : "Start"}</button>
         <p class="note">First runs: robot on a stand, feet off the ground. It stands up first (about 3 s), then walks where you drag. It stops by itself on a big tilt, a hot servo, or if this page stops talking to it for 2 s.</p>
+
+        {#if canClimb}
+          <section>
+            <h2>Climb a box</h2>
+            <button type="button" class="go ghost" disabled={busy} onclick={climb}>Climb</button>
+            <p class="note">{st.climb_name} · {Math.round(st.climb_s || 0)} s. Stand it square in front of a 5–7 cm box, front paws about 3 cm from the box. It stands up, climbs, waits 3 s on top and stops. It stops by itself if it tips over 55°.</p>
+          </section>
+        {/if}
 
         {#if canGetUp}
           <section>

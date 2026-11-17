@@ -149,6 +149,9 @@ static esp_err_t lvgl_init(void)
     lvgl_port_cfg_t port_cfg = ESP_LVGL_PORT_INIT_CONFIG();
     port_cfg.task_stack    = LVGL_TASK_STACK;
     port_cfg.task_priority = LVGL_TASK_PRIORITY;
+    /* Core 0: the RL walk's tick, network and timing tasks are pinned to core 1 at priority 21-22
+     * (rl/policy_run.cc); the screen (GIF decoding, flushes) stays off that core entirely. */
+    port_cfg.task_affinity = 0;
     /* PSRAM stack, as mpv2-claw (ESP_LVGL_ADAPTER_LVGL_THREAD_STACK_IN_PSRAM).
      * This task reads GIFs off LittleFS; that used to need an internal stack
      * (a flash read from a PSRAM stack asserted in cache_utils.c), but since

@@ -26,14 +26,16 @@ build/
 # (components/micro_ros, tools/uros/rebuild_microros.sh).
 !components/micro_ros/libmicroros.a
 *.out
-*.exe # For any host-side utilities compiled on Windows
+# host-side utilities compiled on Windows
+*.exe
 dependencies.lock
 
 # ESP-IDF specific build outputs
 *.bin
 *.elf
 *.map
-flasher_args.json # Generated in build directory
+# generated in the build directory
+flasher_args.json
 sdkconfig.old
 sdkconfig
 
@@ -91,5 +93,11 @@ Desktop.ini
 # PWA Dependency folders
 node_modules/
 www/
-# scratch transfers (safe to delete)
+# local backups and scratch (never committed)
 _to_delete/
+_bak*/
+*.preclimb
+*.orig
+*.rej
+main/rl/policies_off*/
+main/rl/policies_removed/

@@ -12,6 +12,7 @@
  *                          "hold":2,"dry":false,"force":false,"log":true,
  *                          "own_calibration":true,"getup_auto":true,"offline":false}
  *                         {"action":"getup","force":false}
+ *                         {"action":"climb","force":false,"log":true}   (onto a box: rl/policies/climb.mpxp)
  *                         {"action":"cmd","vx":..,"vy":..,"wz":..}   (also a keepalive)
  *                         {"action":"keepalive"} | {"action":"stop"} | {"action":"test"}
  *                         {"action":"bench","bits":16,"offline":false}   (starts the size test; read it on
@@ -169,6 +170,7 @@ const char *phase_name(mpx_policy_state_t s)
     case MPX_POLICY_RAMP_OUT: return "ramp_out";
     case MPX_POLICY_HOLD_OUT: return "hold_out";
     case MPX_POLICY_GETUP:    return "getup";
+    case MPX_POLICY_CLIMB:    return "climb";
     }
     return "idle";
 }
@@ -228,8 +230,13 @@ esp_err_t status_reply(httpd_req_t *req, const char *status, const char *error)
     cJSON_AddBoolToObject(o, "getup_ready", st.getup_ready);
     cJSON_AddStringToObject(o, "getup_name", st.getup_name);
     cJSON_AddBoolToObject(o, "getup_auto", st.auto_getup);
+    cJSON_AddBoolToObject(o, "auto_right", st.auto_right);
     cJSON_AddNumberToObject(o, "getups", st.getups);
     cJSON_AddNumberToObject(o, "getups_ok", st.getups_ok);
+    cJSON_AddBoolToObject(o, "climb_ready", st.climb_ready);
+    cJSON_AddStringToObject(o, "climb_name", st.climb_name);
+    cJSON_AddNumberToObject(o, "climb_s", st.climb_s);
+    cJSON_AddNumberToObject(o, "climb_phase", st.climb_phase);
     cJSON_AddStringToObject(o, "builtin", mpx_policy_builtin_current());
     cJSON *bl = cJSON_AddArrayToObject(o, "builtins");
     for (int i = 0; bl && i < mpx_policy_builtin_count(); ++i)
@@ -300,6 +307,27 @@ esp_err_t policy_log_file(httpd_req_t *req)
     httpd_resp_set_type(req, "text/csv");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"rl_walk_log.csv\"");
+    static char buf[2048];
+    size_t got;
+    esp_err_t r = ESP_OK;
+    while (r == ESP_OK && (got = fread(buf, 1, sizeof(buf), f)) > 0) r = httpd_resp_send_chunk(req, buf, got);
+    fclose(f);
+    if (r != ESP_OK) return ESP_FAIL;
+    return httpd_resp_send_chunk(req, nullptr, 0);
+}
+
+/* GET /v1/policy/getup_log: the last get-up's per-servo log (targets, positions, currents), CSV from flash. */
+esp_err_t policy_getup_log_handler(httpd_req_t *req)
+{
+    if (mpx_policy_active() || mpx_policy_log_saving()) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "the run is still on");
+    }
+    const char *path = mpx_policy_getup_log_file();
+    FILE *f = path ? fopen(path, "r") : nullptr;
+    if (!f) return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "no get-up logged yet");
+    httpd_resp_set_type(req, "text/csv");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"getup_log.csv\"");
     static char buf[2048];
     size_t got;
     esp_err_t r = ESP_OK;
@@ -399,7 +427,7 @@ esp_err_t policy_post_handler(httpd_req_t *req)
     char action[16] = "";
     const cJSON *a = cJSON_GetObjectItem(body, "action");
     if (cJSON_IsString(a)) snprintf(action, sizeof(action), "%s", a->valuestring);
-    char pname[16] = "";
+    char pname[48] = "";   /* a built-in policy id ("sku1v2_405_stairs": 17 characters) */
     const cJSON *pn = cJSON_GetObjectItem(body, "name");
     if (cJSON_IsString(pn)) snprintf(pname, sizeof(pname), "%s", pn->valuestring);
     const float vx = num(body, "vx", 0.0f);
@@ -418,7 +446,15 @@ esp_err_t policy_post_handler(httpd_req_t *req)
     const cJSON *gauto = cJSON_GetObjectItem(body, "getup_auto");
     const bool set_gauto = cJSON_IsBool(gauto);
     const bool getup_auto = cJSON_IsTrue(gauto);
+    const cJSON *aright = cJSON_GetObjectItem(body, "auto_right");
+    const bool set_aright = cJSON_IsBool(aright);
+    const bool auto_right = cJSON_IsTrue(aright);
     cJSON_Delete(body);
+    /* "always gets back up": with any action, or alone ({"action":"settings","auto_right":true}) */
+    if (set_aright) mpx_policy_set_auto_right(auto_right);
+    if (strcmp(action, "settings") == 0) {
+        return status_reply(req, "200 OK", nullptr);
+    }
     if (strcmp(action, "cmd") != 0 && strcmp(action, "keepalive") != 0) {
         ESP_LOGI(TAG, "POST /v1/policy %s", action);
     }
@@ -466,6 +502,17 @@ esp_err_t policy_post_handler(httpd_req_t *req)
             return status_reply(req, "409 Conflict", why);
         }
         ESP_LOGI(TAG, "getup");
+        return status_reply(req, "200 OK", nullptr);
+    }
+    if (strcmp(action, "climb") == 0) {
+        char why[128] = "";
+        mpx_policy_set_log(log);
+        mpx_policy_set_deadman_ms(DEADMAN_MS);
+        if (mpx_policy_climb(force, why, sizeof(why)) != ESP_OK) {
+            ESP_LOGW(TAG, "climb refused: %s", why);
+            return status_reply(req, "409 Conflict", why);
+        }
+        ESP_LOGI(TAG, "climb");
         return status_reply(req, "200 OK", nullptr);
     }
     if (strcmp(action, "cmd") == 0) {
@@ -539,7 +586,7 @@ esp_err_t policy_post_handler(httpd_req_t *req)
         return status_reply(req, "200 OK", nullptr);
     }
     return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                               "action: run | getup | cmd | keepalive | stop | test | bench | weights | policy");
+                               "action: run | getup | climb | cmd | keepalive | stop | test | bench | weights | policy");
 }
 
 }  // namespace
@@ -553,6 +600,7 @@ int network::register_policy_routes(httpd_handle_t server,
         { "/v1/policy",     HTTP_POST, "POST", policy_post_handler },
         { "/v1/policy/log", HTTP_GET,  "GET",  policy_log_handler  },
         { "/v1/policy/bench", HTTP_GET, "GET", policy_bench_handler },
+        { "/v1/policy/getup_log", HTTP_GET, "GET", policy_getup_log_handler },
     };
     int ok = 0;
     for (const auto &t : table) {

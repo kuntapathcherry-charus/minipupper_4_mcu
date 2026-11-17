@@ -37,6 +37,7 @@ static const char *TAG = "display_glue";
 namespace {
 
 constexpr const char *ANIM_DIR = "/fs/display";
+constexpr const char *DEFAULT_GIF = "blink";   /* display/assets/blink.gif: the first boot's animation */
 constexpr TickType_t  NET_POLL = pdMS_TO_TICKS(1000);
 
 enum class Kind : uint8_t { MasterOn, MasterOff, PiIp };
@@ -154,6 +155,14 @@ void display_glue::start_animations()
     (void)display::deploy_builtin_gifs(ANIM_DIR);
     if (cap_display_available() && cap_display_anim_restore() == ESP_OK) {
         ESP_LOGI(TAG, "animation restore queued");
+        return;
+    }
+    /* Nothing chosen yet (a first boot): one looping GIF on the screen. A choice made on the app's Display page
+     * (another GIF, or the animation stopped) is saved and kept from then on. */
+    cap_display_anim_state_t st;
+    cap_display_anim_get(&st);
+    if (cap_display_available() && !st.id[0] && cap_display_anim_play(DEFAULT_GIF, true) == ESP_OK) {
+        ESP_LOGI(TAG, "default animation '%s'", DEFAULT_GIF);
     }
 }
 

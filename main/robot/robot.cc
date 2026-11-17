@@ -837,6 +837,16 @@ bool init()
         if (nvs_get_i32(s_nvs, "stride", &v) == ESP_OK)   s_cfg.stride    = static_cast<int>(v);
         if (nvs_get_i32(s_nvs, "tilt", &v) == ESP_OK)     s_cfg.tilt      = static_cast<int>(v);
         if (nvs_get_i32(s_nvs, "sgspeed", &v) == ESP_OK)  s_cfg.sg_speed  = static_cast<int>(v);
+        // (from mpx) The walk speed used to default to 50 mm/s, half of minipupperesp's 100: full stick walked at half
+        // speed with half-length steps. The app has no speed slider, so any config save stored that 50.
+        // Once per robot: a stored 50 (the old default) becomes 100 like minipupperesp; any other value stays.
+        if (nvs_get_i32(s_nvs, "sgspd2", &v) != ESP_OK) {
+            if (s_cfg.sg_speed == 50) {
+                s_cfg.sg_speed = 100;
+                nvs_put_i32("sgspeed", s_cfg.sg_speed);
+            }
+            nvs_put_i32("sgspd2", 1);
+        }
         if (nvs_get_i32(s_nvs, "ljspeed", &v) == ESP_OK && v >= 25 && v <= 200) s_lj_speed = static_cast<int>(v);
 
         /* Seed the calibration from kFactoryOffset the first time this firmware
@@ -1647,6 +1657,7 @@ const char *power_state_name()
 
 bool servos_resting() { return s_ps == PS_OFF || s_ps == PS_LOWER; }
 bool servos_holding() { return s_ps == PS_HOLD; }
+bool servos_off()     { return s_ps == PS_OFF; }
 void rest_now()       { s_rest_now = true; }
 void hold_servos()    { s_hold_now = true; }
 void wake_servos()    { s_wake_now = true; s_last_activity_us = esp_timer_get_time(); }

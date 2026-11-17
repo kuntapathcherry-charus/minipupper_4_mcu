@@ -37,6 +37,7 @@ typedef enum {
     MPX_POLICY_RAMP_OUT,
     MPX_POLICY_HOLD_OUT,
     MPX_POLICY_GETUP,      /* the get-up policy drives the joints (after a fall, or the app's Get up) */
+    MPX_POLICY_CLIMB,      /* the climb policy drives the joints (the app's Climb: onto a box, then the stand) */
 } mpx_policy_state_t;
 
 typedef struct {
@@ -60,8 +61,15 @@ typedef struct {
     bool     getup_ready;       /* loaded and self-tested */
     char     getup_name[48];
     bool     auto_getup;        /* runs started now get up after a fall instead of going limp */
+    bool     auto_right;        /* "always gets back up": lying still with nothing running starts the get-up */
     uint32_t getups;            /* get-ups in this (or the last) run */
     uint32_t getups_ok;         /* ... that reached the stand */
+    /* The climb policy (policies/climb.mpxp, built in when present: omniRL climb_track.py --residual-deg,
+     * a correction on trajopt's climb7_fast). */
+    bool     climb_ready;       /* loaded and self-tested */
+    char     climb_name[48];
+    float    climb_s;           /* its motion's length, s */
+    float    climb_phase;       /* the current (or last) climb's phase, 0..1 */
     /* The walk network's weights as it runs them (APP_POLICY_WEIGHT_BITS,
      * mpx_policy_set_weight_bits()). */
     uint8_t  weight_bits;       /* 32 (the file's floats), 16 or 8 */
@@ -102,6 +110,26 @@ bool mpx_policy_set_auto_getup(bool on);
  * mpx_policy_start(), and without a get-up policy.
  */
 esp_err_t mpx_policy_getup(bool force, char *why, int why_len);
+
+/**
+ * "Always gets back up" (default: menuconfig APP_POLICY_AUTO_RIGHT): with `on`,
+ * whenever no run is on, no move is playing and no host holds the robot, a
+ * robot lying still on its back or a side for a second runs the get-up (as
+ * mpx_policy_getup()), at most 3 times until it has been upright again.
+ */
+void mpx_policy_set_auto_right(bool on);
+
+/** The last get-up's per-servo log on flash (targets, positions, currents every 20 ms), or NULL if none. */
+const char *mpx_policy_getup_log_file(void);
+
+/**
+ * Climb onto a box (the climb policy, policies/climb.mpxp): the robot stands in front of the box, square to it,
+ * its front paws about 3 cm from the box's face (the base 7.4-8.6 cm before it, as in training); it stands up
+ * (2 s), holds 1 s, climbs (the motion's length), holds 3 s on top and is given back standing. The tilt stop is
+ * the climb policy's (55 deg), the current guard the get-up's. Refused like mpx_policy_start(), and without a
+ * climb policy.
+ */
+esp_err_t mpx_policy_climb(bool force, char *why, int why_len);
 
 /** A graceful stop: ramp to the stand, hold, limp, give the robot back. */
 void mpx_policy_stop(const char *reason);
@@ -221,6 +249,8 @@ const char *mpx_policy_log_file(void);
 bool mpx_policy_log_saving(void);
 
 bool mpx_policy_active(void);
+/** The body's tilt from upright now, deg (0 standing, 180 on its back), measured as a run does; NAN without an IMU sample or a policy. */
+float mpx_policy_tilt_now(void);
 void mpx_policy_get_status(mpx_policy_status_t *out);
 const char *mpx_policy_state_name(mpx_policy_state_t s);
 
