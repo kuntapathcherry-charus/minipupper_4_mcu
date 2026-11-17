@@ -3,7 +3,6 @@
 #include "network/chat_ws.h"
 #include "network/http_display.h"
 #include "network/http_policy.h"
-#include "network/http_stress.h"
 #include "network/http_uros.h"
 #include "network/http_voice.h"
 #include "network/marketplace_proxy.h"
@@ -2902,7 +2901,6 @@ bool start_http_server()
 
     // ── RL walk on the ESP32-S3 (from mpv2-uros): 3 routes, in http_policy.cc ──
     network::register_policy_routes(s_server, register_uri);
-    network::register_stress_routes(s_server, register_uri);   // /stress: the backflip stress test
 
     // ── micro-ROS settings (from mpv2-uros): 2 routes, in http_uros.cc ──
     network::register_uros_routes(s_server, register_uri);

@@ -181,7 +181,6 @@ if(CONFIG_APP_POLICY_ENABLE)
     endif()
 endif()
 list(APPEND sources "network/http_policy.cc")
-list(APPEND sources "network/http_stress.cc")   # GET /stress: the backflip stress test
 
 # ── micro-ROS: the robot as a ROS 2 node on Wi-Fi (main/ros/, from mpv2-uros) ──
 # Talks to a micro-ROS agent on a PC (UDP 8888); the client libraries are
