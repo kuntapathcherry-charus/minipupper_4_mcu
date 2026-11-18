@@ -1,0 +1,1799 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>USER_GUIDE.md</title>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+
+<style>
+/* https://github.com/microsoft/vscode/blob/master/extensions/markdown-language-features/media/markdown.css */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+body {
+	font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif);
+	font-size: var(--vscode-markdown-font-size, 14px);
+	padding: 0 26px;
+	line-height: var(--vscode-markdown-line-height, 22px);
+	word-wrap: break-word;
+}
+
+#code-csp-warning {
+	position: fixed;
+	top: 0;
+	right: 0;
+	color: white;
+	margin: 16px;
+	text-align: center;
+	font-size: 12px;
+	font-family: sans-serif;
+	background-color:#444444;
+	cursor: pointer;
+	padding: 6px;
+	box-shadow: 1px 1px 1px rgba(0,0,0,.25);
+}
+
+#code-csp-warning:hover {
+	text-decoration: none;
+	background-color:#007acc;
+	box-shadow: 2px 2px 2px rgba(0,0,0,.25);
+}
+
+body.scrollBeyondLastLine {
+	margin-bottom: calc(100vh - 22px);
+}
+
+body.showEditorSelection .code-line {
+	position: relative;
+}
+
+body.showEditorSelection .code-active-line:before,
+body.showEditorSelection .code-line:hover:before {
+	content: "";
+	display: block;
+	position: absolute;
+	top: 0;
+	left: -12px;
+	height: 100%;
+}
+
+body.showEditorSelection li.code-active-line:before,
+body.showEditorSelection li.code-line:hover:before {
+	left: -30px;
+}
+
+.vscode-light.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.40);
+}
+
+.vscode-light.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-dark.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.4);
+}
+
+.vscode-dark.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.60);
+}
+
+.vscode-dark.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-high-contrast.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 160, 0, 0.7);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 160, 0, 1);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+img {
+	max-width: 100%;
+	max-height: 100%;
+}
+
+a {
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+	outline: 1px solid -webkit-focus-ring-color;
+	outline-offset: -1px;
+}
+
+hr {
+	border: 0;
+	height: 2px;
+	border-bottom: 2px solid;
+}
+
+h1 {
+	padding-bottom: 0.3em;
+	line-height: 1.2;
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+h1, h2, h3 {
+	font-weight: normal;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+table > thead > tr > th {
+	text-align: left;
+	border-bottom: 1px solid;
+}
+
+table > thead > tr > th,
+table > thead > tr > td,
+table > tbody > tr > th,
+table > tbody > tr > td {
+	padding: 5px 10px;
+}
+
+table > tbody > tr + tr > td {
+	border-top: 1px solid;
+}
+
+blockquote {
+	margin: 0 7px 0 5px;
+	padding: 0 16px 0 10px;
+	border-left-width: 5px;
+	border-left-style: solid;
+}
+
+code {
+	font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+	font-size: 1em;
+	line-height: 1.357em;
+}
+
+body.wordWrap pre {
+	white-space: pre-wrap;
+}
+
+pre:not(.hljs),
+pre.hljs code > div {
+	padding: 16px;
+	border-radius: 3px;
+	overflow: auto;
+}
+
+pre code {
+	color: var(--vscode-editor-foreground);
+	tab-size: 4;
+}
+
+/** Theming */
+
+.vscode-light pre {
+	background-color: rgba(220, 220, 220, 0.4);
+}
+
+.vscode-dark pre {
+	background-color: rgba(10, 10, 10, 0.4);
+}
+
+.vscode-high-contrast pre {
+	background-color: rgb(0, 0, 0);
+}
+
+.vscode-high-contrast h1 {
+	border-color: rgb(0, 0, 0);
+}
+
+.vscode-light table > thead > tr > th {
+	border-color: rgba(0, 0, 0, 0.69);
+}
+
+.vscode-dark table > thead > tr > th {
+	border-color: rgba(255, 255, 255, 0.69);
+}
+
+.vscode-light h1,
+.vscode-light hr,
+.vscode-light table > tbody > tr + tr > td {
+	border-color: rgba(0, 0, 0, 0.18);
+}
+
+.vscode-dark h1,
+.vscode-dark hr,
+.vscode-dark table > tbody > tr + tr > td {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+</style>
+
+<style>
+/* Tomorrow Theme */
+/* http://jmblog.github.com/color-themes-for-google-code-highlightjs */
+/* Original theme - https://github.com/chriskempson/tomorrow-theme */
+
+/* Tomorrow Comment */
+.hljs-comment,
+.hljs-quote {
+	color: #8e908c;
+}
+
+/* Tomorrow Red */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp,
+.hljs-deletion {
+	color: #c82829;
+}
+
+/* Tomorrow Orange */
+.hljs-number,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-meta,
+.hljs-link {
+	color: #f5871f;
+}
+
+/* Tomorrow Yellow */
+.hljs-attribute {
+	color: #eab700;
+}
+
+/* Tomorrow Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+	color: #718c00;
+}
+
+/* Tomorrow Blue */
+.hljs-title,
+.hljs-section {
+	color: #4271ae;
+}
+
+/* Tomorrow Purple */
+.hljs-keyword,
+.hljs-selector-tag {
+	color: #8959a8;
+}
+
+.hljs {
+	display: block;
+	overflow-x: auto;
+	color: #4d4d4c;
+	padding: 0.5em;
+}
+
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: bold;
+}
+</style>
+
+<style>
+/*
+ * Markdown PDF CSS
+ */
+
+ body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "Meiryo";
+	padding: 0 12px;
+}
+
+pre {
+	background-color: #f8f8f8;
+	border: 1px solid #cccccc;
+	border-radius: 3px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+pre:not(.hljs) {
+	padding: 23px;
+	line-height: 19px;
+}
+
+blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.emoji {
+	height: 1.4em;
+}
+
+code {
+	font-size: 14px;
+	line-height: 19px;
+}
+
+/* for inline code */
+:not(pre):not(.hljs) > code {
+	color: #C9AE75; /* Change the old color so it seems less like an error */
+	font-size: inherit;
+}
+
+/* Page Break : use <div class="page"/> or <div class="page"></div> to insert page break
+-------------------------------------------------------- */
+.page {
+	page-break-after: always;
+}
+
+</style>
+
+<script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast')
+          ? 'dark'
+          : 'default'
+    });
+  </script>
+<h1 id="mini-pupper-4--user-guide">Mini Pupper 4 — User Guide</h1>
+<p>The MP4 is a small four-legged robot with a face, a voice, and a phone app that
+does everything. It can walk, trot, pose, jump, show emotions, play music, hold a
+conversation, and run skills; small programs that make it do something new.</p>
+<p>This guide is divided into two halves:</p>
+<ul>
+<li><strong>Everyday use</strong> — sections 1–9: powering on, connecting your phone, driving,
+skills, the Store, chat and voice, and settings.</li>
+<li><strong>Development</strong> — sections 10–11: flashing firmware, provisioning, and
+building/publishing skills with the <code>mpx</code> CLI.</li>
+</ul>
+<blockquote>
+<p>New robot? Start with <a href="#2-quick-start">Quick start</a>.</p>
+</blockquote>
+<hr>
+<h2 id="contents">Contents</h2>
+<ol>
+<li><a href="#1-meet-the-robot">Meet the robot</a></li>
+<li><a href="#2-quick-start">Quick start</a></li>
+<li><a href="#3-power-and-first-boot">Power and first boot</a></li>
+<li><a href="#4-connect-your-phone">Connect your phone</a></li>
+<li><a href="#5-driving-the-robot">Driving the robot</a></li>
+<li><a href="#6-skills">Skills</a></li>
+<li><a href="#7-the-skill-store">The Skill Store</a></li>
+<li><a href="#8-chat-voice-and-ai">Chat, voice and AI</a></li>
+<li><a href="#9-settings">Settings</a></li>
+<li><a href="#10-firmware-and-flashing-developers">Firmware and flashing (developers)</a></li>
+<li><a href="#11-building-and-publishing-skills-developers">Building and publishing skills (developers)</a></li>
+<li><a href="#12-troubleshooting">Troubleshooting</a></li>
+<li><a href="#13-safety-care-and-privacy">Safety, care and privacy</a></li>
+<li><a href="#14-defaults-and-limits">Defaults and limits</a></li>
+<li><a href="#15-glossary">Glossary</a></li>
+</ol>
+<hr>
+<h2 id="1-meet-the-robot">1. Meet the robot</h2>
+<h3 id="what-is-on-it">What is on it</h3>
+<table>
+<thead>
+<tr>
+<th>Part</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Four legs, three joints each</td>
+<td>12 servos: abduction (sideways), hip (forward/back) and knee.</td>
+</tr>
+<tr>
+<td>320 × 240 screen</td>
+<td>The face. Shows animated eyes, emotions, GIFs and drawings.</td>
+</tr>
+<tr>
+<td>Microphone and speaker</td>
+<td>Wake word, voice chat, music.</td>
+</tr>
+<tr>
+<td>Wi-Fi (2.4 GHz)</td>
+<td>Serves the phone app; joins your network for the Store and AI.</td>
+</tr>
+<tr>
+<td>USB port</td>
+<td>Firmware flashing and serial logs.</td>
+</tr>
+<tr>
+<td>Raspberry Pi (MP4+)</td>
+<td>ROS 2 / full reinforcement-learning link.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="how-it-is-put-together">How it is put together</h3>
+<p>The ESP32-S3 inside the robot runs the control loop, the screen, audio, Wi-Fi,
+the HTTP server, the on-device agent and the skill sandboxes. There is no app to
+download: the robot <strong>serves the phone app itself</strong> at <code>http://&lt;robot-ip&gt;/</code>, and
+the phone is only a screen and a controller.</p>
+<p>There are currently two kinds of skills run on it:</p>
+<ul>
+<li><strong>Move skills</strong> run on the robot in a WASM sandbox and drive the legs, screen,
+music or files.</li>
+<li><strong>Web skills</strong> are browser automations that run outside the robot in the AWA
+worker (a locked-down Chromium); the result comes back to the robot's agent.</li>
+</ul>
+<p>The on-device agent is called <strong>Pupper</strong>. It answers text chat, can run skills,
+and is the brain behind voice turns.</p>
+<h3 id="what-it-can-do">What it can do</h3>
+<table>
+<thead>
+<tr>
+<th>Thing</th>
+<th>Where</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Walk, trot, turn, strafe, body height and roll</td>
+<td>Home</td>
+</tr>
+<tr>
+<td>Poses, jump, stretches, built-in moves</td>
+<td>Home / All moves</td>
+</tr>
+<tr>
+<td>Emotions and GIF animations</td>
+<td>Display, or by asking Pupper</td>
+</tr>
+<tr>
+<td>Two-way chat</td>
+<td>Chat</td>
+</tr>
+<tr>
+<td>Hands-free voice</td>
+<td>Wake word or the Chat microphone</td>
+</tr>
+<tr>
+<td>Install moves and web skills</td>
+<td>Skills / Store / Files</td>
+</tr>
+<tr>
+<td>Play music</td>
+<td>Settings › AI &amp; Voice, or by voice</td>
+</tr>
+<tr>
+<td>Calibrate legs, flip the screen, change brightness</td>
+<td>Settings</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="2-quick-start">2. Quick start</h2>
+<ol>
+<li><strong>Place the robot</strong> on a flat, clear surface, with about a good amount of space
+around it.</li>
+<li><strong>Power it on.</strong> The screen shows the eyes, and the robot starts a Wi-Fi
+hotspot.</li>
+<li><strong>On your phone</strong>, join the hotspot. Its name looks like
+<code>MPX-Dog 01-XXXXXX</code>; it has <strong>no password</strong> by default.</li>
+<li><strong>Open the app.</strong> Your phone may offer a &quot;sign in to network&quot; page — that is
+the robot. If not, open <a href="http://192.168.2.1/">http://192.168.2.1/</a>.</li>
+<li><strong>Slide to unlock</strong>, pick your home/office Wi-Fi, and enter its password.</li>
+<li>When the app says <strong>Connected</strong>, note the robot's IP and tap <strong>Start</strong>. Then
+reconnect your phone to the same Wi-Fi and open that IP.</li>
+<li><strong>Turn the controller on</strong> — <strong>L1</strong> in the PS4 scheme, or the power icon in
+the Haris scheme; this is separate from the robot's physical switch — then
+use the sticks to walk.</li>
+</ol>
+<p>That is the whole setup. Charge the robot fully before the first run, then let
+it stand on the floor for a minute so you can see how the face and the network
+behave. The next sections explain each step.</p>
+<hr>
+<h2 id="3-power-and-first-boot">3. Power and first boot</h2>
+<p>Put the robot on the floor or a table with room to move. Switch it on and leave
+it alone for a few seconds while the control loop, screen and Wi-Fi start. You'll know
+its ready when it stands straight.</p>
+<p>The face tells you what the network is doing:</p>
+<table>
+<thead>
+<tr>
+<th>Screen</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Two eyes</td>
+<td>Ready. The robot is on its hotspot, and may also be on your Wi-Fi.</td>
+</tr>
+<tr>
+<td><code>join &lt;network&gt;</code></td>
+<td>Trying to join a saved network.</td>
+</tr>
+<tr>
+<td><code>no network</code></td>
+<td>No saved network and no connection. The hotspot still works.</td>
+</tr>
+<tr>
+<td>An IP address, e.g. <code>192.168.1.105</code></td>
+<td>Connected to your network. This is the address to open in the browser.</td>
+</tr>
+<tr>
+<td><code>ZZ</code></td>
+<td>Asleep/idle. The robot is still connected; a move or a control wakes it.</td>
+</tr>
+</tbody>
+</table>
+<p>The robot creates its own hotspot <strong>every time it boots</strong>, even when it is also
+connected to your Wi-Fi. That is the fallback: if you move to a new network, you
+can always join the hotspot and set it up again.</p>
+<blockquote>
+<p><strong>No screen output?</strong> Check the power switch and the battery. If the robot
+boots but the screen stays dark, see <a href="#12-troubleshooting">Troubleshooting</a>.</p>
+</blockquote>
+<hr>
+<h2 id="4-connect-your-phone">4. Connect your phone</h2>
+<p>The phone app is a PWA (a web app served by the robot). You do not install it
+from an app store, and the core controls do not need internet.</p>
+<h3 id="41-join-the-robots-hotspot">4.1 Join the robot's hotspot</h3>
+<p>On the phone, open Wi-Fi settings and join a network named like:</p>
+<pre class="hljs"><code><div>MPX-Dog 01-387D1D
+</div></code></pre>
+<p>The suffix is derived from robot's MAC address, so every robot is has a unique
+WiFi SSID. The default hotspot is <strong>open</strong> (no password). The robot's address on
+its own hotspot is always <strong><code>192.168.2.1</code></strong>.</p>
+<p>Depending on the phone, joining may open the app automatically as a captive
+portal. If it does not, open a browser and go to:</p>
+<pre class="hljs"><code><div>http://192.168.2.1/
+</div></code></pre>
+<p align="center">
+  <img src="docs/user-guide/img/01-lock-screen.png" width="300" alt="Lock screen with the MangDang eyes and a Slide to unlock control">
+</p>
+<p>Slide the arrow to the right to unlock. On a fresh robot, the welcome screen
+appears; after a successful connection, welcome is skipped for 24 hours.</p>
+<h3 id="42-pick-your-wi-fi">4.2 Pick your Wi-Fi</h3>
+<p>The welcome screen lists the networks the robot can hear:</p>
+<p align="center">
+  <img src="docs/user-guide/img/02-wifi-setup.png" width="300" alt="Wi-Fi setup page listing nearby networks">
+</p>
+<ol>
+<li>Tap your network.</li>
+<li>Type the password. If your network uses enterprise sign-in, the identity
+field appears as well.</li>
+<li>Tap <strong>Join</strong>.</li>
+</ol>
+<p>The robot restarts its network while it joins. The page may stop answering for
+a few seconds; the app will tell you to rejoin the hotspot if that happens. The
+hotspot comes back when the network is up. This is a network restart, not a
+reboot.</p>
+<p>When it has joined, the welcome screen shows the connection and the robot's new
+LAN address:</p>
+<p align="center">
+  <img src="docs/user-guide/img/03-connected.png" width="300" alt="Connected screen showing the Wi-Fi name and the robot's IP address">
+</p>
+<p>The robot's screen shows the same address, which is handy when the phone is not connected
+to the robot's hotspot:</p>
+<p align="center">
+  <img src="docs/user-guide/img/04-robot-screen.jpg" width="520" alt="Photo of the robot's screen showing the yellow eyes and its IP address">
+</p>
+<h3 id="43-move-the-phone-to-the-same-network">4.3 Move the phone to the same network</h3>
+<p>The hotspot is fine for driving, but it has <strong>no internet</strong>. For features which work through the robot,
+this is fine. But it is required for the Store to enter the checkout link. To connect via LAN:</p>
+<ol>
+<li>On the phone, leave the robot hotspot and join the same Wi-Fi you gave the
+robot.</li>
+<li>Open the IP address shown on the robot's screen, for example
+<code>http://192.168.1.105/</code>.</li>
+<li>The app reconnects automatically on later visits; if it cannot, tap the
+Wi-Fi pill at the top of Home and check which network the robot is on.</li>
+</ol>
+<blockquote>
+<p><strong>The IP can change.</strong> Most routers hand out a new address after a reboot. The
+screen always shows the current one. If you want a stable address, reserve one
+for the robot in your router's DHCP settings.</p>
+</blockquote>
+<p>If your phone stays on the hotspot, <code>http://192.168.2.1/</code> still works for
+driving, but internet features will not work.</p>
+<h3 id="44-install-it-like-an-app-limited">4.4 Install it like an app (limited)</h3>
+<p>The PWA can be added to your phone's home screen for a full-screen,
+app-like window. Use your browser's <strong>Add to Home Screen</strong> / <strong>Install app</strong>
+action. It is still served by the robot, so it only works while the phone can
+reach the robot.</p>
+<blockquote>
+<p><strong>Note</strong>: Since the PWA is hosted via HTTP, it is considered an <em>insecure context</em>,
+therefore it can't be installed as an app unless specifically added to a browsers support list
+like in chorme://flags</p>
+</blockquote>
+<h3 id="45-change-networks-later">4.5 Change networks later</h3>
+<ul>
+<li>From <strong>Home</strong>, tap the Wi-Fi pill in the top-left (or pull it down). This opens
+the network picker.</li>
+<li>From <strong>Settings › ESP Wi-Fi</strong>, you can see the current network, <strong>Disconnect</strong>
+or <strong>Forget network</strong>, join a nearby network, or type the name of a hidden
+network.</li>
+<li>From <strong>Settings › ESP hotspot</strong>, you can rename the robot's hotspot and set a
+password (at least 8 characters, or leave it empty for open). Saving restarts
+the hotspot; rejoin it with the new name and password.</li>
+</ul>
+<blockquote>
+<p><strong>Security:</strong> the default hotspot is open, so anyone nearby can join it. If
+that matters where you use the robot, set a hotspot password in
+<strong>Settings › ESP hotspot</strong>. It is a local access point, not an internet
+gateway.</p>
+</blockquote>
+<hr>
+<h2 id="5-driving-the-robot">5. Driving the robot</h2>
+<h3 id="51-the-home-screen">5.1 The Home screen</h3>
+<p align="center">
+  <img src="docs/user-guide/img/05-home.png" width="320" alt="Home screen with the controller, Quick actions and the bottom tabs">
+</p>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Top-left Wi-Fi pill</td>
+<td>Shows the network the robot is on. Tap or pull down to change it.</td>
+</tr>
+<tr>
+<td>Top-right gamepad icon</td>
+<td>Full-screen landscape controller (phone only).</td>
+</tr>
+<tr>
+<td>L1 / R1</td>
+<td>Shoulder buttons; their meaning depends on the control scheme.</td>
+</tr>
+<tr>
+<td>BODY d-pad</td>
+<td>Body height and body roll.</td>
+</tr>
+<tr>
+<td>ACTIONS buttons</td>
+<td>Face buttons. Their meaning depends on the scheme.</td>
+</tr>
+<tr>
+<td>MOVE stick</td>
+<td>Walk / strafe.</td>
+</tr>
+<tr>
+<td>POSE stick</td>
+<td>Turn, or aim the body.</td>
+</tr>
+<tr>
+<td>Quick actions</td>
+<td>Moves you pinned. <strong>See all</strong> opens the full list.</td>
+</tr>
+<tr>
+<td>Bottom tabs</td>
+<td>Home, Skills, Store, Chat, Settings.</td>
+</tr>
+</tbody>
+</table>
+<p>The power state matters: when the controller is <strong>off</strong>, movement input is
+disabled. Turn the controller on before trying to walk.</p>
+<h3 id="52-ps4-scheme-default">5.2 PS4 scheme (default)</h3>
+<p>This is the default on a new robot. It behaves like a gamepad.</p>
+<table>
+<thead>
+<tr>
+<th>Control</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>L1</strong> (left shoulder)</td>
+<td>Power the controller on/off. Off disables all controls.</td>
+</tr>
+<tr>
+<td><strong>R1</strong> (right shoulder)</td>
+<td>Switch between <strong>Pose</strong> and <strong>Trot</strong>.</td>
+</tr>
+<tr>
+<td><strong>D-pad up / down</strong></td>
+<td>Raise / lower the body.</td>
+</tr>
+<tr>
+<td><strong>D-pad left / right</strong></td>
+<td>Roll the body left / right.</td>
+</tr>
+<tr>
+<td><strong>Left stick</strong></td>
+<td>Walk forward/back and strafe, in Trot.</td>
+</tr>
+<tr>
+<td><strong>Right stick</strong></td>
+<td>Turn left/right in Trot; aim yaw/pitch in Pose.</td>
+</tr>
+<tr>
+<td><strong>Blue pentagon</strong> (bottom face button)</td>
+<td>Jump.</td>
+</tr>
+<tr>
+<td>Triangle / square / circle</td>
+<td>Unassigned in this scheme.</td>
+</tr>
+<tr>
+<td>Arrow keys / WASD (desktop browser)</td>
+<td>Walk.</td>
+</tr>
+</tbody>
+</table>
+<p>The label above the right stick shows the current mode (<code>Pose R1</code> or <code>Trot R1</code>).
+Trot is the walking gait; Pose holds the feet and lets you lean, aim and pose.</p>
+<h3 id="53-haris-scheme-alternative">5.3 Haris scheme (alternative)</h3>
+<p>Choose this in <strong>Settings › Control scheme</strong> if you prefer direct turning and
+assignable face buttons.</p>
+<table>
+<thead>
+<tr>
+<th>Control</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Power icon</strong> (top of the controller)</td>
+<td>Power the controller on/off.</td>
+</tr>
+<tr>
+<td><strong>L1 / R1</strong></td>
+<td>Turn left / right while held.</td>
+</tr>
+<tr>
+<td><strong>D-pad up / down</strong></td>
+<td>Raise / lower the body.</td>
+</tr>
+<tr>
+<td><strong>D-pad left / right</strong></td>
+<td>Roll the body left / right.</td>
+</tr>
+<tr>
+<td><strong>Left stick</strong></td>
+<td>Move.</td>
+</tr>
+<tr>
+<td><strong>Right stick</strong></td>
+<td>Look around; while moving, it turns.</td>
+</tr>
+<tr>
+<td><strong>Four face buttons</strong></td>
+<td>Assignable actions. Defaults: Jump, Stretch, Twerk, Situp.</td>
+</tr>
+<tr>
+<td><strong>Pencil icon</strong></td>
+<td>Edit which action each face button runs.</td>
+</tr>
+</tbody>
+</table>
+<p>The controller keeps the last scheme you selected. Any custom button assignments
+are stored in the app, not on the robot.</p>
+<h3 id="54-running-moves">5.4 Running moves</h3>
+<p>Tap a move to run it. Moves are organised in <strong>All moves</strong>:</p>
+<p align="center">
+  <img src="docs/user-guide/img/06-all-moves.png" width="300" alt="All moves screen with installed and built-in moves">
+</p>
+<ul>
+<li><strong>Installed skills</strong> appear first (for example, <em>Dance With Music</em>).</li>
+<li><strong>Built in</strong> moves include Forward, Backward, Strafe Left/Right, Turn
+Left/Right, Trot, Step, Speed Test, Jump, Jump Fwd and single-leg lifts.</li>
+<li>Tap a move to run it immediately.</li>
+<li>Tap the <strong>pin</strong> icon to put it in <strong>Quick actions</strong> on Home.</li>
+<li>Tap <strong>+</strong> to create a custom action.</li>
+<li>Use the search box when the list gets long.</li>
+</ul>
+<p>A move takes over the robot while it runs. Wake word, voice and music are
+stopped, and a second skill is refused rather than queued. This is deliberate:
+one program owns the legs at a time.</p>
+<h3 id="55-first-driving-tips">5.5 First driving tips</h3>
+<ul>
+<li>Start in <strong>Trot</strong> on a flat floor.</li>
+<li>Move the stick gently; the robot accelerates and decelerates rather than
+snapping to a speed.</li>
+<li>If it bumps something, release the stick. It will stop.</li>
+<li>To pick it up, turn the controller off first, then lift it by the body — not by
+a leg.</li>
+<li>If a leg looks crooked or the robot walks in an arc, see
+<a href="#95-calibration">Calibration</a>. Do not force a joint by hand.</li>
+</ul>
+<hr>
+<h2 id="6-skills">6. Skills</h2>
+<p>A skill is a small program that adds a behaviour: a dance, a walk, a screen
+drawing, a browser task. Skills are managed on the <strong>Skills</strong> tab and in
+<strong>Files</strong>.</p>
+<p align="center">
+  <img src="docs/user-guide/img/07-skills-web.png" width="300" alt="Skills page showing web skills">
+</p>
+<h3 id="61-move-skills">6.1 Move skills</h3>
+<p align="center">
+  <img src="docs/user-guide/img/08-skills-move.png" width="300" alt="Skills page showing move skills with Run, Pin and Remove">
+</p>
+<table>
+<thead>
+<tr>
+<th>Button</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Install</strong></td>
+<td>Downloads and installs the skill on the robot.</td>
+</tr>
+<tr>
+<td><strong>Run</strong></td>
+<td>Runs it now.</td>
+</tr>
+<tr>
+<td><strong>Pin</strong></td>
+<td>Adds it to Quick actions on Home.</td>
+</tr>
+<tr>
+<td><strong>Remove</strong></td>
+<td>Deletes it from the robot.</td>
+</tr>
+</tbody>
+</table>
+<p>A move skill may be:</p>
+<ul>
+<li><strong>Encrypted</strong> (<code>.mpxe</code>) when it came from the Store; the robot decrypts it
+before running.</li>
+<li><strong>Plain WASM</strong> (<code>.wasm</code>) when it was built locally or sideloaded. This is the
+developer format.</li>
+</ul>
+<p>Both run in the same WASM sandbox with the same host API. Only one skill runs at
+a time, and a running skill holds the robot until it finishes.</p>
+<h3 id="62-web-skills">6.2 Web skills</h3>
+<p>Web skills are automations that run in a browser outside the robot — for
+example, a merchant skill that searches a shop and returns a result. They are
+listed on the <strong>Web skills</strong> tab with a toggle:</p>
+<table>
+<thead>
+<tr>
+<th>Control</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Turn off / Turn on</strong></td>
+<td>Enables or disables the skill for the agent.</td>
+</tr>
+<tr>
+<td><strong>Web skill · Agent</strong> badge</td>
+<td>The skill is agent-facing; it is invoked by the Pupper agent.</td>
+</tr>
+</tbody>
+</table>
+<p>Web skills need the robot to have internet access. They do not run in voice
+turns; see <a href="#83-what-voice-can-and-cannot-do">What voice can do</a>.</p>
+<h3 id="63-files-on-the-robot">6.3 Files on the robot</h3>
+<p align="center">
+  <img src="docs/user-guide/img/18-files.png" width="300" alt="Files page with folders and uploaded skill files">
+</p>
+<p><strong>Settings › Files on the robot</strong> is a browser for the robot's LittleFS storage.
+It shows the folders the robot uses (<code>agent</code>, <code>display</code>, <code>lua</code>, <code>voice</code>, <code>www</code>),
+the space used, and every uploaded skill file. From here you can:</p>
+<ul>
+<li><strong>Run</strong> a <code>.wasm</code> or <code>.mpxe</code> file.</li>
+<li><strong>Delete</strong> a file.</li>
+<li><strong>Upload a skill file</strong> from the phone.</li>
+<li>Toggle hidden files.</li>
+</ul>
+<p>The Files page is the most reliable way to check a skill you installed is on the device.</p>
+<h3 id="64-custom-actions">6.4 Custom actions</h3>
+<p><strong>All moves › +</strong> creates a custom action. Give it a name and a move or skill,
+then pin it to Quick actions. Custom actions are stored in the browser; the
+underlying move or skill still has to exist on the robot.</p>
+<p>Currently, it act's like an alias for Move skills. In the future, you can add Lua scripts to
+be executable from custom actions/.</p>
+<hr>
+<h2 id="7-the-skill-store">7. The Skill Store</h2>
+<p align="center">
+  <img src="docs/user-guide/img/09-store.png" width="300" alt="Store with web skills, categories and featured skills">
+</p>
+<p>The Store is where new move and web skills come from. It needs the <strong>robot</strong> to
+have internet access — connect it to your Wi-Fi and open the app through the
+robot's LAN IP, not through the hotspot.</p>
+<table>
+<thead>
+<tr>
+<th>Part</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Currency selector</td>
+<td>Displays prices in your currency.</td>
+</tr>
+<tr>
+<td>Search</td>
+<td>Finds skills by name.</td>
+</tr>
+<tr>
+<td><strong>Web skills / Move skills</strong></td>
+<td>Switches the catalogue.</td>
+</tr>
+<tr>
+<td>Categories</td>
+<td>Store, Search, Media.</td>
+</tr>
+<tr>
+<td>Featured</td>
+<td>MangDang's picks for the week.</td>
+</tr>
+<tr>
+<td>Most popular</td>
+<td>Ranked list.</td>
+</tr>
+<tr>
+<td><strong>Get</strong></td>
+<td>Free skill; installs it.</td>
+</tr>
+<tr>
+<td><strong>A price</strong></td>
+<td>Opens checkout in your browser.</td>
+</tr>
+<tr>
+<td><strong>Open</strong></td>
+<td>You already own it.</td>
+</tr>
+</tbody>
+</table>
+<p align="center">
+  <img src="docs/user-guide/img/10-store-checkout.png" width="300" alt="Checkout screen for a skill">
+</p>
+<p>A paid skill opens the gateway's secure checkout in a browser. After payment,
+the app polls the order and installs the skill on the robot. Keep the app open
+while the order is pending.</p>
+<p>Move skills show a <strong>3D preview</strong> before purchase:</p>
+<p align="center">
+  <img src="docs/user-guide/img/11-skill-preview.png" width="300" alt="3D preview of a move skill">
+</p>
+<p>The preview is a MuJoCo simulation, and have some slight pose differences compared to the real machine.</p>
+<blockquote>
+<p><strong>Store empty or &quot;offline&quot;?</strong> The robot cannot reach the internet. Reconnect
+it to your Wi-Fi (the screen should show a LAN IP), then reopen the Store.</p>
+</blockquote>
+<p>The <strong>RL</strong> category is marked <em>soon</em>; it is not available yet.</p>
+<hr>
+<h2 id="8-chat-voice-and-ai">8. Chat, voice and AI</h2>
+<p>The <strong>Chat</strong> tab is how you talk to Pupper, the robot's on-device agent.</p>
+<p align="center">
+  <img src="docs/user-guide/img/12-chat.png" width="300" alt="Chat screen with the Pupper agent">
+</p>
+<h3 id="81-text-chat">8.1 Text chat</h3>
+<p>Type a request and send it. Pupper can answer questions, run a move or skill,
+write and run short Lua scripts, show an emotion, draw on the screen, play music,
+or change a setting. While it works, the message shows the steps it took; some
+actions ask for confirmation before doing anything destructive.</p>
+<ul>
+<li><strong>Pupper</strong> is the local agent running on the robot.</li>
+<li>A conversation is tied to a brain once it has messages; start a new
+conversation with <strong>+</strong> to switch.</li>
+<li>History is kept on the robot and shown in the sidebar, with badges for voice
+and text turns.</li>
+<li>The <strong>Cloud</strong> brain is not available in this build; Pupper handles chat.</li>
+</ul>
+<h3 id="82-voice">8.2 Voice</h3>
+<p>Tap the <strong>microphone</strong> in the Chat tab, or say <strong>&quot;Hi ESP&quot;</strong>. The voice panel
+shows what is happening:</p>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Listening — speak naturally</strong></td>
+<td>The microphone is open.</td>
+</tr>
+<tr>
+<td><strong>Pupper is thinking</strong></td>
+<td>The turn is being processed.</td>
+</tr>
+<tr>
+<td><strong>Speaking — you can interrupt</strong></td>
+<td>The answer is playing; start talking to interrupt.</td>
+</tr>
+<tr>
+<td><strong>Ready for a follow-up</strong></td>
+<td>You can continue without saying the wake word again.</td>
+</tr>
+</tbody>
+</table>
+<p>Use <strong>Start talking</strong>, <strong>Speak again</strong>, <strong>Interrupt &amp; speak</strong>, and <strong>End voice
+chat</strong> to control the session. You can also end a session by saying the equivalent of
+&quot;goodbye&quot; or &quot;enough&quot;.</p>
+<p align="center">
+  <img src="docs/user-guide/img/13-voice.png" width="300" alt="Voice panel showing listening status">
+</p>
+<p>Voice needs internet: speech recognition and speech synthesis run on the MangDang
+gateway, and the robot's agent answers the turn. The gateway pairs with the
+robot on first use; if it says <strong>Not paired</strong>, use <strong>Pair with MangDang now</strong> in
+<strong>Settings › AI &amp; Voice</strong>.</p>
+<h3 id="83-what-voice-can-and-cannot-do">8.3 What voice can and cannot do</h3>
+<p>A voice turn is kept short so it can answer quickly. It can:</p>
+<ul>
+<li>move the robot (walk, pose, stop),</li>
+<li>show an emotion or draw on the screen,</li>
+<li>play or stop music,</li>
+<li>change simple robot settings.</li>
+</ul>
+<p>It cannot use web skills, Lua scripts, or arbitrary WASM skills in a voice turn. This is to improve the latency between user speech and response.
+Those tools are available in <strong>text</strong> chat, where there is time for a longer
+task. If you need a skill that browses a shop or runs a long sequence, type it.</p>
+<h3 id="84-ai-modes">8.4 AI modes</h3>
+<p>Choose the brain in <strong>Settings › AI &amp; Voice</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Chat</th>
+<th>Voice</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>MangDang AI</strong> (default)</td>
+<td>MangDang cloud</td>
+<td>MangDang cloud</td>
+<td>Nothing to configure. Needs internet.</td>
+</tr>
+<tr>
+<td><strong>My own AI account</strong></td>
+<td>Your API key</td>
+<td>Still MangDang's AI</td>
+<td>The key is stored on the robot. Chat with Pupper uses your provider; voice answers still come from MangDang for now.</td>
+</tr>
+<tr>
+<td><strong>AI off</strong></td>
+<td>Off</td>
+<td>Off</td>
+<td>The microphone is never used for AI. Walking, the controller and the Store still work.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>My own AI account</strong> supports Anthropic, OpenAI, DeepSeek and custom
+OpenAI-compatible or Anthropic-compatible endpoints. Fill in the provider, model,
+base URL and API key. The saved key is masked in the app; it is not shown again
+after saving.</p>
+<p>Changing the mode may apply immediately or restart the robot (about 20 seconds),
+depending on what changed.</p>
+<h3 id="85-music">8.5 Music</h3>
+<p>Music is part of the voice/AI settings, but it also works without a chat:</p>
+<ul>
+<li><strong>Settings › AI &amp; Voice › Music</strong> lets you pick a genre or paste a stream URL,
+then <strong>Play</strong> or <strong>Stop</strong>.</li>
+<li>By voice: <em>&quot;Hi ESP, play some jazz.&quot;</em></li>
+<li>Music stops when a skill takes over the robot, when you start a voice turn, or
+when you stop it.</li>
+</ul>
+<hr>
+<h2 id="9-settings">9. Settings</h2>
+<p align="center">
+  <img src="docs/user-guide/img/15-settings.png" width="300" alt="Settings screen">
+</p>
+<p>Settings is split into sections. The most useful rows:</p>
+<table>
+<thead>
+<tr>
+<th>Section</th>
+<th>Row</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ESP32</td>
+<td><strong>ESP Wi-Fi</strong></td>
+<td>Current network and IP; join, disconnect, forget, hidden network.</td>
+</tr>
+<tr>
+<td>ESP32</td>
+<td><strong>ESP hotspot</strong></td>
+<td>Rename the robot's hotspot and set a password.</td>
+</tr>
+<tr>
+<td>Raspberry Pi</td>
+<td><strong>Pi link</strong></td>
+<td>Optional Pi connection; shows whether the Pi is reachable.</td>
+</tr>
+<tr>
+<td>Raspberry Pi</td>
+<td><strong>Shut down / Restart</strong></td>
+<td>Stops the Pi safely. Only when a Pi is connected.</td>
+</tr>
+<tr>
+<td>AI</td>
+<td><strong>AI &amp; Voice</strong></td>
+<td>AI mode, keys, voice pairing, microphone/speaker and music.</td>
+</tr>
+<tr>
+<td>AI</td>
+<td><strong>Allow writes (YOLO)</strong></td>
+<td>On: the agent saves and deletes files without asking. Off: it asks first. Leave it off unless you are testing.</td>
+</tr>
+<tr>
+<td>Robot</td>
+<td><strong>Control scheme</strong></td>
+<td>PS4 or Haris; saved on the robot.</td>
+</tr>
+<tr>
+<td>Robot</td>
+<td><strong>Display</strong></td>
+<td>GIFs, brightness, 180° flip.</td>
+</tr>
+<tr>
+<td>Robot</td>
+<td><strong>Calibration</strong></td>
+<td>Per-joint offsets with a 3D leg view.</td>
+</tr>
+<tr>
+<td>Robot</td>
+<td><strong>MangDang Servo Studio</strong></td>
+<td>Servo gains on the driver boards. Advanced.</td>
+</tr>
+<tr>
+<td>Robot</td>
+<td><strong>Rest when idle</strong></td>
+<td>Lie down and switch the servos off after 2, 5, 10 or 30 minutes, or never. <strong>Rest now</strong> / <strong>Stand up now</strong>.</td>
+</tr>
+<tr>
+<td>Advanced</td>
+<td><strong>Files on the robot</strong></td>
+<td>Browse, upload and run skill files.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="91-network">9.1 Network</h3>
+<ul>
+<li><strong>ESP Wi-Fi</strong> shows the connected SSID and IP, plus <strong>Disconnect</strong> and
+<strong>Forget network</strong>. Forgetting removes the saved credentials; the robot falls
+back to its hotspot only.</li>
+<li><strong>Networks nearby</strong> is a live scan. Tap a network, enter the password, join.</li>
+<li><strong>Join a hidden network</strong> lets you type an SSID that is not broadcast.</li>
+<li><strong>ESP hotspot</strong> changes the robot's own AP. Saving restarts the hotspot and
+may disconnect the phone; rejoin with the new name and password.</li>
+</ul>
+<p>The robot supports 2.4 GHz Wi-Fi only. A 5 GHz-only network will not appear.</p>
+<h3 id="92-ai-and-voice">9.2 AI and voice</h3>
+<p>See <a href="#8-chat-voice-and-ai">Chat, voice and AI</a>. The voice section also shows
+whether the gateway is paired, whether the microphone and speaker are ready, and
+a volume slider.</p>
+<h3 id="93-robot-behaviour">9.3 Robot behaviour</h3>
+<ul>
+<li><strong>Control scheme</strong> switches between PS4 and Haris. The choice is saved on the
+robot, so it follows you to another phone.</li>
+<li><strong>Rest when idle</strong> puts the body down and switches the servos off after the
+chosen idle time. Any move, the controller, or <strong>Stand up now</strong> wakes it.
+Resting is good for the servos and the battery.</li>
+<li><strong>Allow writes (YOLO)</strong> controls whether the agent may save or delete files
+without a confirmation card. Keep it off for normal use.</li>
+</ul>
+<h3 id="94-display">9.4 Display</h3>
+<p align="center">
+  <img src="docs/user-guide/img/17-display.png" width="300" alt="Display settings with animations, brightness and flip">
+</p>
+<ul>
+<li><strong>Play animation</strong> pauses the eyes and plays the selected GIF.</li>
+<li><strong>Animations</strong> lists built-in and uploaded GIFs with their size. Built-in
+animations cannot be deleted; uploaded ones can.</li>
+<li><strong>Add a GIF</strong> accepts a GIF up to <strong>320 × 240</strong> and under <strong>600 KB</strong>. Larger
+files are rejected.</li>
+<li><strong>When it ends</strong>: <strong>Loop it</strong> keeps the animation up; <strong>Play once, then eyes</strong>
+returns the face when it finishes.</li>
+<li><strong>Brightness</strong>: 5–100%, in 5% steps.</li>
+<li><strong>Turned 180°</strong>: flips the picture if the screen was mounted upside down.</li>
+</ul>
+<h3 id="95-calibration">9.5 Calibration</h3>
+<p align="center">
+  <img src="docs/user-guide/img/16-calibration.png" width="300" alt="Calibration screen with a 3D leg and joint offsets">
+</p>
+<p>Calibration adjusts the <strong>zero offset</strong> of each servo. Use it when a leg is
+visibly crooked in the neutral pose, or when the robot walks in a curve with all
+four feet on the ground.</p>
+<ol>
+<li>Pick a leg: <strong>FL</strong>, <strong>FR</strong>, <strong>BL</strong> or <strong>BR</strong>.</li>
+<li>Pick a joint: <strong>Abduction</strong>, <strong>Hip</strong> or <strong>Knee</strong>.</li>
+<li>Use <strong>−</strong> / <strong>+</strong> to move the joint in one-degree steps (range ±90°). The 3D
+view follows the selected joint.</li>
+<li>Changes are sent to the robot as you make them and saved live.</li>
+<li><strong>Reset leg</strong> returns that leg to zero; <strong>Reset all offsets</strong> clears every
+adjustment.</li>
+</ol>
+<p>Do not use calibration to compensate for a mechanically bent leg, a loose horn
+or a broken servo. Fix the hardware first; offsets are meant for small trim only.</p>
+<h3 id="96-mangdang-servo-studio">9.6 MangDang Servo Studio</h3>
+<p>This exposes the servo driver gains. It is for advanced tuning: the defaults are
+correct for the stock robot, and changing them can make the legs buzz, overheat
+or oscillate. Leave it alone unless you know why you are changing it.</p>
+<h3 id="97-advanced">9.7 Advanced</h3>
+<ul>
+<li><strong>Files on the robot</strong> is described in <a href="#63-files-on-the-robot">Files</a>.</li>
+</ul>
+<hr>
+<h2 id="10-firmware-and-flashing-developers">10. Firmware and flashing (developers)</h2>
+<p>You do <strong>not</strong> need this section to use the robot. Firmware updates are currently done
+over USB; the Store updates skills, not firmware.</p>
+<p>In a future update, we will implement OTA updates.</p>
+<h3 id="101-what-you-need">10.1 What you need</h3>
+<ul>
+<li>The robot and a USB data cable (not a charge-only cable).</li>
+<li><strong>ESP-IDF v5.5.4</strong> and its toolchain, or the project's dev container.</li>
+<li>Node.js/npm for the phone app build (the dev container has it). Without Node,
+build with <code>-DMPX_BUILD_PWA=OFF</code> and the existing embedded web app is kept.</li>
+<li>On Linux, permission to the serial port (<code>dialout</code> group) or run as root in
+the container.</li>
+</ul>
+<p>The dev container is the recommended path, but you are free to use the VScode extension or
+installing from EspressIf's website directly.</p>
+<h3 id="102-build">10.2 Build</h3>
+<pre class="hljs"><code><div>idf.py set-target esp32s3     <span class="hljs-comment"># first checkout only | can be skipped as auto-detect should be esp32s3</span>
+idf.py build
+</div></code></pre>
+<p>A fresh checkout has no <code>sdkconfig</code>, so the target must be given once. The
+build produces:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>build/MPX-Dog.bin</code></td>
+<td>The application image (~4.9 MB).</td>
+</tr>
+<tr>
+<td><code>build/bootloader/bootloader.bin</code></td>
+<td>Second-stage bootloader.</td>
+</tr>
+<tr>
+<td><code>build/partition_table/partition-table.bin</code></td>
+<td>Partition layout.</td>
+</tr>
+<tr>
+<td><code>build/srmodels/srmodels.bin</code></td>
+<td>Speech models.</td>
+</tr>
+<tr>
+<td><code>build/system.bin</code></td>
+<td>Read-only system files.</td>
+</tr>
+<tr>
+<td><code>build/MPX-Dog.elf</code></td>
+<td>Symbols for decoding crashes.</td>
+</tr>
+</tbody>
+</table>
+<p>The phone app under <code>pwa-claw/</code> is built and embedded automatically when its
+sources changed. Useful knobs:</p>
+<pre class="hljs"><code><div>MPX_FORCE_PWA=1 idf.py build      <span class="hljs-comment"># rebuild the web app anyway</span>
+MPX_SKIP_PWA=1 idf.py build       <span class="hljs-comment"># embed pwa-claw/www as-is</span>
+idf.py -DMPX_BUILD_PWA=OFF build  <span class="hljs-comment"># no npm at all</span>
+</div></code></pre>
+<p>Do not edit <code>pwa-claw/www/</code> and expect it to reach the robot without a rebuild:
+the firmware embeds the generated assets at build time.</p>
+<h3 id="103-flash">10.3 Flash</h3>
+<p>Find the port:</p>
+<pre class="hljs"><code><div><span class="hljs-comment"># Linux</span>
+<span class="hljs-built_in">ls</span> /dev/ttyUSB* /dev/ttyACM*
+<span class="hljs-comment"># macOS</span>
+<span class="hljs-built_in">ls</span> /dev/cu.usbserial-* /dev/tty.usbserial-*
+<span class="hljs-comment"># Windows: Device Manager → Ports (COM &amp; LPT)</span>
+</div></code></pre>
+<p>Then:</p>
+<pre class="hljs"><code><div>idf.py -p /dev/ttyUSB0 flash
+</div></code></pre>
+<p><code>flash</code> writes the bootloader, partition table, app and the extra images.
+<code>app-flash</code> writes only the application and is faster for a normal code change.
+If the port is busy, close any monitor or serial program first.</p>
+<p>If flashing cannot connect, put the board in download mode: hold <strong>BOOT</strong>, tap
+<strong>RESET</strong>, release <strong>BOOT</strong>, then retry.</p>
+<blockquote>
+<p><strong>WARNING</strong>: Some USB cables and some computer ports could power the servos upon connection.
+This can be dangerous to the computer, as back-current can fry your USB port or even your motherboard.
+You can just reconnect the cable to stop this behavior.</p>
+</blockquote>
+<h3 id="104-monitor-and-verify">10.4 Monitor and verify</h3>
+<pre class="hljs"><code><div>idf.py -p /dev/ttyUSB0 monitor
+</div></code></pre>
+<p>Exit the monitor with <code>Ctrl+]</code>. On boot you should see the firmware start, the
+display and audio initialise, the Wi-Fi AP start, and a line with the app URL.
+<code>main.cc</code> logs internal heap after each boot stage; a large drop from the
+previous boot is worth investigating.</p>
+<p>To decode a crash address:</p>
+<pre class="hljs"><code><div>xtensa-esp32s3-elf-addr2line -e build/MPX-Dog.elf &lt;address&gt;
+</div></code></pre>
+<h3 id="105-what-survives-a-flash">10.5 What survives a flash</h3>
+<ul>
+<li><strong>NVS</strong> (Wi-Fi credentials, calibration, control scheme, some settings)
+survives a normal flash.</li>
+<li><strong>LittleFS</strong> (<code>storage</code>, mounted at <code>/fs</code>) survives a normal flash. It holds
+installed skills, uploaded files and agent state.</li>
+<li><strong><code>idf.py erase-flash</code></strong> wipes NVS and LittleFS. Everything is lost except
+eFuses.</li>
+<li>A firmware image whose <strong>partition table moves the storage partition</strong> also
+wipes LittleFS. The storage partition currently sits at <code>0x910000</code>. Warn
+anyone using the robot before flashing such an image.</li>
+</ul>
+<h3 id="106-identity-and-provisioning-production-only">10.6 Identity and provisioning (production only)</h3>
+<p>The robot's identity is owned by <code>components/mpx_identity/</code>. There are two
+sources, chosen at build time:</p>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>Used by</th>
+<th>What it means</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Kconfig strings</strong> (default)</td>
+<td>Development, evaluation</td>
+<td>Robot ID defaults to <code>MPX-DOG-01</code>; the AES key is a known development key. <strong>Insecure.</strong> No eFuses are touched.</td>
+</tr>
+<tr>
+<td><strong>eFuse</strong></td>
+<td>Production / pilot units</td>
+<td>The robot ID is in eFuse; the per-robot key is derived in hardware from an HMAC_UP block and can be used but never read.</td>
+</tr>
+</tbody>
+</table>
+<p>The default build does <strong>not</strong> need provisioning. It boots and works as
+<code>MPX-DOG-01</code>. That is the right choice for a developer unit or a demo.</p>
+<p>A production unit is provisioned once, at a bench, with the pilot/bench profile:</p>
+<pre class="hljs"><code><div>idf.py -B build/pilot \
+  -DSDKCONFIG=build/pilot/sdkconfig \
+  -DSDKCONFIG_DEFAULTS=<span class="hljs-string">&quot;sdkconfig.defaults;sdkconfig.defaults.pilot&quot;</span> \
+  -DIDF_TARGET=esp32s3 -DMPX_BUILD_PWA=OFF build
+</div></code></pre>
+<p>That profile enables <code>CONFIG_APP_IDENTITY_SOURCE_EFUSE</code> and the <code>@MPXPROV</code>
+listener on UART0 (115200 8N1). <strong>Never ship a pilot-profile image</strong>: it contains
+the provisioning listener and is not the production build.</p>
+<p>Provisioning is done by <code>tools/mpx_provision.py</code> with the bench private key:</p>
+<pre class="hljs"><code><div>python3 tools/mpx_provision.py status     <span class="hljs-comment"># read-only; safe</span>
+</div></code></pre>
+<blockquote>
+<p><strong>Irreversible.</strong> <code>provision</code> burns the robot ID and the sealed key into
+eFuses, and <code>lock</code> makes that permanent. A mistake cannot be undone, and the
+private key is required to create the seal. Follow
+<a href="docs/PILOT_DEVICE_GUIDE.md"><code>docs/PILOT_DEVICE_GUIDE.md</code></a> and
+<a href="components/mpx_identity/"><code>components/mpx_identity/</code></a> step by step. Do not
+run <code>provision</code>, <code>reseal</code> or <code>lock</code> on a development robot.</p>
+</blockquote>
+<p>The short version of what happens: the station writes the robot's UUID into
+eFuse user data, seals the derived key for that chip, and the robot enrols with
+the backend on its first connection. From then on, every feature asks
+<code>components/mpx_identity</code> for the ID and key; no feature code reads eFuses
+directly.</p>
+<p>A <strong>factory</strong> that flashes a tray with the Flash Download Tool has no station in
+the loop: eFuse is not written by a flash image, and one image is the same for
+every board. Build the factory profile instead — the first boot of a blank board
+mints and burns its own random ID and root secret, reboots, and enrols like a
+station-provisioned unit:</p>
+<pre class="hljs"><code><div>idf.py -B build/factory -DSDKCONFIG=build/factory/sdkconfig \
+       -DSDKCONFIG_DEFAULTS=<span class="hljs-string">&quot;sdkconfig.defaults;sdkconfig.defaults.factory&quot;</span> build
+</div></code></pre>
+<p>That burn is irreversible and unattended (see <code>docs/ROBOT_IDENTITY_AND_KEYS.md</code>
+§6.6.1); never ship the factory image or flash it onto a board you have not
+decided to keep.</p>
+<p>After provisioning, build and flash the <strong>production image</strong>: eFuse identity
+enabled, provisioning listener disabled (<code>CONFIG_APP_IDENTITY_SOURCE_EFUSE=y</code>,
+<code>CONFIG_APP_PROVISIONING_ENABLE=n</code>). Do not just flash the default development
+image: it reads the Kconfig identity, not the eFuses. The identity lives in
+eFuses, so it survives the reflash; the listener does not. Power-cycle and check
+the boot log. A provisioned unit and a development unit look the same in the
+app, but the development unit's identity is not unique and its key is public.</p>
+<hr>
+<h2 id="11-building-and-publishing-skills-developers">11. Building and publishing skills (developers)</h2>
+<p>The <code>mpx</code> CLI lives in the separate <code>mpx-sdk</code> <a href="https://github.com/mangdangroboticsclub/mpx-sdk">repository</a>. It builds skills,
+talks to the robot over HTTP, and publishes to the Store.</p>
+<h3 id="111-install-and-sign-in">11.1 Install and sign in</h3>
+<pre class="hljs"><code><div>pipx install mpx
+mpx signup &lt;username&gt;       <span class="hljs-comment"># first time</span>
+mpx login &lt;username&gt;
+</div></code></pre>
+<p>Python 3.10+ is enough for the CLI. <strong>Docker is used by default</strong> for
+<code>mpx move build</code> (the cross-compilation toolchain runs in a container; <code>--local</code>
+uses locally installed toolchains instead) and is <strong>required</strong> for <code>mpx web</code>
+(the AWA browser worker).</p>
+<h3 id="112-a-move-skill">11.2 A move skill</h3>
+<pre class="hljs"><code><div>mpx move init my_move --lang c     <span class="hljs-comment"># or wat, ts</span>
+<span class="hljs-built_in">cd</span> my_move
+mpx move build src/my_move.c       <span class="hljs-comment"># produces build/my_move.wasm</span>
+</div></code></pre>
+<p>The project has a <code>Makefile</code>, <code>src/</code>, <code>include/</code>, <code>GUIDE.md</code> and a
+<code>manifest.json</code>. The bundled host header is <code>mpx_host.h</code>; the firmware currently
+implements <strong>host ABI v9</strong> (107 functions). Use the header that ships with your
+CLI version.</p>
+<p>Upload and run it on the robot:</p>
+<pre class="hljs"><code><div>mpx move upload build/my_move.wasm --ip 192.168.1.105
+mpx move list --ip 192.168.1.105
+mpx move run my_move.wasm --ip 192.168.1.105
+mpx move delete my_move.wasm --ip 192.168.1.105
+</div></code></pre>
+<p>The default host is <code>192.168.2.1</code> (the robot's hotspot). When the robot is on
+your Wi-Fi, pass its LAN IP with <code>--ip</code> or set <code>MPX_HOST</code>. The port defaults to
+80; use <code>--port</code> or <code>MPX_PORT</code> if you changed it.</p>
+<p>You can also upload from the phone with <strong>Settings › Files on the robot</strong>, then
+press <strong>Run</strong> there.</p>
+<p>A move skill runs in the WASM sandbox. While it runs it owns the robot: voice,
+wake word and music are stopped, and a second skill is refused. Design it to
+finish and return.</p>
+<h3 id="113-a-web-skill">11.3 A web skill</h3>
+<p>Web skills automate a browser. AWA runs them in a sandboxed Chromium outside the
+agent, on a worker, and gives the result back to the agent. The robot itself
+only sees the result.</p>
+<pre class="hljs"><code><div>mpx web init example.com
+<span class="hljs-built_in">cd</span> example.com
+mpx web up                    <span class="hljs-comment"># start the local worker/dev environment</span>
+mpx web seed .                <span class="hljs-comment"># upload this skill to the local worker</span>
+mpx web session start &lt;skill_id&gt; --robot MPX-DOG-01
+mpx web session list
+mpx web session action &lt;session_id&gt; ...
+mpx web session get &lt;session_id&gt;
+mpx web session end &lt;session_id&gt;
+mpx web down
+</div></code></pre>
+<p>The <code>--robot</code> value is the robot UUID. Development firmware uses
+<code>MPX-DOG-01</code>; a provisioned robot uses its real <code>MPX-...</code> ID. The development ID
+is safe as a placeholder while you build.</p>
+<h3 id="114-publish">11.4 Publish</h3>
+<pre class="hljs"><code><div>mpx publish . --price 2.99 --currency USD
+mpx visibility &lt;skill_id&gt; public
+mpx search &lt;query&gt;
+mpx info &lt;skill_id&gt;
+mpx versions &lt;skill_id&gt;
+</div></code></pre>
+<ul>
+<li>A new listing is <strong>hidden</strong> until you make it public.</li>
+<li>Prices are in major units (for example <code>2.99</code>, not <code>299</code>). JPY has no minor
+unit.</li>
+<li>Use up to 16 tags. An <code>icon_url</code> must be HTTPS; without one, the app falls
+back to the Mini Pupper eyes.</li>
+<li><code>mpx update-manifest</code> edits the project's <code>manifest.json</code> metadata (slug,
+title, version, readme, tags, icon); it prompts for each field and accepts
+flags such as <code>--version</code> and <code>--tags</code>. It does not pull data from the server.</li>
+<li><code>mpx logout</code> removes the local session.</li>
+</ul>
+<p>Publishing needs an internet connection and a MangDang account. The Store's
+checkout and install flow is handled by the robot and the gateway, not by the
+CLI.</p>
+<h3 id="115-abi-mismatch-errors">11.5 ABI mismatch errors</h3>
+<p>If a skill fails at runtime with something like:</p>
+<pre class="hljs"><code><div>failed to check signature &#x27;($i)i&#x27; and resolve pointer params for import function (env print)
+failed to call unlinked import function (env print)
+</div></code></pre>
+<p>the skill was built against a different host ABI than the firmware implements.
+Fix it on the build side:</p>
+<ol>
+<li>Upgrade the CLI to the version that matches the firmware.</li>
+<li><code>rm -rf build</code> and rebuild the skill.</li>
+<li>Run <code>mpx move build src/&lt;name&gt;.c --inspect</code> to check the imports.</li>
+<li>Re-upload. Do not patch the <code>.wasm</code> by hand.</li>
+</ol>
+<p>The firmware's ABI version is <code>MPX_ABI_VERSION</code> in
+<code>main/sdk/wasm_host_functions.h</code> (currently 9). Changing an existing host
+function's signature is a breaking change and bumps it.</p>
+<h3 id="116-skill-limits">11.6 Skill limits</h3>
+<ul>
+<li>One skill at a time; a run holds the robot until it finishes.</li>
+<li>A skill cannot run while voice holds the robot or another skill is running.</li>
+<li>The WASM sandbox has no direct hardware access; it uses the host functions.</li>
+<li>Web skills need robot internet and are not available in voice turns.</li>
+<li>LittleFS is small; check the usage bar in Files before uploading large assets.</li>
+</ul>
+<hr>
+<h2 id="12-troubleshooting">12. Troubleshooting</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely cause</th>
+<th>What to do</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>No hotspot appears</td>
+<td>Robot is off, still booting, or the battery is flat</td>
+<td>Power-cycle; wait for the eyes; charge the battery.</td>
+</tr>
+<tr>
+<td>Phone joins the hotspot but no page opens</td>
+<td>Captive portal did not trigger</td>
+<td>Open <code>http://192.168.2.1/</code> in the browser.</td>
+</tr>
+<tr>
+<td>Welcome screen does not appear</td>
+<td>A successful connection is less than 24 h old</td>
+<td>Tap the Wi-Fi pill on Home, or <strong>Settings › ESP Wi-Fi</strong>.</td>
+</tr>
+<tr>
+<td>&quot;Couldn't join&quot; the network</td>
+<td>Wrong password, 5 GHz-only network, or weak signal</td>
+<td>Use 2.4 GHz; re-enter the password; move closer to the router.</td>
+</tr>
+<tr>
+<td>App says offline after changing networks</td>
+<td>Phone is on the wrong connection, or the robot changed IP</td>
+<td>Join the same Wi-Fi as the robot; open the IP shown on its screen.</td>
+</tr>
+<tr>
+<td>Controls do nothing</td>
+<td>Controller is powered off, or the skill/voice owns the robot</td>
+<td>Turn the controller on; wait for the skill to finish; end voice chat.</td>
+</tr>
+<tr>
+<td>Robot walks in an arc</td>
+<td>Calibration trim or a mechanical issue</td>
+<td>Check the legs first, then <a href="#95-calibration">calibrate</a>.</td>
+</tr>
+<tr>
+<td>A leg is crooked at rest</td>
+<td>Servo offset or a loose horn</td>
+<td>Calibration; if it does not respond, inspect the horn/servo.</td>
+</tr>
+<tr>
+<td>Screen upside down</td>
+<td>Mounting orientation</td>
+<td><strong>Settings › Display › Turned 180°</strong>.</td>
+</tr>
+<tr>
+<td>Screen too dim / too bright</td>
+<td>Brightness setting</td>
+<td><strong>Settings › Display › Brightness</strong>.</td>
+</tr>
+<tr>
+<td>Store is empty</td>
+<td>Robot has no internet</td>
+<td>Connect the robot to Wi-Fi; open the app via its LAN IP. Otherwise, restart the device</td>
+</tr>
+<tr>
+<td>Checkout opened but skill not installed</td>
+<td>Payment pending, or the robot went offline</td>
+<td>Finish checkout; keep the robot online; reopen the Store. Otherwise, contact Mangdang for support</td>
+</tr>
+<tr>
+<td>Voice does not answer</td>
+<td>Not paired, AI off, no internet, or mic busy</td>
+<td>Check <strong>AI &amp; Voice</strong>; pair; verify internet; end any skill.</td>
+</tr>
+<tr>
+<td>Voice answers but does not run a web skill</td>
+<td>Voice turns exclude web/Lua/WASM skills</td>
+<td>Ask in text chat instead.</td>
+</tr>
+<tr>
+<td>Skill fails immediately</td>
+<td>ABI mismatch or missing imports</td>
+<td>Rebuild with the matching SDK; check <code>--inspect</code>.</td>
+</tr>
+<tr>
+<td>&quot;Robot busy&quot; when running a skill</td>
+<td>Another skill is running</td>
+<td>Wait for it to finish; only one skill runs at a time.</td>
+</tr>
+<tr>
+<td>Upload rejected</td>
+<td>File too large or wrong type</td>
+<td>GIFs: 320×240, under 600 KB. Skills: <code>.wasm</code> or <code>.mpxe</code>.</td>
+</tr>
+<tr>
+<td>Robot will not flash</td>
+<td>Port busy, cable, or no download mode</td>
+<td>Close the monitor; use a data cable; hold BOOT + tap RESET.</td>
+</tr>
+<tr>
+<td>Boot loop after flashing</td>
+<td>Wrong target/image or partition mismatch</td>
+<td>Rebuild for <code>esp32s3</code>; reflash bootloader + partition + app. Ask for the decoded log.</td>
+</tr>
+</tbody>
+</table>
+<p>When asking for help, include the <strong>full boot log</strong> from <code>idf.py monitor</code>, the
+image you flashed, and the exact commands you ran. Do not paste guesses.</p>
+<hr>
+<h2 id="13-safety-care-and-privacy">13. Safety, care and privacy</h2>
+<h3 id="moving-safely">Moving safely</h3>
+<ul>
+<li>Use a flat surface with clear space. Keep the robot away from stairs, tables
+with loose items, water and heat.</li>
+<li>Do not pick the robot up by a leg while it is powered or moving. Turn the
+controller off, then lift the body.</li>
+<li>Do not force a joint by hand. If a leg is stuck, power off and inspect it.</li>
+<li>Supervise children and pets. The robot is small but the legs move quickly.</li>
+<li>Give the servos a break if they have been working hard; they can get warm.</li>
+<li>Use the charger and battery the robot shipped with. Do not leave a charging
+robot unattended on a soft surface.</li>
+</ul>
+<h3 id="flashing-safely">Flashing safely</h3>
+<ul>
+<li>Flash only a robot you can physically reach, with the correct image.</li>
+<li>Never run <code>erase-flash</code> or provisioning commands unless you intend to lose
+data or burn eFuses.</li>
+<li>Do not interrupt a flash. If it fails, retry before power-cycling repeatedly.</li>
+<li>Keep a known-good image and its <code>build/</code> directory so you can recover.</li>
+</ul>
+<h3 id="privacy">Privacy</h3>
+<ul>
+<li>The microphone is used for the wake word and voice chat. When AI is <strong>off</strong>,
+it is not used for AI.</li>
+<li>A voice turn sends audio to the MangDang gateway for speech recognition and
+speech synthesis. In <strong>My own AI account</strong> mode, text chat goes to your
+provider with your key; voice still goes through MangDang for now.</li>
+<li>Chat history is stored on the robot and shown in the app. Clear it from the
+chat sidebar if you share the robot.</li>
+<li>The default hotspot is open. Set a hotspot password if you use the robot in a
+public place.</li>
+<li>The development identity and key are public by design. Do not treat a
+development build as a secure production device.</li>
+</ul>
+<hr>
+<h2 id="14-defaults-and-limits">14. Defaults and limits</h2>
+<table>
+<thead>
+<tr>
+<th>Thing</th>
+<th>Default / limit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Robot hotspot</td>
+<td><code>MPX-Dog 01-XXXXXX</code>, open, <code>192.168.2.1</code></td>
+</tr>
+<tr>
+<td>Wi-Fi</td>
+<td>2.4 GHz only</td>
+</tr>
+<tr>
+<td>Screen</td>
+<td>320 × 240, landscape</td>
+</tr>
+<tr>
+<td>GIF upload</td>
+<td>320 × 240 or smaller, under 600 KB</td>
+</tr>
+<tr>
+<td>Wake word</td>
+<td><strong>Hi ESP</strong></td>
+</tr>
+<tr>
+<td>Control scheme</td>
+<td>PS4</td>
+</tr>
+<tr>
+<td>AI mode</td>
+<td>MangDang AI</td>
+</tr>
+<tr>
+<td>Chat brain</td>
+<td>Pupper (local agent)</td>
+</tr>
+<tr>
+<td>Rest when idle</td>
+<td>Configurable: 2, 5, 10, 30 min or never</td>
+</tr>
+<tr>
+<td>Skills</td>
+<td>One at a time; a run holds the robot</td>
+</tr>
+<tr>
+<td>Move skill formats</td>
+<td><code>.wasm</code> (plain), <code>.mpxe</code> (encrypted from the Store)</td>
+</tr>
+<tr>
+<td>Host ABI</td>
+<td>v9 (107 functions)</td>
+</tr>
+<tr>
+<td>Storage</td>
+<td>LittleFS on the <code>storage</code> partition (<code>/fs</code>)</td>
+</tr>
+<tr>
+<td>Firmware updates</td>
+<td>Over USB; no OTA in this build</td>
+</tr>
+<tr>
+<td>Store / AI / voice</td>
+<td>Require the robot to have internet</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="15-glossary">15. Glossary</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>PWA</strong></td>
+<td>The phone app served by the robot; opens in a browser and can be installed to the home screen.</td>
+</tr>
+<tr>
+<td><strong>Pupper</strong></td>
+<td>The on-device agent that answers chat and runs tools.</td>
+</tr>
+<tr>
+<td><strong>Move skill</strong></td>
+<td>A WASM program that drives the robot, screen, music or files.</td>
+</tr>
+<tr>
+<td><strong>Web skill</strong></td>
+<td>A browser automation that runs outside the robot in AWA and returns a result.</td>
+</tr>
+<tr>
+<td><strong>AWA</strong></td>
+<td>Agentic Web Action: the sandboxed browser worker used by web skills.</td>
+</tr>
+<tr>
+<td><strong>Trot</strong></td>
+<td>The walking gait.</td>
+</tr>
+<tr>
+<td><strong>Pose</strong></td>
+<td>A mode that holds the feet and lets you lean and aim.</td>
+</tr>
+<tr>
+<td><strong>Calibration offset</strong></td>
+<td>A per-servo zero trim.</td>
+</tr>
+<tr>
+<td><strong>eFuse</strong></td>
+<td>One-time-programmable storage inside the ESP32; holds a production robot's identity.</td>
+</tr>
+<tr>
+<td><strong>ABI</strong></td>
+<td>The host-function interface a WASM skill is built against.</td>
+</tr>
+<tr>
+<td><strong>LittleFS</strong></td>
+<td>The robot's internal filesystem for skills, uploads and agent state.</td>
+</tr>
+</tbody>
+</table>
+
+</body>
+</html>
