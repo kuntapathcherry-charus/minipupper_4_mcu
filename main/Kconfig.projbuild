@@ -764,12 +764,14 @@ config APP_VOICE_OTA_URL
 
 config APP_VOICE_BRAIN_LOCAL
     bool "Answer voice with the on-device agent (gateway = STT + TTS)"
-    default y
+    default n
     depends on APP_AGENT_ENABLE
     help
         Advertise hello features.brain="device": the gateway transcribes and
         speaks, while ESP-Claw answers with its own tools and conversation
-        memory. Off keeps the server's model and the MCP tool bridge.
+        memory. Off is the default: the gateway's model calls the native MCP
+        tool bridge without adding ESP-Claw inference to the voice turn.
+        ESP-Claw remains available to the PWA and agent API in either mode.
 
 config APP_VOICE_PHONE_AUDIO
     bool "Developer: route voice microphone/speaker through the PWA device"

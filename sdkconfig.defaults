@@ -240,6 +240,9 @@ CONFIG_LV_BUILD_DEMOS=n
 # off again.
 CONFIG_APP_AUDIO_ENABLE=y
 CONFIG_APP_VOICE_ENABLE=y
+# Keep the voice LLM and MCP client in the gateway, out of the audio turn path.
+# ESP-Claw remains available to the PWA and agent API.
+CONFIG_APP_VOICE_BRAIN_LOCAL=n
 CONFIG_APP_VOICE_AUTO_LISTEN=y
 
 # On-device RL policies (main/rl). The policy worker takes the same counted

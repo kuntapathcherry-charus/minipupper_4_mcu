@@ -27,16 +27,17 @@ Target:
 That is the gateway's documented `brain:"device"` mode. No new server work.
 
 Non-goals: changing the wire protocol, replacing the gateway's TTS, local
-wake-word/TTS on the robot, and any per-unit build. MCP mode stays as a
-fallback (see §5).
+wake-word/TTS on the robot, and any per-unit build. MCP mode remains
+available and is now the default low-latency voice path (see §5).
 
 ---
 
 ## 1a. Implementation status (2026-11-12)
 
 F1–F9 and P1–P6 now have a first implementation. The local brain is selected
-by `CONFIG_APP_VOICE_BRAIN_LOCAL` (default on when the agent is present);
-hello advertises either `features.brain="device"` or MCP, never both. Voice
+by `CONFIG_APP_VOICE_BRAIN_LOCAL` (default off since 2026-11-18, to keep
+ESP-Claw inference out of the voice turn); hello advertises either
+`features.brain="device"` or MCP, never both. Voice
 uses one NVS-backed rolling `voice-xxxxxxxx` session, a PSRAM worker, one
 outstanding turn (the protocol has no turn id), an 80-second timeout, and
 3-second duplicate-STT suppression. Speech cleanup is a separate ESP-free C
@@ -250,7 +251,7 @@ cancelled reply).
 |---|---|
 | Where does history live | Firmware JSONL on LittleFS + PWA import; survives a closed phone and a cleared browser |
 | Session grouping | One rolling voice conversation, stable agent session; rolled by "New voice conversation" in the PWA or after a long idle gap |
-| MCP / server brain | Kept behind a switch, off by default |
+| MCP / server brain | Default; local ESP-Claw voice remains behind a switch |
 | This pass | This document only |
 
 Additional UX requested: **new conversation** and **archive** controls in the
@@ -265,7 +266,7 @@ Rule, evaluated per WebSocket connection in `mpx_voice_connect()`:
 ```
 device brain  iff  CONFIG_APP_AGENT_ENABLE
                &&  agent::running()
-               &&  CONFIG_APP_VOICE_BRAIN_LOCAL          (new, default y)
+               &&  CONFIG_APP_VOICE_BRAIN_LOCAL          (default n)
                &&  agent_config::mode() != Off
 else server brain (mcp), exactly today's behaviour
 ```
@@ -284,7 +285,7 @@ Kconfig (`main/Kconfig.projbuild`, under `APP_VOICE_ENABLE`):
 ```
 config APP_VOICE_BRAIN_LOCAL
     bool "Answer voice with the on-device agent (gateway = STT + TTS)"
-    default y
+    default n
     help
       Advertises hello features.brain="device". The gateway then only
       transcribes and speaks; ESP-Claw answers, with its own tools. Off =
