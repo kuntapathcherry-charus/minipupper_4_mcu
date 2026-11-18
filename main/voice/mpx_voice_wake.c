@@ -25,11 +25,13 @@
 #include "cJSON.h"
 #include "esp_afe_sr_iface.h"
 #include "esp_afe_sr_models.h"
+#include "esp_attr.h"
 #include "esp_check.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
+#include "freertos/ringbuf.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
@@ -48,6 +50,12 @@
  * a default, not a compile error. */
 #ifndef CONFIG_APP_VOICE_AUTO_MAX_SECONDS
 #define CONFIG_APP_VOICE_AUTO_MAX_SECONDS 12
+#endif
+#ifndef CONFIG_APP_VOICE_BARGE_IN
+#define CONFIG_APP_VOICE_BARGE_IN 1
+#endif
+#ifndef CONFIG_APP_VOICE_DUAL_MIC_AEC
+#define CONFIG_APP_VOICE_DUAL_MIC_AEC 1
 #endif
 
 static const char *TAG = "mpx_voice_wake";
@@ -76,28 +84,56 @@ static const char *TAG = "mpx_voice_wake";
  * insistence on measuring: `wake levels` prints the table above and says
  * whether it still matches this format.
  *
- * One mic, not two ("RMNM"): a second mic turns on the AFE's array
- * processing and a 2-channel WakeNet mode, for more CPU and RAM than this
- * board has to spare, and the single microphone is what the cloud ASR
- * already transcribes cleanly.
+ * Two microphones plus the electrical reference ("MMNR") enable ESP-SR's
+ * dual-microphone array processing and AEC for the cleaned uplink. Raw DMA
+ * order is R,M,N,M, so feed_task reorders each frame before calling AFE.
+ * If the dual-mic AFE cannot be created, init retries the proven single-mic
+ * "RMNN" layout and logs the fallback.
  *
  * If the codec will not open 4 channels, fall back to 2 channels as "MN":
  * the wake word still works, but with no reference there is no echo
  * cancellation, so barge-in cannot hear you over the robot's own voice. */
+#if CONFIG_APP_VOICE_DUAL_MIC_AEC
+#define WAKE_FORMAT_4CH        "MMNR"
+#else
 #define WAKE_FORMAT_4CH        "RMNN"
+#endif
+#define WAKE_FORMAT_4CH_SINGLE "RMNN"
 #define WAKE_FORMAT_2CH        "MN"
-#define WAKE_REFERENCE_SLOT    0
 
 static uint8_t     s_capture_channels;   /* 4 or 2, decided by init */
 static const char *s_input_format;
+static bool        s_dual_mic;
+
+/* Enhanced AFE output waiting for the Opus task. PSRAM only: 16 KiB holds
+ * 500 ms of 16 kHz mono PCM without consuming scarce internal/DMA RAM. */
+#define WAKE_BARGE_RING_BYTES  (16 * 1024)
+static RingbufHandle_t s_barge_ring;
+static SemaphoreHandle_t s_barge_lock; /* fetch send vs auto-task reset/drain */
+static volatile bool s_barge_streaming;
+static int16_t s_barge_staged[MPX_VOICE_UPLINK_FRAME];
+static size_t s_barge_staged_count;
+static uint32_t s_barge_dropped;
 
 /* PSRAM-backed, generously sized on purpose -- see mpx_voice_stream.c's own
  * VOICE_STREAM_TASK_STACK comment for why this project no longer inches
  * stack sizes up after a guess turns out wrong. feed() and fetch() run
  * esp-sr's DSP (AEC, VAD, WakeNet inference) on whichever task calls them,
- * not on a stack of the library's own choosing. */
+ * not on a stack of the library's own choosing.
+ *
+ * Reserve both stacks statically in PSRAM. MMNR consumes considerably more
+ * heap than RMNN; on the board its first start left only a 24 KiB internal
+ * block, and both dynamic PSRAM/internal task creation attempts failed.
+ * Static storage removes that boot-time heap dependency without shrinking
+ * the DSP stacks. The TCBs remain small static internal-RAM objects. */
 #define WAKE_FEED_TASK_STACK   (2048 * 10)
 #define WAKE_FETCH_TASK_STACK  (2048 * 16)
+EXT_RAM_BSS_ATTR static StackType_t
+    s_feed_stack[WAKE_FEED_TASK_STACK / sizeof(StackType_t)];
+EXT_RAM_BSS_ATTR static StackType_t
+    s_fetch_stack[WAKE_FETCH_TASK_STACK / sizeof(StackType_t)];
+static StaticTask_t s_feed_tcb;
+static StaticTask_t s_fetch_tcb;
 
 #define WAKE_TASK_WAIT_MS      3000  /* > fetch()'s own 2000ms internal timeout */
 
@@ -181,8 +217,10 @@ esp_err_t mpx_voice_wake_init(void)
         ESP_LOGW(TAG, "codec will not open 4 channels -- no echo reference, so "
                       "barge-in cannot hear you while the robot is talking");
     }
-    ESP_LOGI(TAG, "capture: %u channels, AFE input format \"%s\"",
-             (unsigned)s_capture_channels, s_input_format);
+    s_dual_mic = s_capture_channels == 4 && strcmp(s_input_format, "MMNR") == 0;
+    ESP_LOGI(TAG, "capture: %u channels, AFE input format \"%s\"%s",
+             (unsigned)s_capture_channels, s_input_format,
+             s_dual_mic ? " (dual-mic AEC)" : "");
 
     afe_config_t *afe_config = afe_config_init(s_input_format, s_models,
                                                AFE_TYPE_SR, AFE_MODE_LOW_COST);
@@ -213,10 +251,42 @@ esp_err_t mpx_voice_wake_init(void)
      * the pointer, and freeing it if AFE kept it would be a use-after-free
      * that would take a lot longer to notice than the ~200 bytes this
      * leaks once, at boot, for the life of the firmware. */
+    if (!s_afe_data && s_dual_mic) {
+        /* Two-mic BSS costs more RAM/CPU and may be unavailable in a
+         * particular esp-sr build. Preserve the existing single-mic AEC
+         * rather than losing the wake service altogether. */
+        ESP_LOGW(TAG, "dual-mic MMNR AFE unavailable; retrying single-mic RMNN AEC");
+        s_dual_mic = false;
+        s_input_format = WAKE_FORMAT_4CH_SINGLE;
+        afe_config = afe_config_init(s_input_format, s_models,
+                                     AFE_TYPE_SR, AFE_MODE_LOW_COST);
+        if (afe_config) {
+            afe_config->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;
+            afe_config->afe_perferred_core = 1;
+            s_afe_handle = esp_afe_handle_from_config(afe_config);
+            if (s_afe_handle) {
+                s_afe_data = s_afe_handle->create_from_config(afe_config);
+            }
+        }
+    }
     if (!s_afe_data) {
         ESP_LOGE(TAG, "create_from_config failed");
         return ESP_FAIL;
     }
+
+#if CONFIG_APP_VOICE_BARGE_IN
+    if (!s_barge_ring) {
+        s_barge_ring = xRingbufferCreateWithCaps(WAKE_BARGE_RING_BYTES,
+                                                 RINGBUF_TYPE_BYTEBUF,
+                                                 MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    if (s_barge_ring && !s_barge_lock) {
+        s_barge_lock = xSemaphoreCreateMutex();
+    }
+    if (!s_barge_ring || !s_barge_lock) {
+        ESP_LOGW(TAG, "no memory for barge-in PCM ring; wake-word barge-in remains available");
+    }
+#endif
 
     s_afe_ready = true;
     ESP_LOGI(TAG, "AFE ready: %d Hz, %d feed channel(s), %d samples/channel "
@@ -242,7 +312,7 @@ static void feed_task(void *arg)
                       "expected <= %d frames, %u channels) -- not feeding",
                  chunk, channels, MPX_AUDIO_MAX_FRAMES, (unsigned)s_capture_channels);
         xSemaphoreGive(s_feed_done);
-        vTaskDeleteWithCaps(NULL);
+        vTaskDelete(NULL);
         return;
     }
 
@@ -254,7 +324,7 @@ static void feed_task(void *arg)
     if (!buf) {
         ESP_LOGE(TAG, "no memory for the feed buffer -- not feeding");
         xSemaphoreGive(s_feed_done);
-        vTaskDeleteWithCaps(NULL);
+        vTaskDelete(NULL);
         return;
     }
 
@@ -269,12 +339,24 @@ static void feed_task(void *arg)
             s_run = false;
             break;
         }
+        if (s_dual_mic) {
+            /* ES7210 DMA order is R,M,N,M; ESP-SR MMNR expects M,M,N,R.
+             * Reorder in place, retaining the electrical reference. */
+            for (int i = 0; i < chunk; ++i) {
+                int16_t reference = buf[4 * i];
+                int16_t mic_1 = buf[4 * i + 1];
+                int16_t mic_2 = buf[4 * i + 3];
+                buf[4 * i] = mic_1;
+                buf[4 * i + 1] = mic_2;
+                buf[4 * i + 3] = reference;
+            }
+        }
         s_afe_handle->feed(s_afe_data, buf);
     }
 
     free(buf);
     xSemaphoreGive(s_feed_done);
-    vTaskDeleteWithCaps(NULL);
+    vTaskDelete(NULL);
 }
 
 /* ── fetch: afe->fetch() -> wake/VAD result -> barge-in ──────────────────── */
@@ -301,6 +383,93 @@ static void send_abort_wake_word(void)
         ESP_LOGW(TAG, "could not send abort -- socket down?");
     }
     free(text);
+}
+
+static size_t barge_pcm_read(int16_t *pcm, size_t frames, uint32_t timeout_ms, void *ctx)
+{
+    (void)ctx;
+    if (!pcm || !frames || !s_barge_ring) {
+        return 0;
+    }
+    const size_t want = frames * sizeof(int16_t);
+    const TickType_t timeout = pdMS_TO_TICKS(timeout_ms);
+    const TickType_t start = xTaskGetTickCount();
+
+    /* ReceiveUpTo splits byte-buffer items, so neither short AFE chunks nor
+     * a coalesced chunk larger than one Opus frame can lose samples. Return
+     * only complete frames; talk_task must never zero-pad a partial read. */
+    while (s_barge_staged_count * sizeof(int16_t) < want) {
+        TickType_t wait = 0;
+        if (timeout > 0) {
+            TickType_t elapsed = xTaskGetTickCount() - start;
+            if (elapsed >= timeout) {
+                break;
+            }
+            wait = timeout - elapsed;
+        }
+        size_t got = 0;
+        void *item = xRingbufferReceiveUpTo(s_barge_ring, &got, wait,
+                                            want - s_barge_staged_count * sizeof(int16_t));
+        if (!item) {
+            break;
+        }
+        memcpy((uint8_t *)s_barge_staged + s_barge_staged_count * sizeof(int16_t), item, got);
+        s_barge_staged_count += got / sizeof(int16_t);
+        vRingbufferReturnItem(s_barge_ring, item);
+    }
+    if (s_barge_staged_count < frames) {
+        return 0;
+    }
+    memcpy(pcm, s_barge_staged, want);
+    s_barge_staged_count = 0;
+    return frames;
+}
+
+static esp_err_t wake_barge_talk_start(uint32_t max_seconds)
+{
+    ESP_RETURN_ON_FALSE(s_barge_ring && s_barge_lock && mpx_voice_barge_in_supported() &&
+                        mpx_audio_capture_active(), ESP_ERR_NOT_SUPPORTED, TAG,
+                        "gateway or capture does not support speech barge-in");
+
+    xSemaphoreTake(s_barge_lock, portMAX_DELAY);
+    s_barge_streaming = false;
+    size_t bytes = 0;
+    void *item;
+    while ((item = xRingbufferReceive(s_barge_ring, &bytes, 0)) != NULL) {
+        vRingbufferReturnItem(s_barge_ring, item);
+    }
+    s_barge_staged_count = 0;
+    s_barge_dropped = 0;
+    xSemaphoreGive(s_barge_lock);
+
+    esp_err_t err = mpx_voice_talk_start_barge_in(barge_pcm_read, NULL, max_seconds);
+    if (err == ESP_OK) {
+        s_barge_streaming = true;
+        /* Server-side VAD owns interruption in this mode. Running WakeNet as
+         * well wastes a second inference on every AFE chunk; with dual-mic
+         * BSS it kept CPU 1 busy until IDLE1 tripped the task watchdog. */
+        if (s_afe_handle->disable_wakenet) {
+            s_afe_handle->disable_wakenet(s_afe_data);
+        }
+    }
+    return err;
+}
+
+static void wake_barge_talk_stop(void)
+{
+    if (s_barge_lock) {
+        xSemaphoreTake(s_barge_lock, portMAX_DELAY);
+    }
+    s_barge_streaming = false;
+    if (s_afe_handle && s_afe_data && s_afe_handle->enable_wakenet) {
+        s_afe_handle->enable_wakenet(s_afe_data);
+    }
+    if (s_barge_lock) {
+        xSemaphoreGive(s_barge_lock);
+    }
+    if (mpx_voice_talk_active()) {
+        mpx_voice_talk_stop();
+    }
 }
 
 static void fetch_task(void *arg)
@@ -334,6 +503,21 @@ static void fetch_task(void *arg)
             }
         }
 
+        if (s_barge_lock) {
+            xSemaphoreTake(s_barge_lock, portMAX_DELAY);
+        }
+        if (s_barge_streaming && res->data && res->data_size > 0) {
+            BaseType_t stored = xRingbufferSend(s_barge_ring, res->data,
+                                                (size_t)res->data_size, 0);
+            if (stored != pdTRUE && ++s_barge_dropped % 100 == 1) {
+                ESP_LOGW(TAG, "barge-in PCM ring overrun (%lu fetch chunks dropped)",
+                         (unsigned long)s_barge_dropped);
+            }
+        }
+        if (s_barge_lock) {
+            xSemaphoreGive(s_barge_lock);
+        }
+
         if (res->wakeup_state == WAKENET_DETECTED) {
             ESP_LOGI(TAG, "wake word heard (word index %d)", res->wake_word_index);
             if (mpx_voice_stream_is_playing()) {
@@ -357,7 +541,7 @@ static void fetch_task(void *arg)
     }
 
     xSemaphoreGive(s_fetch_done);
-    vTaskDeleteWithCaps(NULL);
+    vTaskDelete(NULL);
 }
 
 /* ── start/stop ──────────────────────────────────────────────────────────── */
@@ -398,37 +582,29 @@ esp_err_t mpx_voice_wake_start(void)
     s_run = true;
     s_feed_failed = false;
 
-    BaseType_t ok = xTaskCreateWithCaps(feed_task, "wake_feed", WAKE_FEED_TASK_STACK,
-                                        NULL, (UBaseType_t)s_task_priority, &s_feed_task,
-                                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (ok != pdPASS) {
-        ok = xTaskCreateWithCaps(feed_task, "wake_feed", WAKE_FEED_TASK_STACK,
-                                 NULL, (UBaseType_t)s_task_priority, &s_feed_task,
-                                 MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    }
-    if (ok != pdPASS) {
+    s_feed_task = xTaskCreateStatic(feed_task, "wake_feed",
+                                    WAKE_FEED_TASK_STACK / sizeof(StackType_t),
+                                    NULL, (UBaseType_t)s_task_priority,
+                                    s_feed_stack, &s_feed_tcb);
+    if (!s_feed_task) {
         s_run = false;
         mpx_audio_capture_stop();
-        ESP_LOGE(TAG, "could not create the feed task");
+        ESP_LOGE(TAG, "could not create the static-PSRAM feed task");
         return ESP_ERR_NO_MEM;
     }
 
-    ok = xTaskCreateWithCaps(fetch_task, "wake_fetch", WAKE_FETCH_TASK_STACK,
-                             NULL, (UBaseType_t)s_task_priority, &s_fetch_task,
-                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (ok != pdPASS) {
-        ok = xTaskCreateWithCaps(fetch_task, "wake_fetch", WAKE_FETCH_TASK_STACK,
-                                 NULL, (UBaseType_t)s_task_priority, &s_fetch_task,
-                                 MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    }
-    if (ok != pdPASS) {
+    s_fetch_task = xTaskCreateStatic(fetch_task, "wake_fetch",
+                                     WAKE_FETCH_TASK_STACK / sizeof(StackType_t),
+                                     NULL, (UBaseType_t)s_task_priority,
+                                     s_fetch_stack, &s_fetch_tcb);
+    if (!s_fetch_task) {
         /* feed_task is already running -- stop it the normal way rather
          * than leaving it orphaned. */
         s_run = false;
         xSemaphoreTake(s_feed_done, pdMS_TO_TICKS(WAKE_TASK_WAIT_MS));
         s_feed_task = NULL;
         mpx_audio_capture_stop();
-        ESP_LOGE(TAG, "could not create the fetch task");
+        ESP_LOGE(TAG, "could not create the static-PSRAM fetch task");
         return ESP_ERR_NO_MEM;
     }
 
@@ -742,13 +918,25 @@ static void wake_auto_task(void *arg)
         }
 
         case WAKE_ST_REPLY: {
-            /* A reply is on its way. Put the front end back up NOW, while
-             * it arrives and plays, so the wake word can interrupt it. Then
-             * wait for one of: the wake word (barge-in), the reply finishing
-             * (follow-up turn), or nothing happening for a long time. */
+            /* Keep AFE running ahead of the reply. With a negotiated
+             * barge_in gateway, continuously stream its echo-cancelled PCM;
+             * the gateway cancels old TTS only after its VAD confirms speech.
+             * Older gateways retain wake-word-only barge-in. */
             const uint32_t stops_before = mpx_voice_stream_tts_stop_count();
             if (!s_active && mpx_voice_wake_start() != ESP_OK) {
                 ESP_LOGW(TAG, "hands-free: front end did not restart -- no barge-in this reply");
+            }
+            bool barge_talk = false;
+            bool interrupted = false;
+            if (s_active && !mpx_phone_audio_mic_enabled()) {
+                esp_err_t err = wake_barge_talk_start(WAKE_REPLY_TIMEOUT_MS / 1000);
+                if (err == ESP_OK) {
+                    barge_talk = true;
+                    ESP_LOGI(TAG, "hands-free: full-duplex barge-in armed");
+                } else if (err != ESP_ERR_NOT_SUPPORTED) {
+                    ESP_LOGW(TAG, "hands-free: barge-in stream failed (%s); wake word remains available",
+                             esp_err_to_name(err));
+                }
             }
             bool detected = false;
             bool finished = false;
@@ -758,8 +946,24 @@ static void wake_auto_task(void *arg)
                     detected = true;
                     break;
                 }
-                if (mpx_voice_stream_tts_stop_count() != stops_before &&
-                        !mpx_voice_stream_is_playing()) {
+                if (barge_talk &&
+                    (mpx_voice_stream_barge_accepted() ||
+                     (mpx_voice_talk_server_took_turn() && !mpx_voice_talk_active()))) {
+                    /* A confirmed onset cancels old playback, then STT ends
+                     * the new utterance. A barge-mode follow-up can instead
+                     * reach STT while no old TTS exists, so there is no stop
+                     * event and barge_accepted stays false. Its completed
+                     * STT/rearm is equally a turn boundary: arm the next
+                     * reply instead of leaving a producer with no consumer. */
+                    interrupted = true;
+                    if (!mpx_voice_talk_active()) {
+                        finished = true;
+                        break;
+                    }
+                } else if (mpx_voice_stream_tts_stop_count() != stops_before &&
+                           !mpx_voice_stream_is_playing()) {
+                    /* Natural reply end. A barge stop takes the branch above
+                     * and must not truncate the user's new utterance. */
                     finished = true;
                     break;
                 }
@@ -774,24 +978,32 @@ static void wake_auto_task(void *arg)
                 }
                 if (s_feed_failed) {
                     ESP_LOGW(TAG, "hands-free: microphone read died -- restarting the front end");
+                    wake_barge_talk_stop();
+                    barge_talk = false;
                     mpx_voice_wake_stop();
                     (void)mpx_voice_wake_start();
                 }
             }
             if (!s_auto_run) {
+                wake_barge_talk_stop();
                 break;
             }
             if (detected) {
-                /* Barge-in: fetch_task already aborted playback and told the
-                 * server. Let the speaker finish closing BEFORE the capture
-                 * is closed -- on this I2S peripheral stopping RX with TX
-                 * mid-write can stall TX ("if disable RX, TX also not work"
-                 * in esp_codec_dev), and a stalled write with no timeout is
-                 * a hung task. */
+                /* Wake-word barge-in: fetch_task already aborted playback
+                 * and told the server. Stop processed uplink before handing
+                 * the capture hardware to an ordinary raw-mic turn. */
+                wake_barge_talk_stop();
                 wake_auto_release_mic();
                 follow_up = false;
                 state = WAKE_ST_TALK;
+            } else if (finished && interrupted) {
+                /* STT/rearm closed the utterance; keep AFE up and arm
+                 * barge-in for the replacement reply without an I2S restart.
+                 * This also re-enables WakeNet briefly between captures. */
+                wake_barge_talk_stop();
+                state = WAKE_ST_REPLY;
             } else if (finished && s_followup_gate && s_followup_gate()) {
+                wake_barge_talk_stop();
                 /* Music is waiting for the speaker (it was just asked for,
                  * or this question interrupted it): no follow-up turn --
                  * back to the wake word, so the music can play. */
@@ -799,13 +1011,16 @@ static void wake_auto_task(void *arg)
                 state = WAKE_ST_LISTEN;
             } else if (finished && mpx_voice_state() == MPX_VOICE_READY) {
                 /* Reply done: hand the mic straight back for a follow-up. */
+                wake_barge_talk_stop();
                 wake_auto_release_mic();
                 follow_up = true;
                 state = WAKE_ST_TALK;
             } else if (finished || ended) {
+                wake_barge_talk_stop();
                 ESP_LOGI(TAG, "hands-free: session ended -- listening for the wake word");
                 state = WAKE_ST_LISTEN;
             } else {
+                wake_barge_talk_stop();
                 ESP_LOGW(TAG, "hands-free: no reply within %d s -- listening for the wake word",
                          WAKE_REPLY_TIMEOUT_MS / 1000);
                 state = WAKE_ST_LISTEN;
@@ -865,6 +1080,7 @@ void mpx_voice_wake_auto_stop(void)
     }
     s_auto_run = false;
     /* If it is mid-talk, cut that short so the task can leave the loop. */
+    s_barge_streaming = false;
     mpx_voice_talk_stop();
     if (xSemaphoreTake(s_auto_done, pdMS_TO_TICKS(WAKE_TASK_WAIT_MS + 5000)) != pdTRUE) {
         ESP_LOGW(TAG, "hands-free task did not confirm stop");

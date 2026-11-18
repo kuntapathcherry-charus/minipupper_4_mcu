@@ -110,6 +110,11 @@ const char *mpx_voice_state_name(void);
 const char *mpx_voice_session_id(void);
 uint32_t    mpx_voice_downlink_rate(void);
 
+/* True only when the connected gateway acknowledged features.barge_in in its
+ * hello. Negotiated mode streams echo-cancelled microphone audio throughout
+ * a reply; older gateways retain wake-word-only barge-in. */
+bool        mpx_voice_barge_in_supported(void);
+
 /* Send one control message. `json` is sent verbatim, so the caller owns the
  * shape -- this is deliberately thin while the protocol is being brought up. */
 esp_err_t mpx_voice_send_json(const char *json);
@@ -138,6 +143,12 @@ void mpx_voice_stream_rx_frame(const uint8_t *data, size_t len);
  * running with nothing feeding it. */
 void mpx_voice_stream_on_tts_stop(void);
 
+/* A barge-in stop is an interruption, not a graceful end of reply: flush all
+ * queued old audio immediately and record that the current duplex capture
+ * caused it. The following STT closes that capture and starts the new reply. */
+void mpx_voice_stream_on_barge_in_stop(void);
+bool mpx_voice_stream_barge_accepted(void);
+
 /* Push-to-talk: open the mic, stream Opus uplink frames until told to stop
  * or `max_seconds` elapses (0 = no limit, use `mpx_voice_talk_stop`), then
  * close the mic and send listen/stop. Requires MPX_VOICE_READY. Refuses
@@ -164,6 +175,15 @@ esp_err_t mpx_voice_talk_start_auto(uint32_t max_seconds);
  * valid while the phone microphone is enabled. */
 esp_err_t mpx_voice_talk_start_phone(uint32_t max_seconds);
 
+/* Full-duplex barge-in variant. The AFE owns the hardware microphone; this
+ * callback supplies its echo-cancelled mono PCM to the existing Opus/TLS talk
+ * task. It returns exactly `frames` samples, or 0 when none arrived within
+ * `timeout_ms`. No second task reads the I2S capture stream. */
+typedef size_t (*mpx_voice_pcm_reader_t)(int16_t *pcm, size_t frames,
+                                         uint32_t timeout_ms, void *ctx);
+esp_err_t mpx_voice_talk_start_barge_in(mpx_voice_pcm_reader_t reader, void *ctx,
+                                         uint32_t max_seconds);
+
 /* Move an already-active robot-microphone turn to the enabled phone mic.
  * The talk task closes I2S and drains stale phone PCM before switching. */
 esp_err_t mpx_voice_talk_use_phone(void);
@@ -183,10 +203,22 @@ bool mpx_voice_talk_server_took_turn(void);
  * with mpx_voice_stream_is_playing() to know it has finished playing. */
 uint32_t mpx_voice_stream_tts_stop_count(void);
 
-/* mpx_voice_ws.c calls this when the server has clearly taken its turn in
- * the conversation -- an "stt" result, or "tts" start/sentence_start -- so
- * an auto-mode talk stops streaming instead of feeding the server its own
- * reply through the microphone. Harmless when nothing is talking. */
+/* STT closes the utterance for every auto-mode talk, including a duplex
+ * barge-in. Unlike a TTS start, it cannot belong to the reply being
+ * interrupted, so it is always safe to stop uplink. The old-audio drop gate
+ * stays set until the next TTS start so stale packets cannot revive playback. */
+void mpx_voice_stream_on_stt(void);
+
+/* Empty/ignored barge-in ASR produces no transcript. This separate control
+ * event ends only the still-active barge capture whose nonzero listen_id was
+ * returned by the server. A delayed result cannot stop a newer capture. */
+void mpx_voice_stream_on_listen_rearm(uint32_t listen_id);
+
+/* mpx_voice_ws.c calls this for TTS start/sentence_start, which clearly
+ * gives the server the conversational turn. STT uses the dedicated
+ * mpx_voice_stream_on_stt() path. An auto-mode talk stops streaming instead
+ * of feeding the server its own reply through the microphone. Harmless when
+ * nothing is talking. */
 void mpx_voice_stream_on_server_turn(void);
 
 /* True while a TTS reply is actively being decoded and played -- i.e.

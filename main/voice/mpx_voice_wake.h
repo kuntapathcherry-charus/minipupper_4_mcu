@@ -6,37 +6,42 @@
  * WakeNet) over the microphone, and the hands-free conversation loop built
  * on it.
  *
- * Two things are wired to the wake word ("Hi ESP"):
+ * Speech barge-in is preferred when the gateway acknowledges
+ * features.barge_in: AFE-cleaned microphone PCM streams throughout the
+ * reply in listen mode "barge_in", and server VAD confirms speech before
+ * cancelling old playback. STT at the utterance endpoint closes the uplink.
+ * Opus/TLS runs in the normal talk task, never in the DSP fetch task. The
+ * reader joins AFE chunks into exact 60 ms frames (no zero-padding), and a
+ * mutex serializes ring reset/drain against the producer. Ignored/empty ASR
+ * returns a capture-scoped listen/rearm event with its original listen_id;
+ * delayed results cannot stop a newer capture or trigger transcript UI.
  *
- *   Barge-in. Hearing it while the robot is mid-reply sends
- *   {"type":"abort","reason":"wake_word_detected"} and stops local playback
- *   immediately. Available in both modes below.
+ * Wake-word barge-in remains available with every gateway: hearing it
+ * mid-reply sends {"type":"abort","reason":"wake_word_detected"} and
+ * stops local playback immediately.
  *
- *   Hands-free (mpx_voice_wake_auto_start(), and the boot default under
- *   CONFIG_APP_VOICE_AUTO_LISTEN). Hearing it from idle hands
- *   the microphone to mpx_voice_talk_start_auto(): beep, stream until the
- *   server's VAD says you are done, play the reply, and go back to
- *   listening -- listening resumes while the reply is still playing, so
- *   the wake word interrupts it and starts the next turn. The socket is
- *   opened, or reopened after the server's idle timeout, on demand.
+ * Hands-free (mpx_voice_wake_auto_start(), and the boot default under
+ * CONFIG_APP_VOICE_AUTO_LISTEN) hears the wake word from idle, streams a
+ * turn until server VAD ends it, plays the reply, and offers a follow-up.
+ * The socket is opened, or reopened after the server's idle timeout, on
+ * demand.
  *
- * The microphone handoff that made this "deliberately not wired" in the
- * first cut is done the simple way: mpx_audio's capture is still a single
- * stream with no owner tracking, so the hands-free task is the only thing
- * that ever moves it -- it stops the wake front end, waits for that to
- * confirm, starts the talk, waits for the talk to confirm, and starts the
- * front end again. `wake` and `voice talk` still refuse to start over each
- * other, which is what keeps a manual command from breaking the loop.
+ * Capture is a single hardware stream. Raw talks and AFE never read it at
+ * once: the hands-free task owns every handoff. During full-duplex reply,
+ * AFE remains the only I2S reader and feeds cleaned PCM through a PSRAM
+ * ring to the Opus task. `wake` and `voice talk` still refuse to start over
+ * each other.
  *
  * Playback runs at 16 kHz (MPX_VOICE_PLAYBACK_RATE), not the 24 kHz the
  * server encodes at, because the speaker and the microphone share one I2S
  * peripheral and it will not run the two directions at different rates --
  * and barge-in needs the microphone open during the reply.
  *
- * Still unverified on real hardware, and worth reading before trusting
- * barge-in's AEC quality: which raw capture channel actually carries the
- * amplifier's echo-reference feedback. `wake levels` reports both channels'
- * RMS so that can be checked directly -- see its usage text.
+ * Four-channel capture is R,M,N,M: electrical speaker reference, two real
+ * mics, and one unused slot. Default MMNR processing reorders this to
+ * M,M,N,R for dual-microphone array + AEC; runtime fallback is RMNN
+ * single-mic AEC, and two-channel MN hardware fallback has no AEC. AEC
+ * quality, CPU and heap still require validation on the physical board.
  */
 #pragma once
 

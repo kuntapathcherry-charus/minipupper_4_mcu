@@ -58,6 +58,7 @@ static uint32_t s_audio_frames;
 static mpx_voice_mcp_sink_t s_mcp_sink;
 static mpx_voice_ui_hooks_t s_ui;   /* zeroed = no hooks */
 static bool s_device_brain;
+static bool s_barge_in_supported;
 static mpx_voice_stt_sink_t s_stt_sink;
 static mpx_voice_state_sink_t s_state_sink;
 
@@ -215,6 +216,9 @@ static esp_err_t voice_send_hello(void)
             /* The server transcribes and speaks; this robot's agent answers. */
             cJSON_AddStringToObject(features, "brain", "device");
         }
+#if !defined(CONFIG_APP_VOICE_BARGE_IN) || CONFIG_APP_VOICE_BARGE_IN
+        cJSON_AddBoolToObject(features, "barge_in", true);
+#endif
     }
 
     cJSON *audio = cJSON_AddObjectToObject(root, "audio_params");
@@ -239,6 +243,7 @@ static esp_err_t voice_send_hello(void)
 
 static void voice_handle_hello(const cJSON *root)
 {
+    s_barge_in_supported = false;
     const cJSON *session = cJSON_GetObjectItem(root, "session_id");
     if (cJSON_IsString(session) && session->valuestring) {
         strlcpy(s_session_id, session->valuestring, sizeof(s_session_id));
@@ -256,9 +261,15 @@ static void voice_handle_hello(const cJSON *root)
         }
     }
 
+    const cJSON *features = cJSON_GetObjectItem(root, "features");
+    const cJSON *barge_in = cJSON_IsObject(features)
+                                ? cJSON_GetObjectItem(features, "barge_in") : NULL;
+    s_barge_in_supported = cJSON_IsTrue(barge_in);
+
     s_state = MPX_VOICE_READY;
-    ESP_LOGI(TAG, "session ready: id=%s, downlink %" PRIu32 " Hz",
-             s_session_id[0] ? s_session_id : "(none)", s_downlink_rate);
+    ESP_LOGI(TAG, "session ready: id=%s, downlink %" PRIu32 " Hz, barge-in %s",
+             s_session_id[0] ? s_session_id : "(none)", s_downlink_rate,
+             s_barge_in_supported ? "full-duplex" : "wake word only");
     ESP_LOGI(TAG, "internal RAM after connect: %u free, %u largest",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
@@ -298,7 +309,16 @@ static void voice_handle_text(const char *data, int len)
         /* A transcript means the server's VAD has closed the utterance --
          * an auto-mode talk should stop streaming now, not keep feeding it
          * the room (and, in a moment, its own reply). */
-        mpx_voice_stream_on_server_turn();
+        mpx_voice_stream_on_stt();
+    } else if (strcmp(kind, "listen") == 0) {
+        const cJSON *state = cJSON_GetObjectItem(root, "state");
+        const cJSON *listen_id = cJSON_GetObjectItem(root, "listen_id");
+        if (cJSON_IsString(state) && strcmp(state->valuestring, "rearm") == 0 &&
+            cJSON_IsNumber(listen_id)) {
+            /* Empty/ignored ASR is capture-scoped control, not a transcript:
+             * do not update heard/thinking UI or close a newer talk. */
+            mpx_voice_stream_on_listen_rearm((uint32_t)listen_id->valuedouble);
+        }
     } else if (strcmp(kind, "tts") == 0) {
         const cJSON *state = cJSON_GetObjectItem(root, "state");
         const cJSON *text = cJSON_GetObjectItem(root, "text");
@@ -314,7 +334,12 @@ static void voice_handle_text(const char *data, int len)
          * turn -- some servers send tts start before, or instead of, stt. */
         if (strcmp(state_str, "stop") == 0) {
             notify_state_sink("idle");
-            mpx_voice_stream_on_tts_stop();
+            const cJSON *reason = cJSON_GetObjectItem(root, "reason");
+            if (cJSON_IsString(reason) && strcmp(reason->valuestring, "barge_in") == 0) {
+                mpx_voice_stream_on_barge_in_stop();
+            } else {
+                mpx_voice_stream_on_tts_stop();
+            }
             if (s_ui.reply_done) {
                 s_ui.reply_done();
             }
@@ -587,6 +612,7 @@ void mpx_voice_disconnect(void)
 mpx_voice_state_t mpx_voice_state(void) { return s_state; }
 const char *mpx_voice_session_id(void) { return s_session_id; }
 uint32_t mpx_voice_downlink_rate(void) { return s_downlink_rate; }
+bool mpx_voice_barge_in_supported(void) { return s_barge_in_supported; }
 
 const char *mpx_voice_state_name(void)
 {

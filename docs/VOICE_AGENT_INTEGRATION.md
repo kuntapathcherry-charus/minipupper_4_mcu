@@ -144,7 +144,50 @@ STT, the agent and TTS stay on the robot.
   itself still comes from the robot microphone (unless the panel's primary
   button is used), because browser wake-word detection is not implemented.
 
-### 1c. Stable I2S DMA allocation
+### 1c. Full-duplex speech barge-in and dual-mic AEC
+
+`CONFIG_APP_VOICE_BARGE_IN=y` advertises `features.barge_in`. When the gateway
+acknowledges it, `mpx_voice_wake.c` keeps AFE active during each reply and
+streams its enhanced mono PCM through a 16 KiB PSRAM ring to the existing
+Opus/TLS talk task in `listen mode:"barge_in"`. AFE remains the only I2S
+capture reader; the DSP fetch task never performs TLS. Both DSP task stacks
+are statically reserved in PSRAM (20 KiB feed, 32 KiB fetch): MMNR's larger
+heap footprint otherwise made dynamic task creation fail at boot. A mutex
+separates producer/reset ownership, and the reader joins 32 ms AFE chunks
+into exact 60 ms frames without zero-padding or dropping large tails.
+Downlink continues while this barge-in talk is active.
+
+The gateway does not cancel merely because capture opened. Its Silero VAD
+must confirm 250 ms of speech; it then cancels the old turn and sends
+`tts stop reason:"barge_in"`. Firmware immediately frees queued playback,
+tags every frame with its ingress generation, and serializes abort with
+held-frame decode/output. Thus no pre-abort frame can reach the speaker after
+the flush returns, even if a new reply starts while that frame is held.
+Uplink stays open through the VAD endpoint. STT ends a meaningful capture. Empty/ignored ASR instead returns
+`listen state:"rearm"` with the capture's original nonzero `listen_id`; both
+server and firmware reject stale IDs so delayed ASR cannot close a newer turn
+or produce transcript/thinking UI. Hands-free capture then re-arms instead of
+stalling after noise. Natural reply end stops barge-in capture and enters the
+normal follow-up turn. A server without the feature ack automatically retains
+wake-word/button barge-in.
+
+Before VAD confirms speech, the server retains only a bounded 750 ms pre-roll
+and does not run the 15-second max-utterance timer. This lets it listen
+through an arbitrarily long reply without unbounded PCM growth or a
+timeout-induced phantom turn. The timer starts once speech is confirmed;
+the stop notice is emitted before potentially slow provider cleanup.
+
+`CONFIG_APP_VOICE_DUAL_MIC_AEC=y` uses ESP-SR `MMNR`: both physical ES7210
+microphones plus the electrical speaker reference. Raw DMA `R,M,N,M` is
+reordered in place to `M,M,N,R`. This enables dual-microphone array
+processing and reference AEC for the actual uplink, rather than using AEC
+only for wake detection. If MMNR creation fails, boot logs a warning and
+retries proven single-mic `RMNN`; two-channel hardware fallback `MN` has no
+AEC. Builds cannot establish echo rejection, so physical validation must
+check false interruptions at several volumes as well as speech recognition
+while talking, AFE ring overruns, CPU, and internal heap.
+
+### 1d. Stable I2S DMA allocation
 
 Hands-free capture keeps the ES7210 in its four-channel / 32-bit-slot layout
 for both wake-word listening and uplink talk. Previously the talk task opened
@@ -575,6 +618,14 @@ Human-side (never claim these):
   dropped session;
 - barge-in: interrupt mid-reply, the robot stops talking and answers the new
   utterance, the interrupted reply is in the transcript as unspoken;
+- full-duplex AEC: with no user speech, play complete replies at low, medium,
+  and high volume without a false barge-in; speak over each level and confirm
+  prompt interruption with the first syllable intact in STT;
+- barge-in timing: a reply longer than 15 seconds must not time out merely
+  because cleaned uplink is silent; ignored noise must emit capture-scoped
+  `listen/rearm`, without STT or thinking UI, and accept a new utterance;
+- boot/DSP health: `session ready` says barge-in supported, AFE stays MMNR
+  (no RMNN fallback warning), and no `barge-in PCM ring overrun` appears;
 - boot log: internal RAM after each stage does not drop more than before.
 
 ---

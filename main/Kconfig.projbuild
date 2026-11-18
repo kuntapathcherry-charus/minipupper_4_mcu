@@ -814,6 +814,28 @@ config APP_VOICE_AUTO_MAX_SECONDS
         hears the end of what was said, or this long with nothing usable,
         whichever comes first.
 
+config APP_VOICE_BARGE_IN
+    bool "Full-duplex speech barge-in (negotiated with gateway)"
+    default y
+    help
+        Keep the acoustic front end running while a reply plays and stream
+        its echo-cancelled PCM to a gateway that acknowledges barge_in.
+        The gateway's VAD must confirm speech before it cancels the old
+        reply, so opening the microphone alone does not interrupt. AEC and
+        server VAD work together to suppress residual speaker echo. Older gateways automatically retain wake-word-only
+        barge-in.
+
+config APP_VOICE_DUAL_MIC_AEC
+    bool "Use both microphones plus speaker reference for AEC"
+    default y
+    help
+        Feed ESP-SR as MMNR: both ES7210 microphones, the unused channel,
+        and the amplifier's electrical output reference. This enables the
+        two-microphone array and acoustic echo cancellation for cleaned
+        barge-in uplink. If this AFE configuration cannot be created at run
+        time, firmware falls back to the proven RMNN single-microphone AEC
+        layout and logs the fallback.
+
 endif  # APP_VOICE_ENABLE
 
 # ── The on-device agent: ESP-Claw (main/agent/) ─────────────────────
