@@ -150,6 +150,13 @@ extern "C" void mpx_robot_set_skill_hooks(const mpx_robot_skill_hooks_t *hooks)
     s_skill_hooks = hooks;
 }
 
+namespace robot {
+bool skill_running()
+{
+    return ::skill_is_running();
+}
+}  // namespace robot
+
 /* Ticks per degree, from the boards' OWN range - not a constant.
  *
  * This file used SERVO_DEG_TO_RAW = 1023/180, compiled in, because the Feetech

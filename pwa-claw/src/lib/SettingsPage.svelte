@@ -7,6 +7,7 @@
   import FileViewer from "./FileViewer.svelte";
   import UploadView from "./UploadView.svelte";
   import DisplayPage from "./DisplayPage.svelte";
+  import RLWalkPage from "./RLWalkPage.svelte";
 
   let {
     network,
@@ -17,7 +18,7 @@
     onSystemMonitorChange = () => {},
   } = $props();
 
-  /** null | "wifi" | "hotspot" | "ai" | "calibration" | "studio" | "display" | "files" | "upload" */
+  /** null | "wifi" | "hotspot" | "ai" | "calibration" | "studio" | "display" | "rl" | "files" | "upload" */
   let page = $state(null);
 
   const staConnected = $derived(network?.staState === "connected");
@@ -96,6 +97,21 @@
     if (!display?.on) return "Eyes · or play an animation";
     const a = display.anims?.find((x) => x.id === display.id);
     return `Playing ${a?.name || display.id}${display.loop ? "" : " once"}`;
+  });
+
+  // ── RL policies on the ESP32-S3 (/v1/policy) ──
+  let policy = $state(null);
+  $effect(() => {
+    if (page !== null) return;           // refresh when coming back from the RL page
+    fetch("/v1/policy", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { policy = j; })
+      .catch(() => {});
+  });
+  const policyLabel = $derived.by(() => {
+    if (!policy?.loaded) return "No policy in this firmware";
+    if (policy.active) return policy.phase === "run" ? "Walking" : "Running";
+    return `${policy.name} · runs on the robot itself`;
   });
 
   // ── Rest when idle (/v1/robot/power) ──
@@ -222,6 +238,7 @@
 {#snippet iStudio()}<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 4v16M12 4v16M18 4v16"/><path d="M4 9h4M10 14h4M16 7h4" stroke-width="2.6"/></svg>{/snippet}
 {#snippet iRest()}<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>{/snippet}
 {#snippet iDisplay()}<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8.5 10v4M15.5 10v4"/></svg>{/snippet}
+{#snippet iRl()}<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="12" cy="18" r="2.2"/><path d="M8 7.5l3 8.5M16 7.5l-3 8.5M8.2 6h7.6"/></svg>{/snippet}
 {#snippet iUnlock()}<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/></svg>{/snippet}
 {#snippet iFiles()}<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>{/snippet}
 {#snippet iMonitor()}<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 17V7M4 17h16M8 13l3-4 3 2 5-6"/></svg>{/snippet}
@@ -238,6 +255,8 @@
   <ServoStudio onBack={back} />
 {:else if page === "display"}
   <DisplayPage onBack={back} />
+{:else if page === "rl"}
+  <RLWalkPage onBack={back} />
 {:else if page === "upload"}
   <UploadView onBack={back} />
 {:else if page === "files"}
@@ -364,6 +383,9 @@
           </div>
           {#if hasDisplay}
             {@render row({ icon: iDisplay, title: "Display", desc: displayLabel, onclick: () => (page = "display") })}
+          {/if}
+          {#if policy?.available}
+            {@render row({ icon: iRl, title: "RL walk", desc: policyLabel, onclick: () => (page = "rl") })}
           {/if}
           {@render row({ icon: iCal, title: "Calibration", desc: "Line up each leg in 3D", onclick: () => (page = "calibration") })}
           {@render row({ icon: iStudio, title: "MangDang Servo Studio", desc: "Gains on the driver boards", onclick: () => (page = "studio") })}

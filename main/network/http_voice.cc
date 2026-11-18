@@ -326,6 +326,8 @@ esp_err_t voice_post_handler(httpd_req_t *req)
     if (!problem && cJSON_IsString(music)) {
         if (strcmp(music->valuestring, "stop") == 0 || music->valuestring[0] == '\0') {
             cap_music_stop();
+        } else if (voice_glue::held()) {
+            problem = "voice/audio is held by a skill or policy";
         } else {
             const esp_err_t err = cap_music_play(music->valuestring, nullptr, 0);
             if (err == ESP_ERR_NOT_SUPPORTED) {

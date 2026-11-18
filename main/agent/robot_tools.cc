@@ -25,6 +25,7 @@
 #endif
 #if CONFIG_APP_VOICE_ENABLE
 #include "cap_music.h"
+#include "voice/voice_glue.h"
 #endif
 
 namespace robot_tools {
@@ -512,6 +513,9 @@ Reply mpx_stop_skill(const cJSON *)
 #if CONFIG_APP_VOICE_ENABLE
 Reply music_play(const cJSON *args)
 {
+    if (voice_glue::held()) {
+        return { "voice/audio is held by a skill or policy; stop it before starting music", false };
+    }
     const char *url = str(args, "url");
     const char *genre = str(args, "genre");
     const char *what = url ? url : genre;

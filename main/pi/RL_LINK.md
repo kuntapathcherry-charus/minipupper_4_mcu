@@ -39,8 +39,10 @@ skills, so the link works in sessions:
 - **End:** no RL frame for `APP_RL_RELEASE_MS` (2 s). Every servo goes IDLE,
   then the robot reads where the legs are and glides into the stand, and the
   app, voice and skills get it back.
-- **ROS bridge in control:** RL frames are ignored and get no answer. A
-  running RL session in turn keeps the ROS bridge in monitor mode. Whoever
+- **ROS bridge or on-device policy in control:** RL frames are ignored or
+  answered STATE-only with ARM refused; `robot::host::begin()` alone cannot
+  distinguish a second owner. A running Pi RL session keeps the ROS bridge in
+  monitor mode and refuses new skills. Whoever
   came first keeps the robot.
 - **Ready:** board requests and ARM wait (up to 300 ms) until the session
   holds the robot and the boards have answered one of its frames. A session

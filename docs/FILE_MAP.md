@@ -30,7 +30,7 @@ main/network/chat_ws.cc                               ├─ lua/, wasm/, sdk/  
 |---|---|
 | [CMakeLists.txt](../CMakeLists.txt) | ESP-IDF project entry point. Declares the `MPX-Dog` project, builds the PWA (`npm run build` in `pwa-claw/`) as a dependency of the app, patches an esp-sr console-encoding bug, and stages + packs the agent's read-only `system` LittleFS partition. |
 | [main/](../main) | The firmware itself — one component with all of its source under subdirectories (see [main/](#main) below). |
-| [pwa-claw/](../pwa-claw) | The phone app (Svelte 5 + Vite + Tailwind + three.js), built to `www/` and embedded into the firmware. The only app tracked in git. |
+| [pwa-claw/](../pwa-claw) | The phone app (Svelte 5 + Vite + Tailwind + three.js), built to `www/` and embedded into the firmware. Includes Settings → RL walk (`RLWalkPage.svelte`) for the on-device policies. The only app tracked in git. |
 | [third-party/esp-claw/](../third-party/esp-claw) | Vendored copy of the ESP-Claw agent framework's `components/` tree. **Never edited** — where it needed bending, it was done from `main/agent/claw_overrides.c` and `main/Kconfig.projbuild`. |
 | [components/](../components) | One component, `mpx_identity`: the robot ID and AES key (format, eFuse record, key derivation, sealing, `@MPXPROV` provisioning, first-connect enrolment). Everything else lives under `main/`. |
 | [agent_fs/](../agent_fs) | Source tree for the agent's read-only `system` partition. `system/.recovery/` seeds `memory/` (`identity.md`, `soul.md`, `user.md`), `router_rules/` and `scheduler/`; copied into DATA at boot when a file is missing. |
@@ -131,7 +131,17 @@ mpv2-claw's `cap_display` on a small ST7789 + `esp_lvgl_port` service.
 | [chat_ws.{h,cc}](../main/network/chat_ws.cc) | The chat pipeline: `/v1/chat/ui` (PWA WebSocket), the echo/cloud modes, the encrypted upstream frame, permission prompts and the Lua worker. A message that arrives while a skill runs is refused (the skill has the robot, and voice is held), not queued. |
 | [marketplace_proxy.{h,cc}](../main/network/marketplace_proxy.cc) | Passes `/v1/marketplace/*` requests through to the cloud gateway over STA. |
 | [http_display.{h,cc}](../main/network/http_display.cc) | `/v1/display` and `/v1/display/gif` routes. Registered only when the display is enabled. |
-| [http_voice.{h,cc}](../main/network/http_voice.cc) | `/v1/voice`, `/v1/voice/tools` and the `/v1/ai` routes — the console commands mpv2-claw had, as HTTP. `/v1/voice` also takes `hold` (same counted hold a skill run takes) and `task_priority` (1..24, the wake front end's feed/fetch tasks, not saved). |
+| [http_voice.{h,cc}](../main/network/http_voice.cc) | `/v1/voice`, `/v1/voice/tools` and the `/v1/ai` routes — the console commands mpv2-claw had, as HTTP. `/v1/voice` also takes `hold` (same counted hold a skill run takes) and `task_priority` (1..24, the wake front end's feed/fetch tasks, not saved). New music is refused while a skill or policy holds audio. |
+| [http_policy.{h,cc}](../main/network/http_policy.cc) | `/v1/policy`, steering, built-in selection, timing logs, optional offline upload/benchmark and auto-right routes. Inert when `CONFIG_APP_POLICY_ENABLE` is off. |
+
+### main/rl/ — on-device learned policies
+
+| File | What it does |
+|---|---|
+| [policy_core.{c,h}](../main/rl/policy_core.c) | Host-testable MPXP v1 parser, observation/decoder arithmetic, network inference and embedded golden-fixture self-tests. No ESP-IDF dependencies. |
+| [policy_run.{h,cc}](../main/rl/policy_run.cc) | 200 Hz raw-servo runner, calibration, safety limits, built-in policies and logs. Uses the low-priority `pol_after` worker for the counted voice/audio hold and release; refuses skill/host overlap and parks ordinary gaits through `robot::host`. |
+| [mpx_policy.h](../main/rl/mpx_policy.h) | C API used by boot, HTTP and the PWA-facing status handlers. |
+| [policies/](../main/rl/policies) | Embedded SKU2 walk, recovery/stairs and get-up `.mpxp` assets. Presence controls optional built-ins in CMake. |
 
 ### main/pi/ — the Raspberry Pi / ROS 2 link
 
@@ -198,7 +208,7 @@ that unlock its tools.
 
 | File | What it does |
 |---|---|
-| [voice_glue.{h,cc}](../main/voice/voice_glue.cc) | mpv2-claw's `main.c` voice section in one module: brings the voice stack up/down per the AI mode, reports status, and hands the Pi's master changes in. Also the hold a skill run takes (`hold()`/`release()`, counted, with a manual `POST /v1/voice {"hold":true}` on the same counter) and the wake front end's task priority. |
+| [voice_glue.{h,cc}](../main/voice/voice_glue.cc) | mpv2-claw's `main.c` voice section in one module: brings the voice stack up/down per the AI mode, reports status, and hands the Pi's master changes in. Also the counted hold a skill run or on-device policy takes (`hold()`/`release()`, with a manual `POST /v1/voice {"hold":true}` on the same counter) and the wake front end's task priority. Acquisition can block about 2 s and must stay off real-time tasks. |
 | [voice_tools.{h,cc}](../main/voice/voice_tools.cc) | The MCP transport (JSON-RPC paging over the voice socket) that exposes `robot_tools`' table to the MangDang gateway's model. |
 | [mpx_voice_link.h](../main/voice/mpx_voice_link.h) | The voice-link API and configuration (the xiaozhi protocol, gateway URL/token). |
 | [mpx_voice_ws.c](../main/voice/mpx_voice_ws.c) | The WebSocket link to the voice gateway. |
@@ -231,6 +241,7 @@ that unlock its tools.
 | [mpx_provision.py](../tools/mpx_provision.py) | Bench station: talks `@MPXPROV` JSON over UART0 — `scan`, `status`, `provision`, `reseal`, `lock`, `unseal`, `verify`. |
 | [mpx_dev_identity.py](../tools/mpx_dev_identity.py) | Prints a matching dev ID + key pair for `APP_ROBOT_UUID` / `APP_CHAT_AES_KEY_HEX`. |
 | [host_tests/](../tools/host_tests) | Host unit tests (no board, no ESP-IDF): `idf.py host-test`. Covers ID format, derivation, eFuse record, seal layout, provisioning JSON and state table. |
+| [policy/](../tools/policy) | Policy export/analysis tools and `host_test/`, which compiles the exact firmware policy arithmetic and compares it with the training repositories' NumPy outputs. |
 | [ci_check_sdkconfig.sh](../tools/ci_check_sdkconfig.sh) | Compares a regenerated `sdkconfig` against the developer's copy; used to prove `sdkconfig.defaults` is complete. |
 | [vectors/](../tools/vectors) | Frozen `identity.json` and `seal.json` vectors, compiled into the host tests. |
 | [secrets/](../tools/secrets) | Gitignored. The dev seal private key lives here. |

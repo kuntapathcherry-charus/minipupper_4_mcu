@@ -75,6 +75,9 @@
 #include "robot/board_config.h"
 #include "robot/driver_board.h"
 #include "robot/robot.h"
+#if CONFIG_APP_POLICY_ENABLE
+#include "rl/mpx_policy.h"
+#endif
 
 /* Fallbacks for an sdkconfig generated before these options existed. */
 #ifndef CONFIG_APP_RL_TICK_HZ
@@ -231,6 +234,16 @@ void reset_ctl_locked()
     s_ctl.enable = 0;
     s_ctl.cur_cap = 0;
     for (int i = 1; i <= 12; i++) s_off_dirty[i] = false;
+}
+
+/* The RL walk on the ESP32-S3 itself (main/rl/) is driving the joints. */
+bool policy_running()
+{
+#if CONFIG_APP_POLICY_ENABLE
+    return mpx_policy_active();
+#else
+    return false;
+#endif
 }
 
 /* The ROS bridge (robot::master::begin()) owns the robot. RL frames are then
@@ -563,7 +576,9 @@ void begin_session()
 {
     // The session's state was reset when the last one ended (reset_ctl_locked),
     // and the frames that opened this one may already have changed it.
-    const bool robot = robot::host::begin();
+    // host::begin() also answers true to a second caller while the on-device
+    // policy owns it, so the Pi session must explicitly refuse that overlap.
+    const bool robot = !policy_running() && robot::host::begin();
     driver_board_raw_invalidate();   // nothing from an earlier session is current
     s_syncs = 0;
     s_ready = false;
@@ -574,8 +589,8 @@ void begin_session()
         ESP_LOGW(TAG, "RL host session started: the Pi drives the joints (%d Hz)",
                  CONFIG_APP_RL_TICK_HZ);
     } else {
-        ESP_LOGW(TAG, "RL host session started, but the ROS bridge holds the robot: "
-                      "STATE only, ARM refused");   // ROS took it between frame and tick
+        ESP_LOGW(TAG, "RL host session started, but the ROS bridge or on-device policy "
+                      "holds the robot: STATE only, ARM refused");
     }
 }
 

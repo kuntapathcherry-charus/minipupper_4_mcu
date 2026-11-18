@@ -15,6 +15,9 @@
 #include "network/wifi_sta.h"
 #include "network/www_assets.h"
 #include "pi/pi_link.h"
+#if CONFIG_APP_POLICY_ENABLE
+#include "rl/mpx_policy.h"
+#endif
 #include "agent/agent_runtime.h"
 #include "mpx_enroll.h"
 #include "mpx_identity.h"
@@ -36,7 +39,9 @@ static const char *TAG = "main";
  * a skill owns the servos and so the Pi link can stop one when it takes
  * control. The struct must outlive the registration: it is static. */
 static const mpx_robot_skill_hooks_t s_skill_hooks = {
-	.skill_is_running = [] { return wasm::is_running(); },
+	/* The HTTP/network flag covers acceptance and teardown, when the WASM
+	 * runtime itself is not entered yet (or has already exited). */
+	.skill_is_running = [] { return network::skill_running() || wasm::is_running(); },
 	.skill_owns_pose  = [] { return sdk::control_owner_is_pose(); },
 	.request_stop     = [] { wasm::request_stop(); },
 };
@@ -240,4 +245,13 @@ extern "C" void app_main(void)
 	// HTTP server's helpers and the sandbox, which both exist by now. Nothing
 	// touches the network until the first wake word.
 	voice_glue::start();
+
+	// Load policies last: weights use internal RAM only when the configured
+	// reserve remains after Wi-Fi, the agent and voice have taken their share.
+#if CONFIG_APP_POLICY_ENABLE
+	if (mpx_policy_init() != ESP_OK) {
+		ESP_LOGW(TAG, "RL policy not available");
+	}
+	log_internal_heap("RL policy");
+#endif
 }

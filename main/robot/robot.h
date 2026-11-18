@@ -323,6 +323,10 @@ GaitCmd current_gait_cmd();
  */
 const char *playing_move(uint32_t *seq);
 
+/** True from skill acceptance until its sandbox and audio hold are released.
+ * Policies use this to refuse a run instead of overlapping skill teardown. */
+bool skill_running();
+
 /* ── The one gait name table ─────────────────────────────────────────────
  *
  * This mapping used to exist in three hand-maintained copies - the SDK's host

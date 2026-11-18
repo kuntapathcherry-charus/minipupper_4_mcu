@@ -618,6 +618,82 @@ endif  # APP_RL_LINK_ENABLE
 
 endif  # APP_PI_LINK_ENABLE
 
+# ── RL policies on the ESP32-S3 itself (main/rl/) ─────────────────
+# The policy runs on the robot: no Raspberry Pi. Ported from the rl branch.
+
+config APP_POLICY_ENABLE
+    bool "RL policies on the ESP32-S3 (the app's RL Walk page)"
+    default y
+    help
+        A policy exported with tools/policy/export_mpxp.py runs on core 1
+        at 50 Hz and drives the twelve servos through the same raw path as
+        the Pi's RL link. The gait is parked and voice, wake-word detection
+        and music are held for the run, then restored afterwards. The app's
+        RL Walk page starts and steers it through /v1/policy.
+
+if APP_POLICY_ENABLE
+
+config APP_POLICY_ROBOT
+    string "This robot (sku1 or sku2)"
+    default "sku1"
+    help
+        Compared with the robot named in the policy file. A policy trained
+        for another robot can be started only with the app's force option.
+
+config APP_POLICY_INTERNAL_RESERVE_KB
+    int "Keep the network in internal RAM if this much (KB) stays free"
+    range 0 1024
+    default 96
+    help
+        The network's weights are read in full at every 50 Hz step. They go
+        to internal RAM when at least this much internal RAM remains free,
+        otherwise to PSRAM. 0 always selects PSRAM.
+
+config APP_POLICY_TEMP_GUARD
+    bool "Stop ordinary RL walks on hot servos"
+    default n
+    help
+        Recovery walks and get-up always check temperature. This option
+        applies the same start, stop and over-temperature guards to ordinary
+        walks too. The hottest servo is shown and logged either way.
+
+config APP_POLICY_TEMP_STOP_C
+    int "RL policy servo temperature stop (degC; 0 disables checks)"
+    range 0 120
+    default 85
+    help
+        At 85: ordinary walks with the guard on stop at 85 degC and go limp
+        after one second at 90; start is refused at 80. Recovery policies
+        always use these checks. Zero disables all policy temperature checks.
+
+config APP_POLICY_TEMP_IN_GETUP
+    bool "RL get-up: check temperature during the get-up too"
+    default n
+    help
+        Off avoids dropping the robot halfway through a get-up. The walk
+        before and after it still checks temperature. On applies the walk's
+        stop and limp thresholds during get-up as well.
+
+config APP_POLICY_AUTO_RIGHT
+    bool "RL get-up: always get back up (also outside a run)"
+    default n
+    help
+        When no other controller or move owns the legs, lying still on the
+        back or a side for 0.3 s starts get-up automatically (at most three
+        tries). The RL page can change this until the next restart. This can
+        also trigger while the robot is picked up and held on its side.
+
+config APP_POLICY_WEIGHT_BITS
+    int "Network weights on the robot: 32 (floats), 16 or 8 bits"
+    range 8 32
+    default 16
+    help
+        Quantized weights use less memory and run faster from PSRAM. The
+        load-time self-test falls back to 32-bit floats if rounding error is
+        too large. The RL page can change this until the next boot.
+
+endif  # APP_POLICY_ENABLE
+
 # ── Display: ST7789 on SPI3, the face and the Display page ─────────
 # mpv2-claw's cap_display (main/display/), ported.
 

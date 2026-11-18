@@ -2,6 +2,7 @@
 #include "network/captive.h"
 #include "network/chat_ws.h"
 #include "network/http_display.h"
+#include "network/http_policy.h"
 #include "network/http_voice.h"
 #include "network/marketplace_proxy.h"
 #include "network/preview_proxy.h"
@@ -415,8 +416,18 @@ static const char *start_skill_async(const std::string &path,
 {
     // ── Reject if a skill is already running (single WASM instance) ──
     if (s_skill_running) return "409 Conflict";
+    // A Pi/on-device policy owns raw servo writes until host::end(). Starting
+    // now would also run skill teardown underneath the policy's inference.
+    if (robot::master_active() || robot::host::active()) return "409 Conflict";
 
     s_skill_running = true;
+    // The policy runner checks skill_running() again after host::begin().
+    // This reciprocal check closes the submission race between those two
+    // ownership changes; no skill task or audio hold has started yet.
+    if (robot::master_active() || robot::host::active()) {
+        s_skill_running = false;
+        return "409 Conflict";
+    }
     s_skill_last_result = -1;
     s_skill_stop_requested = false;
     std::strncpy(s_skill_name, name.c_str(), sizeof(s_skill_name) - 1);
@@ -2699,7 +2710,8 @@ static esp_err_t api_lua_delete(httpd_req_t *req)
  * is: register_api() calls + register_static() calls + 2 websockets + 4
  * marketplace wildcard methods. Adding the Servo Studio routes took that
  * total from 41 to 52, past the 48 the table used to hold - which is how this
- * was found. max_uri_handlers is now 64; if you exceed it, this logs by name.
+ * was found. If you exceed the current table, this logs every failed route by
+ * name; the final startup summary also reports the failure count.
  */
 static int s_uri_reg_failed = 0;
 
@@ -3088,13 +3100,11 @@ bool start_http_server()
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    // 52 register_api() + up to 14 register_static() + 2 websockets + 4
-    // marketplace wildcard methods + 5 display routes (http_display.cc) + 6
-    // voice routes (http_voice.cc) + 1 preview wildcard = 84.
-    // See the note on register_uri() - this number is load-bearing, and being
-    // one short deletes a route without saying so. Each slot is a pointer, so
-    // the headroom is cheap.
-    config.max_uri_handlers = 96;
+    // The policy-enabled build needs 100 slots (96 was four short, breaking
+    // marketplace and the PWA catch-all). Keep twelve spare slots: each slot
+    // is only a pointer, while one short silently drops the last routes.
+    // See the note on register_uri() - this number is load-bearing.
+    config.max_uri_handlers = 112;
     // LWIP has CONFIG_LWIP_MAX_SOCKETS=20. HTTPD reserves 3 internal sockets,
     // so 12 sessions leave 5 for outbound cloud/proxy/DNS clients. The PWA can
     // hold two WebSockets while a browser opens about six HTTP connections;
@@ -3246,6 +3256,10 @@ bool start_http_server()
 
     // ── AI & Voice (ported from mpv2-claw): up to 6 routes, in http_voice.cc ──
     network::register_voice_routes(s_server, register_uri);
+
+    // On-device RL policies; the compiled-out stub registers no routes and
+    // the app's failed feature discovery hides the RL Walk entry.
+    network::register_policy_routes(s_server, register_uri);
 
     // ── Register Lua async enqueue endpoint (non-blocking) ──
     register_api(s_server, "POST", "/v1/lua/enqueue",          HTTP_POST, api_lua_enqueue);

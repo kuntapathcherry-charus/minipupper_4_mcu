@@ -291,12 +291,14 @@ esp_err_t hold(const char *why)
 {
     const char *reason = (why && why[0]) ? why : "skill";
 
-    if (s_hold_depth.load() > 0) {
+    int expected = 0;
+    if (!s_hold_depth.compare_exchange_strong(expected, 1)) {
+        // Only the thread that changes 0 -> 1 performs teardown and records
+        // what to restore. Skills, policies and manual holds may arrive together.
         s_hold_depth.fetch_add(1);
         ESP_LOGI(TAG, "voice already held (%d): %s", s_hold_depth.load(), reason);
         return ESP_OK;
     }
-    s_hold_depth.store(1);
     ESP_LOGI(TAG, "voice held for %s (mode %s)", reason,
              agent_config::mode_name(agent_config::mode()));
     if (!s_started) return ESP_OK;   /* nothing is up yet to hold back */

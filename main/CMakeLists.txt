@@ -98,6 +98,31 @@ if(CONFIG_APP_VOICE_ENABLE)
     )
 endif()
 
+# ── RL policies on the ESP32-S3 itself (main/rl/, from the rl branch) ──
+# The runner owns the servos through robot::host and holds voice/audio for
+# the whole run. Optional policy files are embedded only when present.
+set(policy_files "")
+if(CONFIG_APP_POLICY_ENABLE)
+    list(APPEND sources
+        "rl/policy_core.c"
+        "rl/policy_run.cc"
+    )
+    list(APPEND policy_files "rl/policies/default.mpxp")
+    foreach(p
+        getup climb terrain sku1 sku1_terrain sku1_terr11k sku1_terr15k
+        sku1v2_stairs sku1v2_405_stairs sku1v2_405_walk sku1v2_405v2_stairs
+        sku2_stairs sku2_recovery sku1v2_recovery getup_sku1
+    )
+        if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/rl/policies/${p}.mpxp")
+            list(APPEND policy_files "rl/policies/${p}.mpxp")
+            set(policy_have_${p} 1)
+        endif()
+    endforeach()
+endif()
+# The route module remains compiled when policy is off; its stub leaves the
+# routes unregistered and the app's failed feature discovery hides RL Walk.
+list(APPEND sources "network/http_policy.cc")
+
 # ── Phone app assets (pwa-claw/, built into pwa-claw/www) ────
 # The mpv2-claw phone app. It carries a three.js model viewer and its 157 KB
 # model, so the big files are embedded as .gz ONLY: every browser that can run
@@ -156,10 +181,11 @@ idf_component_register(
     SRCS        ${sources}
     # "include" holds generated headers (the custom eFuse table); listing
     # INCLUDE_DIRS explicitly replaces the default, so it has to be named.
-    INCLUDE_DIRS "." "include" "fs" "wasm" "sdk" "network" "robot" "lua" "platform" "util" "pi" "audio" "display" "voice" "agent"
+    INCLUDE_DIRS "." "include" "fs" "wasm" "sdk" "network" "robot" "rl" "lua" "platform" "util" "pi" "audio" "display" "voice" "agent"
     EMBED_FILES
         ${common_assets}
         ${design_assets}
+        ${policy_files}
         # The Display page's built-in animations, copied to <fs>/display at boot.
         "display/assets/blink.gif"
         "display/assets/smile.gif"
@@ -232,6 +258,20 @@ if(CONFIG_EFUSE_CUSTOM_TABLE)
     add_dependencies(${COMPONENT_LIB} efuse-custom-table)
     target_link_libraries(${COMPONENT_LIB} INTERFACE "-u ESP_EFUSE_USER_DATA_MPX_ROBOT_ID")
 endif()
+
+# Keep optional-policy detection and the hot arithmetic consistent with rl.
+foreach(p
+    getup climb terrain sku1 sku1_terrain sku1_terr11k sku1_terr15k
+    sku1v2_stairs sku1v2_405_stairs sku1v2_405_walk sku1v2_405v2_stairs
+    sku2_stairs sku2_recovery sku1v2_recovery getup_sku1
+)
+    if(policy_have_${p})
+        string(TOUPPER "${p}" p_upper)
+        target_compile_definitions(${COMPONENT_LIB} PRIVATE MPX_POLICY_HAVE_${p_upper}=1)
+    endif()
+endforeach()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/rl/policies")
+set_source_files_properties("rl/policy_core.c" PROPERTIES COMPILE_OPTIONS "-O2")
 
 # Lua requires 32-bit mode on Xtensa/RISC-V architectures.
 # This must match the Lua component's own definition so that

@@ -241,6 +241,16 @@ CONFIG_LV_BUILD_DEMOS=n
 CONFIG_APP_AUDIO_ENABLE=y
 CONFIG_APP_VOICE_ENABLE=y
 CONFIG_APP_VOICE_AUTO_LISTEN=y
+
+# On-device RL policies (main/rl). The policy worker takes the same counted
+# voice hold as a skill before touching the robot and releases it afterwards,
+# so wake-word/audio work cannot run underneath inference or raw servo control.
+CONFIG_APP_POLICY_ENABLE=y
+CONFIG_APP_POLICY_ROBOT="sku2"
+# Opt-in: unattended motion must not be a new default on the full firmware.
+# CONFIG_APP_POLICY_AUTO_RIGHT is not set
+CONFIG_APP_POLICY_WEIGHT_BITS=16
+
 # Developer-only phone PCM bridge: browsers require HTTPS or a special
 # insecure-origin exception for microphone capture. End-user images hide it.
 # CONFIG_APP_VOICE_PHONE_AUDIO is not set
