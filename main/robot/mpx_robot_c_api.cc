@@ -58,6 +58,24 @@ esp_err_t mpx_robot_gait_by_name(const char *name)
     return ESP_OK;
 }
 
+esp_err_t mpx_robot_gait_by_name_for(const char *name, uint32_t duration_ms)
+{
+    if (name == nullptr || name[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+    robot::GaitCmd cmd;
+    if (!robot::gait_from_name(name, cmd)) {
+        return ESP_ERR_NOT_FOUND;
+    }
+    robot::send_gait_cmd_for(cmd, duration_ms);
+    return ESP_OK;
+}
+
+void mpx_robot_cancel_timed_move(void)
+{
+    robot::cancel_timed_move();
+}
+
 const char *mpx_robot_current_gait_name(void)
 {
     const char *name = robot::gait_to_name(robot::current_gait_cmd());
@@ -85,6 +103,12 @@ const char *mpx_robot_gait_name_at(int index)
 void mpx_robot_drive(float forward, float strafe, float turn)
 {
     robot::joy_input(forward, strafe, turn);
+}
+
+void mpx_robot_drive_for(float forward, float strafe, float turn,
+                         uint32_t duration_ms)
+{
+    robot::joy_input_for(forward, strafe, turn, duration_ms);
 }
 
 void mpx_robot_set_body_attitude(float roll_deg, float pitch_deg, float yaw_deg)

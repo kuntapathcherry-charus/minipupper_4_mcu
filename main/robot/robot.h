@@ -310,6 +310,11 @@ bool init();
  */
 void send_gait_cmd(GaitCmd cmd);
 
+/** Agent timed variants. New joystick/gait commands and skill bus ownership
+ * cancel the previous timed request. Zero analog duration means sustained. */
+void send_gait_cmd_for(GaitCmd cmd, uint32_t duration_ms);
+void cancel_timed_move();
+
 /**
  * @brief Return the currently active gait command.
  */
@@ -415,6 +420,7 @@ void set_master_observer(void (*cb)(bool active));
  * makes the robot step in place; leaving the walk parks it standing.
  */
 void joy_input(float f, float s, float t);
+void joy_input_for(float f, float s, float t, uint32_t duration_ms);
 
 /**
  * @brief Hold a Stanford-IK body attitude (degrees).

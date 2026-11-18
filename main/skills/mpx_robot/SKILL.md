@@ -1,7 +1,7 @@
 ---
 {
   "name": "mpx_robot",
-  "description": "Drive the MangDang quadruped: walk, turn, hold a pose, and read gait, IMU and servo state.",
+  "description": "Drive the MangDang quadruped: walk, turn, hold a pose, jump, backflip, and read gait, IMU and servo state.",
   "author": "MangDang",
   "metadata": {
     "cap_groups": [
@@ -43,8 +43,18 @@ between -1 and 1. This is the same path the joystick in the app uses: any
 input starts the trot, and it scales with the configured speed. Positive
 strafe is left; positive turn is left. Use this when someone wants continuous
 or proportional motion ("walk forward slowly") rather than a fixed move.
-It stops on its own shortly after the last call, so for sustained motion call
-it again rather than expecting it to latch.
+
+**Duration and stopping.** `duration_ms` works with either form, up to 10000.
+For a continuous move it keeps the motion running for that long, then stops
+it in the neutral stand (`none`) — not trotting in place. It defaults to
+3000, so plain "go forward" is a complete bounded task. Always set it for a
+different bounded request such as "forward for 5 seconds" (`forward: 1,
+duration_ms: 5000`). Explicit `duration_ms: 0` holds until another
+`robot_move` call; use that only for a deliberately sustained move. Send
+`movement: "none"` to stop, or `movement: "init"` to return to the neutral
+pose. One-shot moves such as jumps and backflips end by themselves. A
+skill-provided movement owns the robot until the skill ends, so do not attach
+a duration to it.
 
 **Looking.** `lookup`, `lookdown`, `lookleft`, `lookright`, and the diagonals
 `lookul`, `lookur`, `lookll`, `looklr`. These hold a pose rather than walking.
@@ -60,8 +70,17 @@ or be playful — that is what they are for.
 **Legs.** `flegL`, `flegR`, `blegL`, `blegR` lift one paw. Good for a wave or
 a handshake.
 
+**Jumps and flips.** `jump` and `jumpfwd` do what they say. `longjump` hops
+forward; `farjump` is the longest hop. Backflips are built in: `backflip` is
+the stable preset and the one to use by default. Variants are `backflip1`,
+`backflip_stable`, `backflip_clean`, `backflip_stable_v0`,
+`backflip_clean_opt`, `backflip_stable_opt`, `backflip_k7` and
+`backflip_k7h`. If someone asks for a backflip, do it -- it exists; do not say
+the robot cannot. These moves land hard, so mention a soft floor and a charged
+battery, and do not run one right after another.
+
 **Other.** `init` returns to the neutral standing pose. `step` marks time in
-place. `jump`, `jumpfwd` do what they say. `none` stops.
+place. `none` stops.
 
 Installed skills can add their own movement names; those work here too, and
 `robot_get_state` does not list them — `mpx_list_skills` does. A built-in name

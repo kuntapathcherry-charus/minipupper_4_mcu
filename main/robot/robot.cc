@@ -339,6 +339,24 @@ volatile float    s_js_f = 0.0f, s_js_s = 0.0f, s_js_t = 0.0f;
 volatile uint32_t s_js_last_ms = 0;
 volatile bool     s_js_active  = false;
 
+/* One agent movement owns the joystick/gait until its deadline or the next
+ * command. Keeping this state beside s_js_* lets every local ownership path
+ * cancel it, including a newer command for the same gait. */
+portMUX_TYPE s_timed_move_mux = portMUX_INITIALIZER_UNLOCKED;
+bool s_timed_move_active = false;
+bool s_timed_move_analog = false;
+uint64_t s_timed_move_deadline_us = 0;
+float s_timed_move_f = 0.0f;
+float s_timed_move_s = 0.0f;
+float s_timed_move_t = 0.0f;
+GaitCmd s_timed_move_gait = GaitCmd::None;
+
+void cancel_timed_move_locked()
+{
+    s_timed_move_active = false;
+    s_timed_move_deadline_us = 0;
+}
+
 // Direct SDK body-attitude target. Each value is a single 32-bit write, so
 // the gait task can safely sample it while the host task updates the pose.
 volatile float s_body_roll_deg  = 0.0f;
@@ -979,10 +997,36 @@ bool init()
 
 // ── Gait command ─────────────────────────────────────────────
 
+void cancel_timed_move()
+{
+    taskENTER_CRITICAL(&s_timed_move_mux);
+    cancel_timed_move_locked();
+    taskEXIT_CRITICAL(&s_timed_move_mux);
+}
+
+void send_gait_cmd_for(GaitCmd cmd, uint32_t duration_ms)
+{
+    if (master_blocks("send_gait_cmd_for")) return;
+    taskENTER_CRITICAL(&s_timed_move_mux);
+    s_gait_cmd = cmd;
+    cancel_timed_move_locked();
+    if (duration_ms > 0 && gait_is_continuous(cmd)) {
+        s_timed_move_active = true;
+        s_timed_move_analog = false;
+        s_timed_move_gait = cmd;
+        s_timed_move_deadline_us = esp_timer_get_time() +
+                                   (uint64_t)duration_ms * 1000ULL;
+    }
+    taskEXIT_CRITICAL(&s_timed_move_mux);
+}
+
 void send_gait_cmd(GaitCmd cmd)
 {
     if (master_blocks("send_gait_cmd")) return;
+    taskENTER_CRITICAL(&s_timed_move_mux);
+    cancel_timed_move_locked();
     s_gait_cmd = cmd;
+    taskEXIT_CRITICAL(&s_timed_move_mux);
 }
 
 GaitCmd current_gait_cmd()
@@ -1209,9 +1253,9 @@ void set_attitude_speed_xyz(float roll_dps, float pitch_dps, float yaw_dps)
 // Same behaviour as the reference minipupperesp /js handler:
 // touching a pad auto-starts the Stanford trot; the gait task
 // consumes the values each 15 ms tick, scaled by s_cfg.sg_speed.
-void joy_input(float f, float s, float t)
+/* Caller holds s_timed_move_mux and has already checked Pi ownership. */
+void joy_input_raw(float f, float s, float t)
 {
-    if (master_blocks("joystick")) return;
     if (f >  1.0f) f =  1.0f;
     if (f < -1.0f) f = -1.0f;
     if (s >  1.0f) s =  1.0f;
@@ -1233,6 +1277,64 @@ void joy_input(float f, float s, float t)
     s_js_s = s;
     s_js_t = t;
     s_js_last_ms = millis();
+}
+
+void joy_input_for(float f, float s, float t, uint32_t duration_ms)
+{
+    if (master_blocks("joy_input_for")) return;
+    taskENTER_CRITICAL(&s_timed_move_mux);
+    joy_input_raw(f, s, t);
+    s_timed_move_active = true;
+    s_timed_move_analog = true;
+    s_timed_move_f = s_js_f;
+    s_timed_move_s = s_js_s;
+    s_timed_move_t = s_js_t;
+    /* Zero is a deliberate sustained move: keep refreshing until any newer
+     * joystick, gait or skill command takes ownership. */
+    s_timed_move_deadline_us = duration_ms > 0
+        ? esp_timer_get_time() + (uint64_t)duration_ms * 1000ULL : 0;
+    taskEXIT_CRITICAL(&s_timed_move_mux);
+}
+
+void joy_input(float f, float s, float t)
+{
+    if (master_blocks("joystick")) return;
+    taskENTER_CRITICAL(&s_timed_move_mux);
+    cancel_timed_move_locked();
+    joy_input_raw(f, s, t);
+    taskEXIT_CRITICAL(&s_timed_move_mux);
+}
+
+/* Continuous gaits call flush() every tick, unlike the outer gait loop.
+ * Refresh agent analog input here so it cannot go stale after 600 ms. */
+void poll_timed_move()
+{
+    taskENTER_CRITICAL(&s_timed_move_mux);
+    if (!s_timed_move_active) {
+        taskEXIT_CRITICAL(&s_timed_move_mux);
+        return;
+    }
+
+    const GaitCmd expected = s_timed_move_analog
+        ? GaitCmd::StanfordWalk : s_timed_move_gait;
+    if (s_master || s_bus_owner != BUS_FREE || s_gait_cmd != expected) {
+        cancel_timed_move_locked();
+        taskEXIT_CRITICAL(&s_timed_move_mux);
+        return;
+    }
+
+    const bool due = s_timed_move_deadline_us > 0 &&
+                     (uint64_t)esp_timer_get_time() >= s_timed_move_deadline_us;
+    if (due) {
+        cancel_timed_move_locked();
+        /* Zero first so the final Stanford tick cannot use the old axes, then
+         * leave the gait. None parks the feet without re-centring servos. */
+        joy_input_raw(0.0f, 0.0f, 0.0f);
+        s_gait_cmd = GaitCmd::None;
+    } else if (s_timed_move_analog) {
+        joy_input_raw(s_timed_move_f, s_timed_move_s, s_timed_move_t);
+    }
+    taskEXIT_CRITICAL(&s_timed_move_mux);
 }
 
 // ── Configuration ────────────────────────────────────────────
@@ -1706,6 +1808,8 @@ struct FlushBusy {
 void flush()
 {
     if (s_master && !in_gait_task()) { master_blocks("flush"); return; }
+    /* Also cancels a timed agent move when Studio or a skill owns the bus. */
+    poll_timed_move();
     FlushBusy flush_busy_guard;
     // Studio or a skill owns the bus - hold the last pose rather than fight it.
     if (s_bus_owner != BUS_FREE) return;
@@ -2184,6 +2288,7 @@ void gait_task()
     GaitCmd last_played = GaitCmd::None;
 
     for (;;) {
+        poll_timed_move();
         const GaitCmd cmd = s_gait_cmd;
 
         // Tell the face what is playing (it has a face track per move).

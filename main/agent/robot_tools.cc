@@ -35,7 +35,8 @@ namespace {
 constexpr float kMaxRollDeg  = 25.0f;
 constexpr float kMaxPitchDeg = 20.0f;
 constexpr float kMaxYawDeg   = 30.0f;
-constexpr int   kMaxDriveMs  = 10000;
+constexpr int   kDefaultDriveMs = 3000;
+constexpr int   kMaxDriveMs     = 10000;
 
 constexpr const char *kGroupRobot   = "cap_robot";
 constexpr const char *kGroupDisplay = "cap_display";
@@ -101,16 +102,32 @@ Reply robot_move(const cJSON *args)
     if (!mpx_robot_ready()) return not_ready();
     if (mpx_robot_pi_in_control()) return pi_refuses();
 
+    /* An agent call is a complete task, not a joystick being held down. Give
+     * plain "go forward" a bounded default so it cannot mark time forever.
+     * An explicit zero still requests a sustained move until the next call. */
+    int duration = (int)num(args, "duration_ms", (float)kDefaultDriveMs);
+    if (duration < 0) duration = 0;
+    if (duration > kMaxDriveMs) duration = kMaxDriveMs;
+
     if (const char *movement = str(args, "movement")) {
         /* Built-ins first, then a skill that provides the name (mpv2's
          * movement layer did the same: a downloaded skill must not shadow
          * "advance"). */
-        if (mpx_robot_gait_by_name(movement) == ESP_OK) {
+        const bool continuous = mpx_robot_gait_is_continuous(movement);
+        if (mpx_robot_gait_by_name_for(movement, (uint32_t)duration) == ESP_OK) {
             cJSON *o = cJSON_CreateObject();
             cJSON_AddBoolToObject(o, "ok", true);
             cJSON_AddStringToObject(o, "movement", movement);
+            if (duration > 0 && continuous) {
+                cJSON_AddNumberToObject(o, "stops_after_ms", duration);
+                cJSON_AddStringToObject(o, "after", "none");
+            }
             return { print_and_free(o), false };
         }
+        /* A skill owns the robot until it exits; cancel the previous agent
+         * move before handing over, including a skill that drives servos
+         * directly instead of selecting a different gait. */
+        mpx_robot_cancel_timed_move();
         std::string slug;
         const char *why = network::skill_start_for_movement(movement, &slug);
         cJSON *o = cJSON_CreateObject();
@@ -127,11 +144,10 @@ Reply robot_move(const cJSON *args)
     const float f = clampf(num(args, "forward", 0.0f), -1.0f, 1.0f);
     const float s = clampf(num(args, "strafe", 0.0f), -1.0f, 1.0f);
     const float t = clampf(num(args, "turn", 0.0f), -1.0f, 1.0f);
-    int duration = (int)num(args, "duration_ms", 0.0f);
-    if (std::fabs(f) < 0.01f && std::fabs(s) < 0.01f && std::fabs(t) < 0.01f && duration == 0) {
-        return { "Error: give either a movement name, or forward/strafe/turn.", true };
+    if (std::fabs(f) < 0.08f && std::fabs(s) < 0.08f && std::fabs(t) < 0.08f) {
+        return { "Error: give either a movement name, or forward/strafe/turn past the 0.08 dead zone.", true };
     }
-    mpx_robot_drive(f, s, t);
+    mpx_robot_drive_for(f, s, t, (uint32_t)duration);
 
     cJSON *o = cJSON_CreateObject();
     cJSON_AddBoolToObject(o, "ok", true);
@@ -140,10 +156,8 @@ Reply robot_move(const cJSON *args)
     cJSON_AddNumberToObject(d, "strafe", s);
     cJSON_AddNumberToObject(d, "turn", t);
     if (duration > 0) {
-        /* The joystick path times out by itself when nothing refreshes it,
-         * so a duration is a promise to stop, not a blocking wait. */
-        if (duration > kMaxDriveMs) duration = kMaxDriveMs;
         cJSON_AddNumberToObject(o, "stops_after_ms", duration);
+        cJSON_AddStringToObject(o, "after", "none");
     }
     return { print_and_free(o), false };
 }
@@ -461,6 +475,9 @@ Reply mpx_run_skill(const cJSON *args)
     if (mpx_robot_pi_in_control()) return pi_refuses();
     const char *params = str(args, "params");
     std::string resolved;
+    /* A skill may own the servo bus without selecting a new gait, so gait-name
+     * checks alone cannot protect it from an older timed agent move. */
+    mpx_robot_cancel_timed_move();
     const char *why = network::skill_start(skill, params ? params : "", &resolved);
     cJSON *o = cJSON_CreateObject();
     cJSON_AddBoolToObject(o, "ok", why == nullptr);
@@ -554,17 +571,22 @@ const Tool kTools[] = {
     { "robot_move", kGroupRobot,
       "Make the robot walk, turn, or perform a named movement. Either give a "
       "movement name from robot_get_state.movements, or drive it with "
-      "forward/strafe/turn between -1 and 1.",
+      "forward/strafe/turn between -1 and 1. Continuous moves stop in the "
+      "neutral stand after duration_ms (default 3000); set duration_ms to 0 "
+      "only when the move should hold until another robot_move call.",
       nullptr,
       "{\"type\":\"object\",\"properties\":{"
       "\"movement\":{\"type\":\"string\",\"description\":"
-      "\"A movement name, e.g. advance, stanford, lookup, twerk.\"},"
+      "\"A movement name, e.g. advance, stanford, lookup, twerk, backflip.\"},"
       "\"forward\":{\"type\":\"number\",\"minimum\":-1,\"maximum\":1},"
       "\"strafe\":{\"type\":\"number\",\"minimum\":-1,\"maximum\":1,"
       "\"description\":\"Positive is left.\"},"
       "\"turn\":{\"type\":\"number\",\"minimum\":-1,\"maximum\":1,"
       "\"description\":\"Positive turns left.\"},"
-      "\"duration_ms\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":10000}}}",
+      "\"duration_ms\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":10000,"
+      "\"description\":\"Milliseconds before stopping in the neutral stand "
+      "(default 3000). Use it for 'forward for 3 seconds'; 0 holds until "
+      "the next move.\"}}}",
       robot_move },
     { "robot_pose", kGroupRobot,
       "Hold a body attitude in degrees while the feet stay planted. Use it to "

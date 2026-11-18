@@ -116,6 +116,21 @@ const char *mpx_robot_gait_name_at(int index);
  */
 void mpx_robot_drive(float forward, float strafe, float turn);
 
+/** Agent-style analog move. The gait task refreshes the joystick sample every
+ *  tick for duration_ms, then zeros it and selects "none". A zero duration
+ *  refreshes indefinitely. Any newer joystick/gait command or skill bus
+ *  handoff cancels the request. */
+void mpx_robot_drive_for(float forward, float strafe, float turn,
+                         uint32_t duration_ms);
+
+/** Named-move counterpart of mpx_robot_drive_for(). Only continuous gaits
+ *  get a deadline; one-shot moves already end in "none" by themselves. */
+esp_err_t mpx_robot_gait_by_name_for(const char *name, uint32_t duration_ms);
+
+/** Cancel an agent-style move without changing the current gait. Used when
+ *  a skill takes ownership, including one that writes servos directly. */
+void mpx_robot_cancel_timed_move(void);
+
 /**
  * @brief Hold a body attitude in degrees. Clamped to roll +/-25, pitch +/-20,
  *        yaw +/-30 -- the same limits as the reference movement API.
