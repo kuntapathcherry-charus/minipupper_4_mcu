@@ -61,9 +61,11 @@ esp_err_t provision();
 
 /* ── Holding voice back while a skill runs ─────────────────────────────────
  *
- * A wasm skill gets the robot to itself: no wake word, no voice turn, no
+ * A wasm skill gets the robot to itself: no wake word, no new voice turn, no
  * music, and the microphone free if the skill asks for it (mpx_mic_start).
- * hold() stops all of that and remembers what was running; release() puts
+ * The current gateway control socket stays open so an MCP tool result and its
+ * spoken reply can return when the run ends. hold() stops the audio work and
+ * remembers what was running; release() puts
  * back exactly that. Both are cheap and idempotent, and hold() is counted,
  * because two things can hold voice at once -- a skill run (automatic, from
  * network's skill task) and the app (POST /v1/voice {"hold":true}) -- and

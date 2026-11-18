@@ -310,10 +310,11 @@ esp_err_t hold(const char *why)
     if (mpx_voice_stream_is_playing()) {
         mpx_voice_stream_abort_playback();
     }
-    /* A device-brain skill must leave the control socket up: the agent's
-     * final reply is sent back through it after mpx_run_skill returns. Pi
-     * takeover and server-brain holds keep the old full disconnect. */
-    if (!(mpx_voice_device_brain() && strcmp(reason, "skill") == 0)) {
+    /* A skill must leave the control socket up in either brain mode: the
+     * final reply is sent back through it after mpx_run_skill returns. The
+     * wake front end, microphone, playback and music are still held below.
+     * Pi takeover and manual/policy holds keep the full disconnect. */
+    if (strcmp(reason, "skill") != 0) {
         mpx_voice_disconnect();
     }
 
