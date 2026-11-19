@@ -109,6 +109,7 @@
       .catch(() => {});
   });
   const policyLabel = $derived.by(() => {
+    if (policy?.available && !policy.loaded) return "Loads on first start";
     if (!policy?.loaded) return "No policy in this firmware";
     if (policy.active) return policy.phase === "run" ? "Walking" : "Running";
     return `${policy.name} · runs on the robot itself`;

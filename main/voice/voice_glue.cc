@@ -68,7 +68,24 @@ volatile bool s_voice_resume;      /* hands-free was on when the Pi took over */
 std::atomic<int> s_hold_depth{0};
 bool         s_hold_restore_auto;  /* hands-free was listening when it started */
 bool         s_hold_restore_wake;  /* ... or the front end was up by hand       */
+bool         s_hold_restore_afe;   /* policy destroyed the reserved front end */
 int          s_task_priority = 5;  /* wake_feed/wake_fetch, see set_task_priority */
+StaticSemaphore_t s_hold_mutex_buf;
+SemaphoreHandle_t s_hold_mutex;
+portMUX_TYPE s_hold_init_mux = portMUX_INITIALIZER_UNLOCKED;
+
+void lock_hold()
+{
+    portENTER_CRITICAL(&s_hold_init_mux);
+    if (!s_hold_mutex) s_hold_mutex = xSemaphoreCreateMutexStatic(&s_hold_mutex_buf);
+    portEXIT_CRITICAL(&s_hold_init_mux);
+    xSemaphoreTake(s_hold_mutex, portMAX_DELAY);
+}
+
+void unlock_hold()
+{
+    xSemaphoreGive(s_hold_mutex);
+}
 
 bool hands_free_wanted()
 {
@@ -178,6 +195,24 @@ esp_err_t apply_mode()
     return hands_free_start();
 }
 
+void prepare()
+{
+    if (s_wake_ready || !available()) return;
+
+    /* Reserve the large ESP-SR allocations before ESP-Claw. In this esp-sr
+     * version an OOM inside WakeNet model creation dereferences a null
+     * buffer, so merely checking create_from_config's return is too late. */
+    mpx_voice_wake_set_task_priority(s_task_priority);
+    if (mpx_voice_wake_init() != ESP_OK) {
+        ESP_LOGW(TAG, "voice front end reservation failed");
+        return;
+    }
+    s_wake_ready = true;
+    ESP_LOGI(TAG, "voice front end reserved: internal RAM %u free, %u largest",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+}
+
 void start()
 {
     if (s_started) return;
@@ -229,23 +264,26 @@ void start()
         ESP_LOGW(TAG, "voice brain did not start -- voice turns cannot use tools");
     }
 
-    /* Load esp-sr's models and build the AFE now, at boot, rather than on
-     * first use: it is the last big consumer of internal RAM to come up,
-     * and better to see it fail in the boot log than mid-conversation. */
+    /* prepare() normally reserved the AFE before the agent. This call also
+     * keeps direct/retry users working; s_afe_ready prevents a second AFE. */
     if (mpx_voice_wake_init() != ESP_OK) {
         ESP_LOGW(TAG, "wake word init did not complete -- voice unavailable this boot");
         return;
     }
     s_wake_ready = true;
-    ESP_LOGI(TAG, "after wake init: internal RAM %u free, %u largest",
+    ESP_LOGI(TAG, "after wake init: internal RAM %u free, %u largest; PSRAM %u free, %u largest",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
 
 #if CONFIG_APP_VOICE_AUTO_LISTEN
     /* Hands-free from here on. The socket opens on the first wake word, by
      * which time Wi-Fi has had every chance to come up. */
-    if (hands_free_start_locked() != ESP_OK) {
-        ESP_LOGW(TAG, "hands-free listening did not start -- POST /v1/voice {\"hands_free\":true} to retry");
+    esp_err_t listen_err = hands_free_start_locked();
+    if (listen_err != ESP_OK) {
+        ESP_LOGW(TAG, "hands-free listening did not start (%s) -- POST /v1/voice {\"hands_free\":true} to retry",
+                 esp_err_to_name(listen_err));
     }
 #endif
 }
@@ -291,17 +329,22 @@ esp_err_t hold(const char *why)
 {
     const char *reason = (why && why[0]) ? why : "skill";
 
+    lock_hold();
     int expected = 0;
     if (!s_hold_depth.compare_exchange_strong(expected, 1)) {
         // Only the thread that changes 0 -> 1 performs teardown and records
         // what to restore. Skills, policies and manual holds may arrive together.
         s_hold_depth.fetch_add(1);
         ESP_LOGI(TAG, "voice already held (%d): %s", s_hold_depth.load(), reason);
+        unlock_hold();
         return ESP_OK;
     }
     ESP_LOGI(TAG, "voice held for %s (mode %s)", reason,
              agent_config::mode_name(agent_config::mode()));
-    if (!s_started) return ESP_OK;   /* nothing is up yet to hold back */
+    if (!s_started) {
+        unlock_hold();
+        return ESP_OK;   /* nothing is up yet to hold back */
+    }
 
     /* A live turn first: cut the reply and drop the gateway socket, so the
      * skill is not sharing the CPU with whatever model is on the other end
@@ -327,37 +370,67 @@ esp_err_t hold(const char *why)
     /* Then the microphone. Hands-free first -- it owns the front end and
      * would otherwise restart it behind us -- then a front end started by
      * hand. Both are restarted by release(). */
+    esp_err_t err = ESP_OK;
     if (mpx_voice_wake_auto_active()) {
         s_hold_restore_auto = true;
-        mpx_voice_wake_auto_stop();
+        err = mpx_voice_wake_auto_stop();
     } else if (mpx_voice_wake_active()) {
         s_hold_restore_wake = true;
-        mpx_voice_wake_stop();
+        err = mpx_voice_wake_stop();
     }
-    return ESP_OK;
+    unlock_hold();
+    return err;
+}
+
+esp_err_t release_front_end()
+{
+    lock_hold();
+    if (s_hold_depth.load() == 0) {
+        unlock_hold();
+        return ESP_ERR_INVALID_STATE;
+    }
+    const esp_err_t err = mpx_voice_wake_deinit();
+    if (err == ESP_OK) {
+        s_hold_restore_afe = s_wake_ready;
+        s_wake_ready = false;
+    }
+    unlock_hold();
+    return err;
 }
 
 void release(const char *why)
 {
     const char *reason = (why && why[0]) ? why : "skill";
 
+    lock_hold();
     if (s_hold_depth.load() == 0) {
         ESP_LOGW(TAG, "voice released for %s without a hold -- ignored", reason);
+        unlock_hold();
         return;
     }
     if (s_hold_depth.fetch_sub(1) > 1) {
         ESP_LOGI(TAG, "voice still held (%d): %s released", s_hold_depth.load(), reason);
+        unlock_hold();
         return;
     }
 
     const bool restore_auto = s_hold_restore_auto;
     const bool restore_wake = s_hold_restore_wake;
+    const bool restore_afe = s_hold_restore_afe;
     s_hold_restore_auto = false;
     s_hold_restore_wake = false;
+    s_hold_restore_afe = false;
 
-    if (!s_started) return;
+    /* Restore the boot-time reservation even when no capture was active or
+     * AI is currently off; a later mode change must not find a null AFE. */
+    if (restore_afe) prepare();
+    if (!s_started) {
+        unlock_hold();
+        return;
+    }
     if (!voice_wanted()) {
         ESP_LOGI(TAG, "voice released (%s): AI mode is off, nothing to restart", reason);
+        unlock_hold();
         return;
     }
 
@@ -376,6 +449,7 @@ void release(const char *why)
                      reason, esp_err_to_name(err));
         }
     }
+    unlock_hold();
 }
 
 bool held()
@@ -463,6 +537,7 @@ namespace voice_glue {
 
 bool available() { return false; }
 esp_err_t apply_mode() { return voice_wanted() ? ESP_ERR_NOT_SUPPORTED : ESP_OK; }
+void prepare() {}
 void start() { ESP_LOGI(TAG, "voice not compiled in (CONFIG_APP_VOICE_ENABLE=n)"); }
 void on_master_changed(bool) {}
 esp_err_t hands_free_start() { return ESP_ERR_NOT_SUPPORTED; }
@@ -470,6 +545,7 @@ void hands_free_stop() {}
 esp_err_t wake_now() { return ESP_ERR_NOT_SUPPORTED; }
 esp_err_t provision() { return ESP_ERR_NOT_SUPPORTED; }
 esp_err_t hold(const char *) { return ESP_OK; }
+esp_err_t release_front_end() { return ESP_OK; }
 void release(const char *) {}
 bool held() { return false; }
 esp_err_t set_task_priority(int) { return ESP_ERR_NOT_SUPPORTED; }

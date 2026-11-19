@@ -13,6 +13,8 @@
 #include <fcntl.h>
 
 #include "esp_http_server.h"
+#include "esp_attr.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "nvs.h"
 #include "esp_timer.h"
@@ -103,13 +105,16 @@ static void load_allow_writes()
 
 
 /* ── PWA WebSocket client entry ──────────────────────────── */
+static constexpr size_t MAX_PWA_WS_CLIENTS = 4;
+static constexpr size_t PWA_FRAG_MAX = 4096;
+EXT_RAM_BSS_ATTR static char s_pwa_frag_buf[MAX_PWA_WS_CLIENTS][PWA_FRAG_MAX];
+
 struct PwaWsClient {
     int fd = -1;                // socket identity for handlers and cross-task sends
     bool reply_ready = false;
     char session_id[64] = {};
-    char pending_reply[2048] = {};
-    // WebSocket fragmentation reassembly buffer
-    char frag_buf[4096] = {};
+    // Reassembly storage is s_pwa_frag_buf[slot]: external BSS cannot hold
+    // the nonzero fd initializers in this metadata array.
     size_t frag_len = 0;
     bool fragmenting = false;
     uint32_t reg_seq = 0;       // registration generation and eviction order
@@ -120,8 +125,6 @@ struct PwaWsClient {
 
 // Monotonic counter so we can identify the oldest registered client.
 static uint32_t s_pwa_reg_counter = 0;
-
-static constexpr size_t MAX_PWA_WS_CLIENTS = 4;
 
 /* ── PWA WebSocket client pool ─────────────────────────────── */
 static PwaWsClient s_pwa_clients[MAX_PWA_WS_CLIENTS] = {};
@@ -487,17 +490,15 @@ static void lua_worker_task(void *arg)
 {
     (void)arg;
 
-    // Allocate buffers on the heap to avoid stack overflow.
-    // The lua_worker_task stack must accommodate lua_run_string()
-    // internals, so keep the task stack lean.
-    auto *cmd = static_cast<LuaCommand *>(std::malloc(sizeof(LuaCommand)));
+    // Allocate buffers on the heap to avoid stack overflow. Commands arrive
+    // as individually owned PSRAM allocations through the pointer queue.
+    // The lua_worker_task stack must accommodate lua_run_string() internals.
     auto *step_json = static_cast<char *>(std::malloc(1536));
     auto *lua_output = static_cast<char *>(std::malloc(512));
     auto *done_json = static_cast<char *>(std::malloc(2048));
 
-    if (!cmd || !step_json || !lua_output || !done_json) {
+    if (!step_json || !lua_output || !done_json) {
         ESP_LOGE(TAG, "OOM in lua_worker_task");
-        std::free(cmd);
         std::free(step_json);
         std::free(lua_output);
         std::free(done_json);
@@ -506,7 +507,8 @@ static void lua_worker_task(void *arg)
     }
 
     while (true) {
-        if (xQueueReceive(s_lua_queue, cmd, portMAX_DELAY) == pdTRUE) {
+        LuaCommand *cmd = nullptr;
+        if (xQueueReceive(s_lua_queue, &cmd, portMAX_DELAY) == pdTRUE) {
             ESP_LOGI(TAG, "Lua worker executing [%d/%d]: %s",
                      cmd->seq, cmd->total, cmd->script);
 
@@ -590,6 +592,7 @@ static void lua_worker_task(void *arg)
                     }
                 }
             }
+            std::free(cmd);
         }
     }
 }
@@ -827,10 +830,15 @@ static bool process_downstream_frame(const uint8_t *frame, size_t len)
 
         // Push reply text to the queue so HTTP handlers can pick it up
         if (s_reply_queue && !reply_text.empty()) {
-            char reply_buf[REPLY_TEXT_MAX];
-            size_t copy_len = reply_text.copy(reply_buf, REPLY_TEXT_MAX - 1);
-            reply_buf[copy_len] = 0;
-            xQueueSend(s_reply_queue, reply_buf, pdMS_TO_TICKS(10));
+            auto *reply_buf = static_cast<char *>(heap_caps_malloc(
+                REPLY_TEXT_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+            if (reply_buf) {
+                size_t copy_len = reply_text.copy(reply_buf, REPLY_TEXT_MAX - 1);
+                reply_buf[copy_len] = 0;
+                if (xQueueSend(s_reply_queue, &reply_buf, pdMS_TO_TICKS(10)) != pdTRUE) {
+                    std::free(reply_buf);
+                }
+            }
         }
 
         // Extract Lua commands from the "commands" array
@@ -856,20 +864,26 @@ static bool process_downstream_frame(const uint8_t *frame, size_t len)
                          cmd_count, total_cmds, script_text);
 
                 if (s_lua_queue) {
-                    LuaCommand lua_cmd = {};
+                    auto *lua_cmd = static_cast<LuaCommand *>(heap_caps_calloc(
+                        1, sizeof(LuaCommand), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+                    if (!lua_cmd) {
+                        ESP_LOGW(TAG, "  → Lua command allocation failed, dropping script");
+                        continue;
+                    }
                     size_t copy_len = std::strlen(script_text);
-                    if (copy_len >= sizeof(lua_cmd.script))
-                        copy_len = sizeof(lua_cmd.script) - 1;
-                    std::memcpy(lua_cmd.script, script_text, copy_len);
-                    lua_cmd.script[copy_len] = 0;
-                    lua_cmd.seq = cmd_count;
-                    lua_cmd.total = total_cmds;
-                    std::strncpy(lua_cmd.session_id,
+                    if (copy_len >= sizeof(lua_cmd->script))
+                        copy_len = sizeof(lua_cmd->script) - 1;
+                    std::memcpy(lua_cmd->script, script_text, copy_len);
+                    lua_cmd->script[copy_len] = 0;
+                    lua_cmd->seq = cmd_count;
+                    lua_cmd->total = total_cmds;
+                    std::strncpy(lua_cmd->session_id,
                                  session_id.c_str(),
-                                 sizeof(lua_cmd.session_id) - 1);
+                                 sizeof(lua_cmd->session_id) - 1);
                     if (xQueueSend(s_lua_queue, &lua_cmd,
                                    pdMS_TO_TICKS(10)) != pdTRUE) {
                         ESP_LOGW(TAG, "  → Lua queue full, dropping script");
+                        std::free(lua_cmd);
                     }
                 }
             }
@@ -1638,8 +1652,10 @@ bool init_chat_pipeline()
         ESP_LOGW(TAG, "Allow writes is ON: file writes/deletes are approved without asking");
     }
 
-    // ── Create reply queue (chat_send → downstream bridge) ────
-    s_reply_queue = xQueueCreate(16, REPLY_TEXT_MAX);
+    // Pointer queues keep their small fixed metadata internal. Payloads are
+    // allocated in PSRAM only while a reply/command is actually queued,
+    // instead of reserving 41 KB of scarce internal RAM for empty slots.
+    s_reply_queue = xQueueCreate(16, sizeof(char *));
     if (!s_reply_queue) {
         ESP_LOGE(TAG, "Failed to create reply queue");
         return false;
@@ -1655,7 +1671,7 @@ bool init_chat_pipeline()
     // TCP keepalive + recv_wait_timeout + max_open_sockets are sufficient.
 
     // ── Create Lua command queue ───────────────────────────────
-    s_lua_queue = xQueueCreate(8, sizeof(LuaCommand));
+    s_lua_queue = xQueueCreate(8, sizeof(LuaCommand *));
     if (!s_lua_queue) {
         ESP_LOGE(TAG, "Failed to create Lua command queue");
         return false;
@@ -1817,13 +1833,10 @@ esp_err_t chat_send_handler(httpd_req_t *req)
     }
 
     // ── Drain stale items from previous requests ────────
-    // Heap buffer to avoid stack overflow (HTTP server task has 8 KB stack).
-    {
-        auto *drain = static_cast<char *>(std::malloc(REPLY_TEXT_MAX));
-        if (drain) {
-            while (s_reply_queue && xQueueReceive(s_reply_queue, drain, 0) == pdTRUE) {}
-            std::free(drain);
-        }
+    char *drain = nullptr;
+    while (s_reply_queue && xQueueReceive(s_reply_queue, &drain, 0) == pdTRUE) {
+        std::free(drain);
+        drain = nullptr;
     }
 
     // Wait for the downstream reply.
@@ -1852,7 +1865,10 @@ esp_err_t chat_send_handler(httpd_req_t *req)
         TickType_t chunk = MAX_REPLY_WAIT - elapsed;
         if (chunk > pdMS_TO_TICKS(5000)) chunk = pdMS_TO_TICKS(5000);
 
-        if (xQueueReceive(s_reply_queue, reply_buf, chunk) == pdTRUE) {
+        char *queued_reply = nullptr;
+        if (xQueueReceive(s_reply_queue, &queued_reply, chunk) == pdTRUE) {
+            strlcpy(reply_buf, queued_reply, REPLY_TEXT_MAX);
+            std::free(queued_reply);
             if (reply_buf[0] != 0) {
                 got_reply = true;
                 break;
@@ -1987,10 +2003,11 @@ esp_err_t chat_ws_handler(httpd_req_t *req)
     if (ws_pkt.type == HTTPD_WS_TYPE_TEXT && !ws_pkt.final) {
         // ── First fragment of a fragmented message ───────────
         if (!client) return ESP_OK;
-        size_t copy = std::min(ws_pkt.len, sizeof(client->frag_buf) - 1);
-        std::memcpy(client->frag_buf, buf, copy);
+        char *frag_buf = s_pwa_frag_buf[client - s_pwa_clients];
+        size_t copy = std::min(ws_pkt.len, PWA_FRAG_MAX - 1);
+        std::memcpy(frag_buf, buf, copy);
         client->frag_len = copy;
-        client->frag_buf[copy] = 0;
+        frag_buf[copy] = 0;
         client->fragmenting = true;
         ESP_LOGD(TAG, "Fragmented msg start (%zu bytes)", client->frag_len);
         return ESP_OK;
@@ -2005,11 +2022,12 @@ esp_err_t chat_ws_handler(httpd_req_t *req)
             ESP_LOGD(TAG, "Spurious CONTINUATION frame, discarding");
             return ESP_OK;
         }
-        size_t room = sizeof(client->frag_buf) - 1 - client->frag_len;
+        char *frag_buf = s_pwa_frag_buf[client - s_pwa_clients];
+        size_t room = PWA_FRAG_MAX - 1 - client->frag_len;
         size_t copy = std::min(ws_pkt.len, room);
-        std::memcpy(client->frag_buf + client->frag_len, buf, copy);
+        std::memcpy(frag_buf + client->frag_len, buf, copy);
         client->frag_len += copy;
-        client->frag_buf[client->frag_len] = 0;
+        frag_buf[client->frag_len] = 0;
 
         if (!ws_pkt.final) {
             // More fragments to come
@@ -2024,7 +2042,7 @@ esp_err_t chat_ws_handler(httpd_req_t *req)
         ws_pkt.len = client->frag_len;
         // Point buf and buf_size at the reassembled message
         buf_size = client->frag_len;
-        std::memcpy(buf, client->frag_buf, buf_size + 1);
+        std::memcpy(buf, s_pwa_frag_buf[client - s_pwa_clients], buf_size + 1);
         client->fragmenting = false;
         client->frag_len = 0;
         // Fall through to TEXT handling below
@@ -2492,17 +2510,23 @@ bool queue_lua_script(const char *script)
         return false;
     }
 
-    LuaCommand cmd = {};
+    auto *cmd = static_cast<LuaCommand *>(heap_caps_calloc(
+        1, sizeof(LuaCommand), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!cmd) {
+        ESP_LOGW(TAG, "Lua command allocation failed — dropping script");
+        return false;
+    }
     size_t copy_len = std::strlen(script);
-    if (copy_len >= sizeof(cmd.script)) copy_len = sizeof(cmd.script) - 1;
-    std::memcpy(cmd.script, script, copy_len);
-    cmd.script[copy_len] = 0;
-    cmd.seq = 1;
-    cmd.total = 1;
-    cmd.session_id[0] = 0;
+    if (copy_len >= sizeof(cmd->script)) copy_len = sizeof(cmd->script) - 1;
+    std::memcpy(cmd->script, script, copy_len);
+    cmd->script[copy_len] = 0;
+    cmd->seq = 1;
+    cmd->total = 1;
+    cmd->session_id[0] = 0;
 
     if (xQueueSend(s_lua_queue, &cmd, pdMS_TO_TICKS(100)) != pdTRUE) {
         ESP_LOGW(TAG, "Lua queue full — dropping script");
+        std::free(cmd);
         return false;
     }
     ESP_LOGI(TAG, "Queued Lua script (%zu bytes)", copy_len);

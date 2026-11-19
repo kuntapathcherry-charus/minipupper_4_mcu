@@ -65,7 +65,7 @@ explicitly, gates the agent and voice sources on `CONFIG_APP_AGENT_ENABLE` /
 
 | File | What it does |
 |---|---|
-| [main.cc](../main/main.cc) | `app_main()` — the boot sequence, in order: NVS, robot HAL, screen, audio, Pi link, LittleFS, Wi-Fi AP/STA, deploy PWA assets, rescan skills, HTTP server, chat, WASM sandbox, Lua, agent, voice. Also wires the robot's skill hooks and the Pi master observer. |
+| [main.cc](../main/main.cc) | `app_main()` — the boot sequence, in order: NVS, robot HAL, screen, audio, Pi link, LittleFS, Wi-Fi AP/STA, deploy PWA assets, rescan skills, HTTP server, chat, WASM sandbox, Lua, voice AFE reservation, agent, voice runtime. The AFE is reserved before the agent to avoid the observed agent-first MMNR/WakeNet heap exhaustion (ESP-SR's allocation-failure path is unsafe). Also wires the robot's skill hooks and the Pi master observer. |
 | [CMakeLists.txt](../main/CMakeLists.txt) | Source list, conditional sources, embedded assets, `REQUIRES`, the Lua 32-bit def, and the `--wrap` of ESP-Claw's event-router init. |
 | [idf_component.yml](../main/idf_component.yml) | Component-manager manifest: every managed dependency and the vendored ESP-Claw components as `path:` entries. Pins the IDF range. |
 | [Kconfig.projbuild](../main/Kconfig.projbuild) | The "MPX Dog App Configuration" menu: AP/STA defaults, cloud gateway, robot UUID and AES key, and the `APP_AUDIO_ENABLE`, `APP_PI_LINK_ENABLE`, `APP_RL_*`, `APP_DISPLAY_ENABLE`, `APP_VOICE_ENABLE`, `APP_AGENT_ENABLE` switches. |
@@ -140,7 +140,7 @@ mpv2-claw's `cap_display` on a small ST7789 + `esp_lvgl_port` service.
 |---|---|
 | [policy_core.{c,h}](../main/rl/policy_core.c) | Host-testable MPXP v1 parser, observation/decoder arithmetic, network inference and embedded golden-fixture self-tests. No ESP-IDF dependencies. |
 | [policy_run.{h,cc}](../main/rl/policy_run.cc) | 200 Hz raw-servo runner, calibration, safety limits, built-in policies and logs. Uses the low-priority `pol_after` worker for the counted voice/audio hold and release; refuses skill/host overlap and parks ordinary gaits through `robot::host`. |
-| [mpx_policy.h](../main/rl/mpx_policy.h) | C API used by boot, HTTP and the PWA-facing status handlers. |
+| [mpx_policy.h](../main/rl/mpx_policy.h) | C API used by the lazy HTTP policy initializer and PWA-facing status handlers. |
 | [policies/](../main/rl/policies) | Embedded SKU2 walk, recovery/stairs and get-up `.mpxp` assets. Presence controls optional built-ins in CMake. |
 
 ### main/pi/ — the Raspberry Pi / ROS 2 link

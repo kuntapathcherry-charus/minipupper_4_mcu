@@ -187,6 +187,13 @@ AEC. Builds cannot establish echo rejection, so physical validation must
 check false interruptions at several volumes as well as speech recognition
 while talking, AFE ring overruns, CPU, and internal heap.
 
+Policy loading is an explicit RL resource mode. After the counted voice hold
+has stopped and joined all AFE users, `mpx_voice_wake_deinit()` destroys AFE,
+WakeNet and the barge ring and frees the temporary AFE config. Policy logs are
+saved and all policy resources are released before `voice_glue::release()`
+recreates the front end. This ordering is required by PSRAM capacity; audio
+is not restarted merely because the servos stopped.
+
 ### 1d. Stable I2S DMA allocation
 
 Hands-free capture keeps the ES7210 in its four-channel / 32-bit-slot layout
@@ -317,6 +324,10 @@ else server brain (mcp), exactly today's behaviour
 A robot built with `CONFIG_APP_AGENT_ENABLE=n`, or one an owner set to "off" AI,
 keeps working with the old path — the stubs in `agent_runtime.cc:259` already
 return `ESP_ERR_INVALID_STATE`, so the check is cheap and honest.
+
+The durable configuration enables `APP_AGENT_ENABLE` for the PWA Local brain
+but explicitly keeps `APP_VOICE_BRAIN_LOCAL=n`: voice bypasses ESP-Claw and
+continues to use the gateway model plus native MCP tools directly.
 
 `voice_send_hello()` then advertises **either** `brain:"device"` **or** `mcp:true`,
 never both. `voice_tools::start()` runs only in server-brain mode (it costs a
@@ -625,8 +636,18 @@ Human-side (never claim these):
   because cleaned uplink is silent; ignored noise must emit capture-scoped
   `listen/rearm`, without STT or thinking UI, and accept a new utterance;
 - boot/DSP health: `session ready` says barge-in supported, AFE stays MMNR
-  (no RMNN fallback warning), and no `barge-in PCM ring overrun` appears;
-- boot log: internal RAM after each stage does not drop more than before.
+  (no RMNN fallback warning), WakeNet9S loads `wn9s_hiesp`, AFE uses WebRTC
+  VAD while the gateway uses Silero for conversation VAD, and no
+  `barge-in PCM ring overrun` appears;
+- all-systems RAM: `voice front end reserved` precedes `on-device agent
+  running`, hands-free listening starts, and neither scheduler init nor
+  LittleFS FD allocation reports `ESP_ERR_NO_MEM`;
+- boot log: record both internal RAM and PSRAM free/largest after each stage.
+  XIP leaves only about 1.4 MB of PSRAM heap, so PSRAM exhaustion can force
+  the voice task/queue internal fallbacks even when internal RAM looks low.
+  Chat/Lua queues carry pointers and allocate payloads in PSRAM only when
+  used; PWA fragment buffers live in external BSS. This avoids reserving
+  about 65 KB of internal RAM for idle chat storage.
 
 ---
 

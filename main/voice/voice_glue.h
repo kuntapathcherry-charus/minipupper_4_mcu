@@ -39,8 +39,12 @@ bool voice_wanted();
  *  is wanted but unavailable (no microphone); the mode stays saved. */
 esp_err_t apply_mode();
 
-/** Boot wiring. After mpx_audio_init(), the display and the HTTP server
- *  (the tools start skills through network::skill_start). Never fatal. */
+/** Reserve esp-sr's models/AFE before the on-device agent starts. Called
+ *  after mpx_audio_init(); does not open sockets or start voice tools. */
+void prepare();
+
+/** Boot wiring. After prepare(), the agent and the HTTP server (the tools
+ *  start skills through network::skill_start). Never fatal. */
 void start();
 
 /** The Raspberry Pi took (true) or released (false) the robot. Runs on the
@@ -71,10 +75,10 @@ esp_err_t provision();
  * network's skill task) and the app (POST /v1/voice {"hold":true}) -- and
  * the last release is the one that restarts listening, not the first.
  *
- * What a hold does NOT do is free RAM: the esp-sr front end keeps its models
- * and its AFE instance (both mostly PSRAM), so restarting is instant instead
- * of a flash read. If internal RAM ever turns out to be what a skill needs,
- * the place to add that is mpx_voice_wake's teardown, not here.
+ * An ordinary skill/app hold keeps AFE resident for an instant restart.
+ * Policy initialization additionally calls release_front_end(), after this
+ * same hold has joined the audio tasks, to make room for its model. The last
+ * release() recreates AFE before restoring hands-free listening.
  *
  * hold() can block for a couple of seconds (the front end's fetch() timeout)
  * while it waits for listening to actually stop, so a skill never starts on
@@ -82,6 +86,8 @@ esp_err_t provision();
  * instead: calling it from a task that must not block is wrong. */
 
 esp_err_t hold(const char *why);
+/** Free AFE/WakeNet while held. Returns INVALID_STATE if any task remains. */
+esp_err_t release_front_end();
 void      release(const char *why);
 
 /** Is voice being held back right now? */

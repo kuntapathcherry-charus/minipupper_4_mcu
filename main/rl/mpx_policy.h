@@ -81,7 +81,12 @@ typedef struct {
     uint32_t ram_free, ram_min_free, ram_largest;
 } mpx_policy_status_t;
 
-/** Load the built-in policy and start the policy task (core 1). */
+/** Load the built-in policy and start the policy task (core 1), lazily.
+ * Called from the first actual policy command in http_policy.cc. app_main()
+ * and GET status deliberately do not call this: no model loading, self-test,
+ * worker tasks or timer exist until the user requests a policy. Initialization
+ * suspends and releases AFE; every finished/stopped run releases the complete
+ * policy again before restoring audio. Stop also releases an idle load. */
 esp_err_t mpx_policy_init(void);
 
 /**

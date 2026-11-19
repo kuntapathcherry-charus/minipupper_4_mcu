@@ -629,7 +629,9 @@ config APP_POLICY_ENABLE
         at 50 Hz and drives the twelve servos through the same raw path as
         the Pi's RL link. The gait is parked and voice, wake-word detection
         and music are held for the run, then restored afterwards. The app's
-        RL Walk page starts and steers it through /v1/policy.
+        RL Walk page starts and steers it through /v1/policy. Models, workers
+        and the auto-right timer are initialized lazily by the first actual
+        policy command; boot and status polling leave them unallocated.
 
 if APP_POLICY_ENABLE
 
