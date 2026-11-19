@@ -387,10 +387,22 @@ static void skill_run_task(void *arg)
      * This is where it runs, rather than on a worker: stopping the front end
      * waits for its fetch() to notice (up to ~2 s), and nothing else in the
      * start path may happen while the front end is still holding the mic. */
-    voice_glue::hold("skill");
+    esp_err_t audio_err = voice_glue::hold("skill");
+    if (audio_err == ESP_OK) {
+        /* WAMR instantiation competes with MMNR/WakeNet for the same heaps.
+         * Release the front end only after hold() has joined every AFE user;
+         * release() recreates it after the sandbox has exited. */
+        audio_err = voice_glue::release_front_end();
+    }
 
-    ESP_LOGI(TAG, "Running skill (async): %s", a->path.c_str());
-    auto result = wasm::load_and_run(a->path.c_str(), "on_start", 60000);
+    auto result = wasm::SandboxResult::InstantiateFailed;
+    if (audio_err == ESP_OK) {
+        ESP_LOGI(TAG, "Running skill (async): %s", a->path.c_str());
+        result = wasm::load_and_run(a->path.c_str(), "on_start", 60000);
+    } else {
+        ESP_LOGE(TAG, "Skill '%s' cannot release audio resources: %s",
+                 a->name.c_str(), esp_err_to_name(audio_err));
+    }
     s_skill_last_result = static_cast<int>(result);
     voice_glue::release("skill");
     ESP_LOGI(TAG, "Skill '%s' completed with result=%d",
@@ -402,8 +414,7 @@ static void skill_run_task(void *arg)
     s_skill_name[0] = 0;
     s_skill_path[0] = 0;
     if (s_skill_done) xSemaphoreGive(s_skill_done);
-    /* Created with xTaskCreateWithCaps: the stack may be in PSRAM, and only
-     * this call hands it back. */
+    /* Created with xTaskCreateWithCaps: this call returns its internal stack. */
     vTaskDeleteWithCaps(nullptr);
 }
 
@@ -449,22 +460,14 @@ static const char *start_skill_async(const std::string &path,
     // skill yields during its robot_delay_ms calls.  8 KB task stack is enough;
     // the WASM operand stack is allocated separately inside load_and_run.
     //
-    // PSRAM first, internal RAM second: internal RAM is what runs out here
-    // (~26 KB free, no 16 KB contiguous block once the screen, Wi-Fi and esp-sr
-    // are up), and this task is created at the worst moment -- a skill being
-    // started. The stack may live in PSRAM because this build copies code and
-    // .rodata into PSRAM (CONFIG_SPIRAM_XIP_FROM_PSRAM), so a flash operation
-    // never disables the cache; see the note on the loader thread in
-    // wasm/wasm_sandbox.cc.
+    // Internal stack is mandatory: this task destroys/recreates ESP-SR models,
+    // whose flash unmap/map freezes caches. ESP-IDF asserts if the current
+    // task stack is in PSRAM at that moment. The large WAMR heap remains in
+    // PSRAM; only this 8 KiB coordinator stack uses internal RAM.
     TaskHandle_t task = nullptr;
     BaseType_t created = xTaskCreateWithCaps(skill_run_task, "skill_run", 8192,
                                              args, 4, &task,
-                                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (created != pdPASS) {
-        created = xTaskCreateWithCaps(skill_run_task, "skill_run", 8192,
-                                      args, 4, &task,
-                                      MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    }
+                                             MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (created != pdPASS) {
         s_skill_running = false;
         s_skill_name[0] = 0;

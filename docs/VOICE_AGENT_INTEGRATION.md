@@ -187,12 +187,16 @@ AEC. Builds cannot establish echo rejection, so physical validation must
 check false interruptions at several volumes as well as speech recognition
 while talking, AFE ring overruns, CPU, and internal heap.
 
-Policy loading is an explicit RL resource mode. After the counted voice hold
-has stopped and joined all AFE users, `mpx_voice_wake_deinit()` destroys AFE,
+Policy loading and WASM skill execution are explicit resource modes. After
+the counted voice hold has stopped and joined all AFE users,
+`mpx_voice_wake_deinit()` destroys AFE,
 WakeNet and the barge ring and frees the temporary AFE config. Policy logs are
 saved and all policy resources are released before `voice_glue::release()`
 recreates the front end. This ordering is required by PSRAM capacity; audio
-is not restarted merely because the servos stopped.
+is not restarted merely because the servos stopped. The skill coordinator
+uses an internal 8 KiB stack because ESP-SR model teardown/initialization
+freezes flash caches; a PSRAM task stack would trigger ESP-IDF's cache-safety
+assertion.
 
 ### 1d. Stable I2S DMA allocation
 

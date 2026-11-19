@@ -83,7 +83,7 @@ namespace sdk {
  * exists to say before the first host call traps. */
 /* v7 adds the microphone: mpx_mic_start / mpx_mic_read / mpx_mic_stop.
  *
- * A skill runs with voice held back (voice_glue::hold, taken by the skill task
+ * A skill runs with voice held back and AFE/WakeNet released (voice_glue,
  * around the run), so the capture is free — no front end, no voice turn — and
  * this is the skill's to open. What it gets is MONO at the sample rate it asks
  * for (0 = 16 kHz, the voice rate), read straight from the codec with the
