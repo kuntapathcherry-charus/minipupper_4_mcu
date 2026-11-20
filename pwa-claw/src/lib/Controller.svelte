@@ -34,10 +34,10 @@
 
   // The four assignable face buttons — ids are shared with ActionAssignment.
   const SLOTS = [
-    { id: "action-top",    pos: "top",    fallback: "jump",    tone: "#14907F", shape: "triangle" },
-    { id: "action-left",   pos: "left",   fallback: "stretch", tone: "#C2338A", shape: "square" },
-    { id: "action-right",  pos: "right",  fallback: "twerk",   tone: "#D83A34", shape: "circle" },
-    { id: "action-bottom", pos: "bottom", fallback: "surrender", tone: "#2D6BCB", shape: "pentagon" },
+    { id: "action-top",    pos: "top",    fallback: "look",    tone: "#14907F", shape: "triangle" },
+    { id: "action-left",   pos: "left",   fallback: "pushup",  tone: "#C2338A", shape: "square" },
+    { id: "action-right",  pos: "right",  fallback: "scratch", tone: "#D83A34", shape: "circle" },
+    { id: "action-bottom", pos: "bottom", fallback: "cower",   tone: "#2D6BCB", shape: "pentagon" },
   ];
 
   function slotAction(slot) {
@@ -300,10 +300,10 @@
     // d-pad: body height; left/right roll are handled separately below
     "dpad-up": "heightup",
     "dpad-down": "heightdown",
-    "action-top": "jump",
-    "action-right": "twerk",
-    "action-bottom": "surrender",
-    "action-left": "stretch",
+    "action-top": "look",
+    "action-right": "scratch",
+    "action-bottom": "cower",
+    "action-left": "pushup",
   };
   let pressed = $state(new Set());
   let lastLabel = $state("");

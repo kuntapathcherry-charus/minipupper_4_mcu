@@ -4,7 +4,7 @@
  *
  * Speaker tuning: the last stage before the amplifier, on the robot.
  *
- * The speaker (FUET FS1510MS0810, 15 x 10 mm, 8 ohm, 1 W rated / 1.5 W max)
+ * The speaker (FUET FS1510MS0810, 15 x 10 mm, 8 ohm, 1 W)
  * plays 750 Hz - 20 kHz and resonates at 1250 Hz. The MAX98357A in front of
  * it has no volume control and pushes ~1.4 W into 8 ohms at full scale.
  * Three things make that crackle, and each has a knob here:
@@ -42,8 +42,12 @@ static const char *TAG = "mpx_audio_tune";
 #define TUNE_RATE          16000.0f
 #define TUNE_NVS_NS        "voice"
 #define TUNE_DEFAULT_HPF   600
-#define TUNE_DEFAULT_GAIN  0.0f
-#define TUNE_DEFAULT_CEIL  0.75f
+/* 2026-11-20: louder by default -- +4 dB, peaks up to 85 % of full scale (was 0 dB, 75 %). The speaker
+ * is a 1510 mini speaker, 8 ohm, 1 W: 85 % of the MAX98357A's ~1.4 W full scale is ~1.0 W at the
+ * loudest peaks, so it stays inside the rating (speech averages far below its peaks).
+ * The keys are "...2" so a tuning saved by an older firmware does not keep the old, quieter level. */
+#define TUNE_DEFAULT_GAIN  4.0f
+#define TUNE_DEFAULT_CEIL  0.85f
 
 static mpx_audio_tune_t s_tune = {
     .on = true, .hpf_hz = TUNE_DEFAULT_HPF, .gain_db = TUNE_DEFAULT_GAIN,
@@ -95,10 +99,10 @@ static void load_once(void)
         if (nvs_get_i32(h, "t_hpf", &v) == ESP_OK && v >= 0 && v <= 4000) {
             s_tune.hpf_hz = (int)v;
         }
-        if (nvs_get_i32(h, "t_gain", &v) == ESP_OK && v >= -200 && v <= 200) {
+        if (nvs_get_i32(h, "t_gain2", &v) == ESP_OK && v >= -200 && v <= 200) {
             s_tune.gain_db = (float)v / 10.0f;
         }
-        if (nvs_get_i32(h, "t_ceil", &v) == ESP_OK && v >= 10 && v <= 100) {
+        if (nvs_get_i32(h, "t_ceil2", &v) == ESP_OK && v >= 10 && v <= 100) {
             s_tune.ceiling = (float)v / 100.0f;
         }
         nvs_close(h);
@@ -129,8 +133,8 @@ esp_err_t mpx_audio_tune_set(const mpx_audio_tune_t *t)
     if (nvs_open(TUNE_NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
         nvs_set_i32(h, "t_on", s_tune.on ? 1 : 0);
         nvs_set_i32(h, "t_hpf", s_tune.hpf_hz);
-        nvs_set_i32(h, "t_gain", (int32_t)lroundf(s_tune.gain_db * 10.0f));
-        nvs_set_i32(h, "t_ceil", (int32_t)lroundf(s_tune.ceiling * 100.0f));
+        nvs_set_i32(h, "t_gain2", (int32_t)lroundf(s_tune.gain_db * 10.0f));
+        nvs_set_i32(h, "t_ceil2", (int32_t)lroundf(s_tune.ceiling * 100.0f));
         nvs_commit(h);
         nvs_close(h);
     } else {

@@ -70,14 +70,14 @@ typedef struct {
 
 static dev_audio_codec_handles_t *s_mic;
 static i2s_chan_handle_t s_tx;
-/* Software output volume, percent. 80 by default. The MAX98357A has no volume
+/* Software output volume, percent. 100 by default. The MAX98357A has no volume
  * control of its own and, at its default 9 dB gain on 5 V, pushes about
  * 1.4 W into 8 ohms at full scale -- more than the 1 W speaker this robot
  * ships with can take, which is what crackles. 80% keeps full-scale peaks
  * under ~1 W; the voice server shapes the speech for the same speaker.
  * Saved in NVS under the namespace and key mpv2 used ("voice" / "vol"), so a
  * level set on mpv2 carries over and `audio vol N` survives a reboot. */
-#define MPX_AUDIO_VOLUME_DEFAULT 80
+#define MPX_AUDIO_VOLUME_DEFAULT 100
 #define MPX_AUDIO_NVS_NS         "voice"
 #define MPX_AUDIO_NVS_KEY        "vol"
 static int s_volume = MPX_AUDIO_VOLUME_DEFAULT;

@@ -3,6 +3,7 @@
   import Controller from "./Controller.svelte";
   import Ps4Controller from "./Ps4Controller.svelte";
   import ActionIcon from "./ActionIcon.svelte";
+  import VolumeSlider from "./VolumeSlider.svelte";
   import ActionAssignment from "./ActionAssignment.svelte";
   import AddActionView from "./AddActionView.svelte";
   import AllActions from "./AllActions.svelte";
@@ -55,50 +56,27 @@
   }
 
   // ── Moves catalogue ─────────────────────────────────────────
+  // 2026-11-20: only these moves are shown in the app. The firmware still has
+  // the others (skills, Lua, voice and the SDK can call them by name).
   const actions = [
-    { id: "left",     label: "Strafe Left",  emoji: "◀️",  color: colors.mpx.action_green, category: "gait" },
-    { id: "right",    label: "Strafe Right", emoji: "▶️",  color: colors.mpx.action_green, category: "gait" },
-    { id: "step",     label: "Step",         emoji: "🦶", color: "#14A37F",              category: "gait" },
-    { id: "jump",     label: "Jump",         emoji: "🤸", color: "#D97A29",              category: "gait" },
-    { id: "stretch",  label: "Stretch",      emoji: "🧘", color: "#D96098",               category: "gait" },
-    { id: "twerk",    label: "Twerk",        emoji: "💃", color: colors.mpx.action_purple, category: "gait" },
-    { id: "roll",     label: "Roll",         emoji: "🔄", color: "#14A37F",               category: "gait" },
-    { id: "pitch",    label: "Pitch",        emoji: "📐", color: "#14A37F",               category: "gait" },
-    { id: "balance",  label: "Balance",      emoji: "⚖️",  color: "#14A37F",               category: "gait" },
-    { id: "init",     label: "Init",         emoji: "🏁", color: "#7C7F7C",               category: "gait" },
-    { id: "none",     label: "Stop",         emoji: "⏹️",  color: "#D14949",               category: "gait" },
-    { id: "wiggle",   label: "Wiggle",       emoji: "🐕", color: "#C44569",               category: "gait" },
-    { id: "buttshrug",  label: "Butt Shrug",   emoji: "🍑", color: "#C44569",             category: "gait" },
-    { id: "bowback",  label: "Bow",          emoji: "🙇", color: "#AD5FBF",               category: "gait" },
-    { id: "bodycycle",label: "Body Circle",  emoji: "🔄", color: "#AD5FBF",               category: "gait" },
-    { id: "headellipse",label: "Head Circle", emoji: "🔄", color: "#AD5FBF",              category: "gait" },
-    { id: "mate", label: "Mate", emoji: "🐾", color: "#14A37F", category: "gait" },
-    { id: "alive", label: "Alive", emoji: "💓", color: "#14A37F", category: "gait" },
-    { id: "charshow", label: "Show Off", emoji: "🎭", color: "#AD5FBF", category: "gait" },
-    { id: "wakeup", label: "Wake Up", emoji: "😴", color: "#E08A2E", category: "gait" },
-    { id: "look", label: "Look Around", emoji: "👀", color: "#E08A2E", category: "gait" },
-    { id: "bow", label: "Play Bow", emoji: "🎉", color: "#E08A2E", category: "gait" },
-    { id: "trot", label: "Happy Trot", emoji: "🐾", color: "#E08A2E", category: "gait" },
-    { id: "chase", label: "Chase Tail", emoji: "🌀", color: "#E08A2E", category: "gait" },
-    { id: "dig", label: "Dig", emoji: "⛏️", color: "#E08A2E", category: "gait" },
     { id: "scratch", label: "Scratch", emoji: "🐕", color: "#E08A2E", category: "gait" },
-    { id: "shake", label: "Shake Off", emoji: "💦", color: "#E08A2E", category: "gait" },
+    { id: "look", label: "Look Around", emoji: "👀", color: "#E08A2E", category: "gait" },
     { id: "cower", label: "Scared", emoji: "😨", color: "#E08A2E", category: "gait" },
     { id: "paw", label: "Give Paw", emoji: "🤝", color: "#E08A2E", category: "gait" },
     { id: "surrender", label: "Hands Up", emoji: "🙆", color: "#C44569", category: "gait" },
-    { id: "sixseven", label: "6 7", emoji: "🤚", color: "#C44569", category: "gait" },
     { id: "pushup", label: "Push-ups", emoji: "💪", color: "#C44569", category: "gait" },
     { id: "spin90", label: "Spin 90°", emoji: "🔃", color: "#D97A29", category: "gait" },
-    { id: "farjump", label: "Far Jump", emoji: "🚀", color: "#D97A29", category: "gait" },
+    { id: "jump", label: "Jump", emoji: "🤸", color: "#D97A29", category: "gait" },
+    { id: "dig", label: "Dig", emoji: "⛏️", color: "#E08A2E", category: "gait" },
     { id: "backflip_k7_405_l2", label: "Backflip without screen", emoji: "🤸", color: "#117a65", category: "gait" },
     { id: "backflip_k7_405_l2d3", label: "Backflip safe with screen", emoji: "🤸", color: "#D14949", category: "gait" },
   ];
-  const DEFAULT_PINNED = ["paw", "surrender", "pushup", "stretch", "bow", "shake", "sixseven"];
+  const DEFAULT_PINNED = ["scratch", "look", "cower", "paw", "surrender", "pushup", "spin90", "jump", "dig", "backflip_k7_405_l2", "backflip_k7_405_l2d3"];
 
   // ── Saved in the browser ────────────────────────────────────
-  const KEY_ASSIGN = "mpx_action_assignments";
+  const KEY_ASSIGN = "mpx_action_assignments_v2";   // v2 (2026-11-20): the new move list and button defaults
   const KEY_CUSTOM = "mpx_custom_actions";
-  const KEY_PINNED = "mpx_pinned_actions";
+  const KEY_PINNED = "mpx_pinned_actions_v2";
   const KEY_SYSTEM_MONITOR = "mpx_system_monitor_enabled";
   let systemMonitorEnabled = $state(true);
   try {
@@ -366,6 +344,8 @@
                 <p class="controller-pending">Controller unavailable — reconnect to the robot.</p>
               {/if}
             </div>
+
+            <VolumeSlider {online} />
 
             <section class="quick" aria-labelledby="quick-title">
               <div class="quick-head">
