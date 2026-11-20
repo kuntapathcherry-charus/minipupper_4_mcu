@@ -54,8 +54,13 @@
 #ifndef CONFIG_APP_VOICE_BARGE_IN
 #define CONFIG_APP_VOICE_BARGE_IN 1
 #endif
-#ifndef CONFIG_APP_VOICE_DUAL_MIC_AEC
-#define CONFIG_APP_VOICE_DUAL_MIC_AEC 1
+/* No fallback for DUAL_MIC_AEC: a Kconfig bool that is OFF is simply not defined in sdkconfig.h, so
+ * "#ifndef ... 1" turned it back ON and the setting could never be switched off (2026-11-20: the
+ * dual-mic AFE ran out of PSRAM at boot with the RL policies built in). Undefined = single-mic. */
+#if defined(CONFIG_APP_VOICE_DUAL_MIC_AEC) && CONFIG_APP_VOICE_DUAL_MIC_AEC
+#define MPX_VOICE_DUAL_MIC_AEC 1
+#else
+#define MPX_VOICE_DUAL_MIC_AEC 0
 #endif
 
 static const char *TAG = "mpx_voice_wake";
@@ -93,7 +98,7 @@ static const char *TAG = "mpx_voice_wake";
  * If the codec will not open 4 channels, fall back to 2 channels as "MN":
  * the wake word still works, but with no reference there is no echo
  * cancellation, so barge-in cannot hear you over the robot's own voice. */
-#if CONFIG_APP_VOICE_DUAL_MIC_AEC
+#if MPX_VOICE_DUAL_MIC_AEC
 #define WAKE_FORMAT_4CH        "MMNR"
 #else
 #define WAKE_FORMAT_4CH        "RMNN"

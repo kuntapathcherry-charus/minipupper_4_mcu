@@ -240,6 +240,12 @@ CONFIG_LV_BUILD_DEMOS=n
 # off again.
 CONFIG_APP_AUDIO_ENABLE=y
 CONFIG_APP_VOICE_ENABLE=y
+# No periodic IMU lines in the log (main/robot/imu.cc); turn back on in menuconfig to debug the IMU.
+# CONFIG_APP_IMU_LOG_ENABLE is not set
+# Single-microphone echo cancelling (RMNN), 2026-11-20: the two-microphone layout (MMNR) needs more PSRAM
+# than is left with the RL policies built in (XIP copies the whole image into the 8 MB PSRAM), and esp-sr
+# crashed creating the wake-word model at boot instead of falling back. Barge-in still works.
+# CONFIG_APP_VOICE_DUAL_MIC_AEC is not set
 # Keep the voice LLM and MCP client in the gateway, out of the audio turn path.
 # ESP-Claw remains available to the PWA and agent API.
 CONFIG_APP_VOICE_BRAIN_LOCAL=n

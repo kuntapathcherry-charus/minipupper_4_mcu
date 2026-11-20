@@ -26,6 +26,7 @@
 #if CONFIG_APP_VOICE_ENABLE
 #include "cap_music.h"
 #include "voice/voice_glue.h"
+#include "audio/mpx_audio.h"
 #endif
 
 namespace robot_tools {
@@ -563,6 +564,30 @@ Reply music_stop(const cJSON *)
     cJSON_AddBoolToObject(o, "was_playing", was);
     return { print_and_free(o), false };
 }
+
+/* The speaker volume (software, 0-100 %, saved in NVS; mpx_audio). The model had no tool for it, so
+ * "louder" or "volume 100" by voice did nothing. percent sets it, change steps it, neither reads it.
+ * mpx_audio_set_volume() writes NVS: fine from the voice_tools task's PSRAM stack with SPIRAM XIP on,
+ * as robot_set_config already does. */
+Reply speaker_set_volume(const cJSON *args)
+{
+    const int was = mpx_audio_get_volume();
+    int v = was;
+    const cJSON *p = args ? cJSON_GetObjectItem(args, "percent") : nullptr;
+    const cJSON *c = args ? cJSON_GetObjectItem(args, "change") : nullptr;
+    if (cJSON_IsNumber(p)) {
+        v = (int)std::lround(clampf((float)p->valuedouble, 0.0f, 100.0f));
+    } else if (cJSON_IsNumber(c)) {
+        v = (int)std::lround(clampf((float)(was + c->valuedouble), 0.0f, 100.0f));
+    }
+    if (v != was) mpx_audio_set_volume(v);
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddBoolToObject(o, "ok", true);
+    cJSON_AddNumberToObject(o, "volume", mpx_audio_get_volume());
+    cJSON_AddNumberToObject(o, "was", was);
+    if (!mpx_audio_have_speaker()) cJSON_AddStringToObject(o, "note", "this robot has no speaker");
+    return { print_and_free(o), false };
+}
 #endif  /* CONFIG_APP_VOICE_ENABLE */
 
 /* ── the table ───────────────────────────────────────────────────────── */
@@ -744,6 +769,20 @@ const Tool kTools[] = {
       nullptr,
       "{\"type\":\"object\",\"properties\":{}}",
       music_stop },
+    { "speaker_set_volume", kGroupMusic,
+      "Set how loud the robot's speaker is (its voice and music), 0 to 100 percent; "
+      "it is saved. Use percent for an exact level: 'volume 100', 'maximum' or 'full "
+      "volume' = 100, 'mute' = 0. Use change for a step: 'louder' = 20, 'quieter' = -20. "
+      "With no arguments it only reports the current volume.",
+      "Set the robot speaker volume (voice and music), 0-100 %, saved: percent for an exact "
+      "level (maximum = 100, mute = 0), change for a step (louder 20, quieter -20). No "
+      "arguments: read it.",
+      "{\"type\":\"object\",\"properties\":{"
+      "\"percent\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":100,"
+      "\"description\":\"The volume to set, 0-100.\"},"
+      "\"change\":{\"type\":\"integer\",\"minimum\":-100,\"maximum\":100,"
+      "\"description\":\"A step from the current volume, e.g. 20 (louder) or -20 (quieter).\"}}}",
+      speaker_set_volume },
 #endif
 };
 constexpr size_t kToolCount = sizeof(kTools) / sizeof(kTools[0]);

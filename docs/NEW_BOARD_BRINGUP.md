@@ -186,4 +186,12 @@ frame anyway.
 
 Parameters (`p`): 0 reverse_position_sensor, 1 min_position_adc,
 2 max_position_adc, 3 range_position_deg, 4 reverse_motor, 5 kp_position,
-6 kd_position, 7 kp_current, 8 kff_current, 9 max_pwm_duty_cycle.
+6 kd_position, 7 kp_current, 8 kff_current, 9 max_pwm_duty_cycle,
+10 ki_position, 11 control_mode, 12 pwm_scale,
+13 pcal_scale_lo, 14 pcal_scale_hi (pot calibration, AT32 settings version 30+).
+
+Pot calibration: set per motor in the factory test. 155 deg is the fixed middle (2048);
+the AT32 uses `2048 + (pot - 2048) * scale`, with `pcal_scale_lo` below 2048 and
+`pcal_scale_hi` above. 1 = no calibration. The AT32 only accepts 0.900..1.125 (at most
+10 deg of pot error at 65 / 245); anything else becomes 1. `restore` keeps them.
+WASM skills can read them but not write them.

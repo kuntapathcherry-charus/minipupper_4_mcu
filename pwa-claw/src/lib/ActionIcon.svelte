@@ -70,6 +70,8 @@
     longjump: "🦘",
     farjump: "🚀",
     backflip: "🤸",
+    backflip_k7_405_l2: "🤸",
+    backflip_k7_405_l2d3: "🤸",
   };
 
   const displayEmoji = $derived(emoji || builtinEmojis[id] || "⚙️");

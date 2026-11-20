@@ -236,6 +236,8 @@ enum {
     DB_PARAM_KI_POSITION,           /* 10  AT32 fw >= 0.0.7: position integral gain (0 = off)   */
     DB_PARAM_CONTROL_MODE,          /* 11  AT32 fw >= 0.0.8: DB_CONTROL_MODE_CURRENT / _PWM      */
     DB_PARAM_PWM_SCALE,             /* 12  AT32 fw >= 0.0.9: PWM mode duty per PID output        */
+    DB_PARAM_PCAL_SCALE_LO,         /* 13  AT32 config 30+: pot calibration, scale below 155 deg (1 = none) */
+    DB_PARAM_PCAL_SCALE_HI,         /* 14  AT32 config 30+: pot calibration, scale above 155 deg (1 = none) */
     DB_PARAM_COUNT
 };
 

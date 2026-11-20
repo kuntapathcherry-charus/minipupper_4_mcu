@@ -477,6 +477,7 @@ static const char *param_names[DB_PARAM_COUNT] = {
     "range_position_deg", "reverse_motor", "kp_position", "kd_position",
     "kp_current", "kff_current", "max_pwm_duty_cycle",
     "ki_position", "control_mode", "pwm_scale",
+    "pcal_scale_lo", "pcal_scale_hi",
 };
 
 const char *driver_board_param_name(int param_id)

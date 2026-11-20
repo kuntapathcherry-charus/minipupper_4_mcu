@@ -32,5 +32,12 @@ and say so, or find a direct, legal audio URL for it and pass that.
 Call `music_play` again to change station. The music waits while someone is
 talking to the robot and starts as soon as the conversation is over.
 
+## Volume
+
+`speaker_set_volume` sets how loud the speaker is, for the robot's voice and the
+music, and saves it: `{"percent": 100}` for "maximum" or "volume 100", `{"percent": 0}`
+to mute, `{"change": 20}` for "louder", `{"change": -20}` for "quieter". With no
+arguments it only reports the volume.
+
 The music tools are the only way to the speaker from here; they play at the
 right rate and a safe level for the robot's small speaker.

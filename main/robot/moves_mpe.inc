@@ -671,6 +671,42 @@ static const int16_t BF_T11_DELTA[8][13] = {
 static const uint16_t BF_T11_MOVE [9] = { 1000,  600,   20,   23,   57,   42,   30,   43,  600 };
 static const uint16_t BF_T11_DELAY[9] = {  500,  300,   31,   28,   87,   51,   35,  123,  300 };
 static const uint8_t  BF_T11_BLEND[9] = {  100,  100,  100,  100,  100,  100,  100,  100,  100 };
+// Backflip K7 405 L2, "K7405 L2 Without screen" (minipupperesp BF_T71, 2026-11-11): K7 405's push with a softer
+// landing for strong flips - the front legs reach further, both pairs land bent and keep folding. Played as
+// minipupperesp plays "Backflip K7 405...": +6 ms after frame 5 (shift_after 5, shift_ms 6).
+static const uint16_t BF_T12_REF[13] =
+    {    0,  425,  514,  658,  495,  507,  367,  504,  590,  455,  499,  512,  603 };
+static const int16_t BF_T12_DELTA[8][13] = {
+    {   0,    0, -101, -244,    0,  101,  244,    0, -152,  -38,    0,  152,   38},
+    {   0,    0, -163,   85,    0,  163,  -85,    0, -144,  -38,    0,  144,   38},
+    {   0,    0, -192,   13,    0,  192,  -13,    0, -281,   45,    0,  281,  -45},
+    {   0,    0, -395, -452,    0,  395,  452,    0,  169,  412,    0, -169, -412},
+    {   0,    0, -311, -446,    0,  311,  446,    0,  -25, -181,    0,   25,  181},
+    {   0,    0,   51,  -38,    0,  -51,   38,    0,   52,   64,    0,  -52,  -64},
+    {   0,    0,   72,  -63,    0,  -72,   63,    0,   92,   97,    0,  -92,  -97},
+    {   0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0},
+};
+static const uint16_t BF_T12_MOVE [9] = {  1000,   600,    16,    27,    74,    36,    27,    93,   600 };
+static const uint16_t BF_T12_DELAY[9] = {   500,   300,    20,    42,    37,    37,    27,   158,   300 };
+static const uint8_t  BF_T12_BLEND[9] = {   100,   100,   100,   100,   100,   100,   100,   100,   100 };
+// Backflip K7 405 L2D3, "L2D3 With screen" (minipupperesp 2026-11-16): L2's push with a landing that keeps the
+// DISPLAY off the floor - the front legs hold their reach so the paws touch before the nose, and the catch is armed
+// as they land (no stall); rear push 10 ms longer. Poses = minipupperesp BF_T73 (L2D2), timing = BF_T74.
+static const uint16_t BF_T13_REF[13] =
+    {    0,  425,  514,  658,  495,  507,  367,  504,  590,  455,  499,  512,  603 };
+static const int16_t BF_T13_DELTA[8][13] = {
+    {   0,    0, -101, -244,    0,  101,  244,    0, -152,  -38,    0,  152,   38},
+    {   0,    0, -163,   85,    0,  163,  -85,    0, -144,  -38,    0,  144,   38},
+    {   0,    0, -192,   13,    0,  192,  -13,    0, -281,   45,    0,  281,  -45},
+    {   0,    0, -395, -452,    0,  395,  452,    0,  169,  412,    0, -169, -412},
+    {   0,    0, -365, -470,    0,  365,  470,    0,  -48, -171,    0,   48,  171},
+    {   0,    0,   68,  -51,    0,  -68,   51,    0,   32,  109,    0,  -32, -109},
+    {   0,    0,  135,  -28,    0, -135,   28,    0,  116,   86,    0, -116,  -86},
+    {   0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0},
+};
+static const uint16_t BF_T13_MOVE [9] = {  1000,   600,    16,    27,    61,    67,    33,   109,   600 };
+static const uint16_t BF_T13_DELAY[9] = {   500,   300,    20,    52,    41,    94,    44,   162,   300 };
+static const uint8_t  BF_T13_BLEND[9] = {   100,   100,   100,   100,   100,   100,   100,   100,   100 };
 
 struct BfPreset {
     const char     *name;       // wire name
@@ -710,6 +746,11 @@ const BfPreset BF_PRESETS[] = {
       BF_T10_REF, &BF_T10_DELTA[0][0], BF_T10_MOVE, BF_T10_DELAY, BF_T10_BLEND, 5, 6 },
     { "backflip_k7h",       "Backflip K7H: K7 + hip damper (minipupperesp), Strong", 9,
       BF_T11_REF, &BF_T11_DELTA[0][0], BF_T11_MOVE, BF_T11_DELAY, BF_T11_BLEND, 5, 14 },
+    // minipupperesp's 405 g flips L2 and L2D3, with its fixed +6 ms after frame 5 for "Backflip K7 405..." names
+    { "backflip_k7_405_l2",   "Backflip without screen (K7 405 L2): K7 405 push + soft landing (minipupperesp), Strong", 9,
+      BF_T12_REF, &BF_T12_DELTA[0][0], BF_T12_MOVE, BF_T12_DELAY, BF_T12_BLEND, 5, 6 },
+    { "backflip_k7_405_l2d3", "Backflip safe with screen (K7 405 L2D3): L2 push + landing that keeps the display off the floor (minipupperesp), Strong", 9,
+      BF_T13_REF, &BF_T13_DELTA[0][0], BF_T13_MOVE, BF_T13_DELAY, BF_T13_BLEND, 5, 6 },
 };
 constexpr int BF_NPRESETS = sizeof(BF_PRESETS) / sizeof(BF_PRESETS[0]);
 constexpr int BF_MAX_FRAMES = 32;

@@ -1956,7 +1956,7 @@ static esp_err_t studio_dump_handler(httpd_req_t *req)
     STUDIO_NEED_MODE(req);
     STUDIO_NEED_ID(req, id);
 
-    char b[640];
+    char b[896];   // 15 parameters
     int n = std::snprintf(b, sizeof b, R"({"ok":true,"id":%d,"params":[)", id);
     for (int p = 0; p < DB_PARAM_COUNT; ++p) {
         float v;

@@ -693,7 +693,9 @@ inline bool param_is_read_only(int32_t param)
 		|| param == DB_PARAM_MAX_POSITION_ADC
 		|| param == DB_PARAM_RANGE_POSITION_DEG
 		|| param == DB_PARAM_REVERSE_MOTOR
-		|| param == DB_PARAM_REVERSE_POSITION_SENSOR;
+		|| param == DB_PARAM_REVERSE_POSITION_SENSOR
+		|| param == DB_PARAM_PCAL_SCALE_LO       /* pot calibration: set in the factory */
+		|| param == DB_PARAM_PCAL_SCALE_HI;
 }
 
 /* ── Undoing what a skill did to the gains ────────────────────────────────

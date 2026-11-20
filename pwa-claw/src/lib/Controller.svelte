@@ -37,7 +37,7 @@
     { id: "action-top",    pos: "top",    fallback: "jump",    tone: "#14907F", shape: "triangle" },
     { id: "action-left",   pos: "left",   fallback: "stretch", tone: "#C2338A", shape: "square" },
     { id: "action-right",  pos: "right",  fallback: "twerk",   tone: "#D83A34", shape: "circle" },
-    { id: "action-bottom", pos: "bottom", fallback: "situp",   tone: "#2D6BCB", shape: "pentagon" },
+    { id: "action-bottom", pos: "bottom", fallback: "surrender", tone: "#2D6BCB", shape: "pentagon" },
   ];
 
   function slotAction(slot) {
@@ -302,7 +302,7 @@
     "dpad-down": "heightdown",
     "action-top": "jump",
     "action-right": "twerk",
-    "action-bottom": "situp",
+    "action-bottom": "surrender",
     "action-left": "stretch",
   };
   let pressed = $state(new Set());
