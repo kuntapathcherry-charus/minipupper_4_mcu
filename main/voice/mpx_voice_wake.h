@@ -59,6 +59,9 @@ extern "C" {
  * `mpx_voice_wake_start()`), so the mic stays free for `voice talk` until
  * a caller actually asks for wake-word detection. Idempotent. */
 esp_err_t mpx_voice_wake_init(void);
+/* Release AFE, WakeNet and the barge ring after voice_glue has stopped and
+ * joined their tasks. A later init recreates them for the next voice session. */
+esp_err_t mpx_voice_wake_deinit(void);
 
 /* Opens the microphone and starts the feed/fetch tasks. Refuses with
  * ESP_ERR_INVALID_STATE if mpx_audio_capture_active() is already true
@@ -70,7 +73,7 @@ esp_err_t mpx_voice_wake_start(void);
  * tasks to actually exit before returning, so it is safe to call
  * mpx_voice_talk_start() immediately afterwards. Safe to call when not
  * running. */
-void mpx_voice_wake_stop(void);
+esp_err_t mpx_voice_wake_stop(void);
 
 bool mpx_voice_wake_active(void);
 
@@ -93,7 +96,7 @@ esp_err_t mpx_voice_wake_auto_start(void);
 
 /* Leave hands-free mode: cuts short any talk in progress, stops listening,
  * releases the microphone. Safe to call when not running. */
-void mpx_voice_wake_auto_stop(void);
+esp_err_t mpx_voice_wake_auto_stop(void);
 
 bool mpx_voice_wake_auto_active(void);
 

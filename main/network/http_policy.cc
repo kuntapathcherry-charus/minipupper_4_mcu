@@ -450,9 +450,43 @@ esp_err_t policy_post_handler(httpd_req_t *req)
     const bool set_aright = cJSON_IsBool(aright);
     const bool auto_right = cJSON_IsTrue(aright);
     cJSON_Delete(body);
+    /* Model selection can itself be the first request. Load the requested
+     * model/format before starting workers so a broken or oversized default
+     * cannot prevent selecting a working alternative. */
+    if (strcmp(action, "policy") == 0 || strcmp(action, "weights") == 0) {
+        char why[96] = "";
+        const esp_err_t e = strcmp(action, "policy") == 0
+                                ? mpx_policy_select(pname, why, sizeof(why))
+                                : mpx_policy_set_weight_bits(bits, why, sizeof(why));
+        if (e != ESP_OK) return status_reply(req, "409 Conflict", why);
+        const esp_err_t ie = mpx_policy_init();
+        if (ie != ESP_OK) {
+            snprintf(why, sizeof(why), "policy initialization failed: %s", esp_err_to_name(ie));
+            ESP_LOGW(TAG, "%s", why);
+            return status_reply(req, "503 Service Unavailable", why);
+        }
+        return status_reply(req, "200 OK", nullptr);
+    }
     /* "always gets back up": with any action, or alone ({"action":"settings","auto_right":true}) */
+    /* Boot and GET status stay idle. The first real policy command pays the
+     * load/self-test cost and starts the workers; steering an already active
+     * run, keepalive and stop must not trigger initialization. Enabling
+     * unattended auto-right is also a real request: its timer must exist. */
+    const bool needs_init = strcmp(action, "run") == 0 || strcmp(action, "getup") == 0 ||
+                            strcmp(action, "climb") == 0 || strcmp(action, "test") == 0 ||
+                            strcmp(action, "bench") == 0 || (set_aright && auto_right);
+    if (needs_init) {
+        const esp_err_t e = mpx_policy_init();
+        if (e != ESP_OK) {
+            char why[96];
+            snprintf(why, sizeof(why), "policy initialization failed: %s", esp_err_to_name(e));
+            ESP_LOGW(TAG, "%s", why);
+            return status_reply(req, "503 Service Unavailable", why);
+        }
+    }
     if (set_aright) mpx_policy_set_auto_right(auto_right);
     if (strcmp(action, "settings") == 0) {
+        if (set_aright && !auto_right && !mpx_policy_active()) mpx_policy_stop("auto-right disabled");
         return status_reply(req, "200 OK", nullptr);
     }
     if (strcmp(action, "cmd") != 0 && strcmp(action, "keepalive") != 0) {
@@ -470,6 +504,7 @@ esp_err_t policy_post_handler(httpd_req_t *req)
                 snprintf(why, sizeof(why), "a run without Wi-Fi needs a time (up to %.0f s)", OFFLINE_MAX_S);
             }
             ESP_LOGW(TAG, "run refused: %s", why);
+            mpx_policy_stop("offline run refused");
             return status_reply(req, "409 Conflict", why);
         }
         if (set_gauto && !mpx_policy_active()) (void)mpx_policy_set_auto_getup(getup_auto);
@@ -477,6 +512,7 @@ esp_err_t policy_post_handler(httpd_req_t *req)
         if (mpx_policy_start(seconds, hold, force, dry, why, sizeof(why)) != ESP_OK) {
             ESP_LOGW(TAG, "run refused: %s", why);
             mpx_policy_set_deadman_ms(DEADMAN_MS);
+            mpx_policy_stop("policy start refused");
             return status_reply(req, "409 Conflict", why);
         }
         mpx_policy_set_cmd(vx, vy, wz);   /* only once accepted */
@@ -499,6 +535,7 @@ esp_err_t policy_post_handler(httpd_req_t *req)
         mpx_policy_set_deadman_ms(DEADMAN_MS);
         if (mpx_policy_getup(force, why, sizeof(why)) != ESP_OK) {
             ESP_LOGW(TAG, "getup refused: %s", why);
+            mpx_policy_stop("get-up start refused");
             return status_reply(req, "409 Conflict", why);
         }
         ESP_LOGI(TAG, "getup");
@@ -510,6 +547,7 @@ esp_err_t policy_post_handler(httpd_req_t *req)
         mpx_policy_set_deadman_ms(DEADMAN_MS);
         if (mpx_policy_climb(force, why, sizeof(why)) != ESP_OK) {
             ESP_LOGW(TAG, "climb refused: %s", why);
+            mpx_policy_stop("climb start refused");
             return status_reply(req, "409 Conflict", why);
         }
         ESP_LOGI(TAG, "climb");
@@ -548,20 +586,6 @@ esp_err_t policy_post_handler(httpd_req_t *req)
         cJSON_AddNumberToObject(o, "us_avg", avg);
         cJSON_AddNumberToObject(o, "us_max", worst);
         return send_json(req, "200 OK", o);
-    }
-    if (strcmp(action, "policy") == 0) {
-        char why[96] = "";
-        if (mpx_policy_select(pname, why, sizeof(why)) != ESP_OK) {
-            return status_reply(req, "409 Conflict", why);
-        }
-        return status_reply(req, "200 OK", nullptr);
-    }
-    if (strcmp(action, "weights") == 0) {
-        char why[96] = "";
-        if (mpx_policy_set_weight_bits(bits, why, sizeof(why)) != ESP_OK) {
-            return status_reply(req, "409 Conflict", why);
-        }
-        return status_reply(req, "200 OK", nullptr);
     }
     if (strcmp(action, "bench") == 0) {
         char why[64] = "";

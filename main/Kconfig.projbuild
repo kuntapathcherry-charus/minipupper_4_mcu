@@ -629,7 +629,9 @@ config APP_POLICY_ENABLE
         at 50 Hz and drives the twelve servos through the same raw path as
         the Pi's RL link. The gait is parked and voice, wake-word detection
         and music are held for the run, then restored afterwards. The app's
-        RL Walk page starts and steers it through /v1/policy.
+        RL Walk page starts and steers it through /v1/policy. Models, workers
+        and the auto-right timer are initialized lazily by the first actual
+        policy command; boot and status polling leave them unallocated.
 
 if APP_POLICY_ENABLE
 
@@ -824,17 +826,6 @@ config APP_VOICE_BARGE_IN
         reply, so opening the microphone alone does not interrupt. AEC and
         server VAD work together to suppress residual speaker echo. Older gateways automatically retain wake-word-only
         barge-in.
-
-config APP_VOICE_DUAL_MIC_AEC
-    bool "Use both microphones plus speaker reference for AEC"
-    default y
-    help
-        Feed ESP-SR as MMNR: both ES7210 microphones, the unused channel,
-        and the amplifier's electrical output reference. This enables the
-        two-microphone array and acoustic echo cancellation for cleaned
-        barge-in uplink. If this AFE configuration cannot be created at run
-        time, firmware falls back to the proven RMNN single-microphone AEC
-        layout and logs the fallback.
 
 endif  # APP_VOICE_ENABLE
 

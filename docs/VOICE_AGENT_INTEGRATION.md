@@ -144,15 +144,16 @@ STT, the agent and TTS stay on the robot.
   itself still comes from the robot microphone (unless the panel's primary
   button is used), because browser wake-word detection is not implemented.
 
-### 1c. Full-duplex speech barge-in and dual-mic AEC
+### 1c. Full-duplex speech barge-in and reference AEC
 
 `CONFIG_APP_VOICE_BARGE_IN=y` advertises `features.barge_in`. When the gateway
 acknowledges it, `mpx_voice_wake.c` keeps AFE active during each reply and
 streams its enhanced mono PCM through a 16 KiB PSRAM ring to the existing
 Opus/TLS talk task in `listen mode:"barge_in"`. AFE remains the only I2S
 capture reader; the DSP fetch task never performs TLS. Both DSP task stacks
-are statically reserved in PSRAM (20 KiB feed, 32 KiB fetch): MMNR's larger
-heap footprint otherwise made dynamic task creation fail at boot. A mutex
+are statically reserved in PSRAM (20 KiB feed, 64 KiB fetch): reserving them
+up front avoids boot-time heap fragmentation and gives ESP-SR's DSP ample
+stack. A mutex
 separates producer/reset ownership, and the reader joins 32 ms AFE chunks
 into exact 60 ms frames without zero-padding or dropping large tails.
 Downlink continues while this barge-in talk is active.
@@ -177,15 +178,45 @@ through an arbitrarily long reply without unbounded PCM growth or a
 timeout-induced phantom turn. The timer starts once speech is confirmed;
 the stop notice is emitted before potentially slow provider cleanup.
 
-`CONFIG_APP_VOICE_DUAL_MIC_AEC=y` uses ESP-SR `MMNR`: both physical ES7210
-microphones plus the electrical speaker reference. Raw DMA `R,M,N,M` is
-reordered in place to `M,M,N,R`. This enables dual-microphone array
-processing and reference AEC for the actual uplink, rather than using AEC
-only for wake detection. If MMNR creation fails, boot logs a warning and
-retries proven single-mic `RMNN`; two-channel hardware fallback `MN` has no
-AEC. Builds cannot establish echo rejection, so physical validation must
-check false interruptions at several volumes as well as speech recognition
-while talking, AFE ring overruns, CPU, and internal heap.
+ESP-SR uses `RMNN`: one physical ES7210 microphone plus the electrical
+speaker reference. Raw DMA `R,M,N,M` already has that prefix, so the fourth
+slot is ignored. The previous dual-mic `MMNR` layout also ran blind-source
+separation; with FD AEC and Opus it saturated one core until its idle task
+watchdog fired. Single-mic FD retains nonlinear echo cancellation without
+that BSS pass. The front end uses `AFE_TYPE_FD`, not `AFE_TYPE_SR`:
+SR's linear-only AEC leaves enough residual TTS to trigger the gateway VAD
+and cancel the robot's own reply, while FD adds nonlinear residual-echo
+suppression for simultaneous capture and playback. AFE feed and fetch are
+pinned to core 1; Opus encode and decode are pinned to core 0.
+`afe_perferred_core` alone does not set the caller tasks' affinity.
+Two-channel hardware fallback `MN` has no AEC. Builds cannot establish echo
+rejection or safe CPU headroom, so physical validation must check for
+`AEC(FD_LOW_COST, NLP_AGGRESSIVE)` in the boot pipeline, false interruptions
+at several volumes, speech recognition while talking, no idle or interrupt
+watchdogs, AFE ring overruns, CPU, and internal heap.
+
+Known regression and planned follow-up: speech recognition is noticeably
+worse with one microphone than with the dual-mic array, because beamforming
+and blind-source separation are gone. Restoring `MMNR` is the intended
+long-term fix, but it must come with an answer for the CPU cost that made it
+unstable here -- measured candidates are the BSS/NLP pass inside `feed()`,
+the second WakeNet inference, and Opus sharing the same core. Do not simply
+re-enable the old dual-mic path: it produced idle-task watchdogs and ROM
+crashes within seconds of the first reply. Natural first experiments are a
+wider second core (moving Opus or WakeNet off core 1), decoding the AFE load
+per stage, or trying `AFE_TYPE_FD` with the dual-mic config but `AFE_MODE`
+high-performance only after the CPU budget is understood.
+
+Policy loading and WASM skill execution are explicit resource modes. After
+the counted voice hold has stopped and joined all AFE users,
+`mpx_voice_wake_deinit()` destroys AFE,
+WakeNet and the barge ring and frees the temporary AFE config. Policy logs are
+saved and all policy resources are released before `voice_glue::release()`
+recreates the front end. This ordering is required by PSRAM capacity; audio
+is not restarted merely because the servos stopped. The skill coordinator
+uses an internal 8 KiB stack because ESP-SR model teardown/initialization
+freezes flash caches; a PSRAM task stack would trigger ESP-IDF's cache-safety
+assertion.
 
 ### 1d. Stable I2S DMA allocation
 
@@ -317,6 +348,10 @@ else server brain (mcp), exactly today's behaviour
 A robot built with `CONFIG_APP_AGENT_ENABLE=n`, or one an owner set to "off" AI,
 keeps working with the old path — the stubs in `agent_runtime.cc:259` already
 return `ESP_ERR_INVALID_STATE`, so the check is cheap and honest.
+
+The durable configuration enables `APP_AGENT_ENABLE` for the PWA Local brain
+but explicitly keeps `APP_VOICE_BRAIN_LOCAL=n`: voice bypasses ESP-Claw and
+continues to use the gateway model plus native MCP tools directly.
 
 `voice_send_hello()` then advertises **either** `brain:"device"` **or** `mcp:true`,
 never both. `voice_tools::start()` runs only in server-brain mode (it costs a
@@ -624,9 +659,19 @@ Human-side (never claim these):
 - barge-in timing: a reply longer than 15 seconds must not time out merely
   because cleaned uplink is silent; ignored noise must emit capture-scoped
   `listen/rearm`, without STT or thinking UI, and accept a new utterance;
-- boot/DSP health: `session ready` says barge-in supported, AFE stays MMNR
-  (no RMNN fallback warning), and no `barge-in PCM ring overrun` appears;
-- boot log: internal RAM after each stage does not drop more than before.
+- boot/DSP health: `session ready` says barge-in supported, AFE stays RMNN
+  (no fallback to two-channel `MN`), WakeNet9S loads `wn9s_hiesp`, AFE uses
+  WebRTC VAD while the gateway uses Silero for conversation VAD, and no
+  `barge-in PCM ring overrun` appears;
+- all-systems RAM: `voice front end reserved` precedes `on-device agent
+  running`, hands-free listening starts, and neither scheduler init nor
+  LittleFS FD allocation reports `ESP_ERR_NO_MEM`;
+- boot log: record both internal RAM and PSRAM free/largest after each stage.
+  XIP leaves only about 1.4 MB of PSRAM heap, so PSRAM exhaustion can force
+  the voice task/queue internal fallbacks even when internal RAM looks low.
+  Chat/Lua queues carry pointers and allocate payloads in PSRAM only when
+  used; PWA fragment buffers live in external BSS. This avoids reserving
+  about 65 KB of internal RAM for idle chat storage.
 
 ---
 

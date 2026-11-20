@@ -10,9 +10,17 @@ a policy, selects the built-in networks and reads timing logs.
 skills, Lua, display, audio, voice and Wi-Fi features stay enabled. A policy
 takes the same counted `voice_glue::hold()` as a skill before it touches the
 robot: active voice work and music stop, wake-word detection is suspended,
-and local agent chat and new music requests are refused. The hold is acquired
-and released on the low-priority `pol_after` worker, never on the 200 Hz servo
-tick. The final release restores the voice state that existed before the run.
+and local agent chat and new music requests are refused. The first lazy load
+acquires that hold on the HTTP caller, then destroys AFE/WakeNet after its
+tasks have joined; this reclaims roughly 700 KiB of PSRAM for the policy.
+The 200 Hz servo tick never waits on audio teardown.
+
+Every run exit—timed completion, safety/dead-man stop, or Stop during an
+unlimited run—uses `pol_after` to save logs, delete policy workers/timer and
+free model files, quantized blocks, workspaces and log buffers. Only then
+does the final voice release recreate AFE and restore the prior voice state.
+Stop also releases a loaded-but-idle policy. Do not recreate AFE before the
+policy allocations have gone: the two working sets do not fit together.
 
 A policy refuses to overlap a skill, ROS host or another raw-servo
 controller. `robot::host::begin()` parks an ordinary gait or move when the
@@ -69,10 +77,17 @@ are available through **Omni (stick)**; **Walk forward** holds one forward
 speed. Recovery and stairs networks carry their own decoder and command
 contract in the `.mpxp` file.
 
-At boot the robot picks the first one made for itself (`APP_POLICY_ROBOT`,
-`sku1` or `sku2`, default `sku2`); the page switches between them. A policy
-for the other robot needs "Run a policy for …" on the page: another body can
-do anything on this one.
+On the first actual policy command the robot picks the first one made for
+itself (`APP_POLICY_ROBOT`, `sku1` or `sku2`, default `sku2`); the page switches
+between them. Boot and status polling do not load weights, run self-tests or
+create policy workers/timer. Start, Get up, Climb, model/test commands and
+enabling automatic recovery perform that lazy initialization. Loading is an
+explicit audio-off RL resource mode; Start or a model test keeps it loaded,
+and Stop releases it even if no motion began. A policy for the other robot
+needs "Run a policy for …" on the page: another body can do anything on this
+one. Automatic recovery keeps audio off while armed and is switched off when
+its run finishes, because the requested post-run policy release also disables
+the unattended watcher.
 
 **Walk + get-up · SKU2** (mini_pupper_4_recovery): with "never stays down" on, it walks, gets up after a fall and
 walks on, as the recovery repository's Pi runner does, on the ESP32 alone. "Use my calibration" runs it on the robot's
@@ -113,8 +128,12 @@ scale per row), so each step reads half or a quarter of the bytes. The
 self-test compares the result with training's own answers and falls back to
 floats if the rounding is too large (16-bit: 0.01° at worst; 8-bit: 0.4° mean,
 2.3° at worst). The page's **Network** card switches it until the next boot.
-The weights go to internal RAM only while `APP_POLICY_INTERNAL_RESERVE_KB`
-(96 KB) stays free for Wi-Fi; otherwise PSRAM. Persistent inference scratch
+Embedded MPXP files stay mapped from firmware rather than copied into one
+large PSRAM allocation; this avoids fragmentation blocking the walk or its
+get-up when total free PSRAM is sufficient. Quantized layers are separate
+runtime allocations. The weights go to internal RAM only while
+`APP_POLICY_INTERNAL_RESERVE_KB` (96 KB) stays free for Wi-Fi; otherwise
+PSRAM. Persistent inference scratch
 and the policy/network task stacks always use PSRAM. Only the low-priority
 log/audio worker keeps an internal stack because it writes LittleFS.
 

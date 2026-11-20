@@ -247,7 +247,9 @@ CONFIG_APP_VOICE_ENABLE=y
 # crashed creating the wake-word model at boot instead of falling back. Barge-in still works.
 # CONFIG_APP_VOICE_DUAL_MIC_AEC is not set
 # Keep the voice LLM and MCP client in the gateway, out of the audio turn path.
-# ESP-Claw remains available to the PWA and agent API.
+# ESP-Claw is enabled for the PWA Local brain, but voice bypasses it and uses
+# the gateway's native MCP tool bridge directly.
+CONFIG_APP_AGENT_ENABLE=y
 CONFIG_APP_VOICE_BRAIN_LOCAL=n
 CONFIG_APP_VOICE_AUTO_LISTEN=y
 
@@ -264,15 +266,18 @@ CONFIG_APP_POLICY_WEIGHT_BITS=16
 # insecure-origin exception for microphone capture. End-user images hide it.
 # CONFIG_APP_VOICE_PHONE_AUDIO is not set
 
-# local-claw: voice (main/voice). esp-sr's models: WakeNet 9 "Hi ESP", the
-# medium VADNet, WebRTC noise suppression (no model), no command recogniser;
-# packed into srmodels.bin and flashed to the `model` partition. Same set as
-# mpv2-claw's build; the AFE input layout they were measured with is in
-# mpx_voice_wake.c (WAKE_FORMAT_4CH).
+# local-claw: voice (main/voice). WakeNet 9S is Espressif's cost-down
+# "Hi ESP" model: fewer parameters and lower CPU/RAM than WakeNet 9, leaving
+# enough internal RAM for MMNR + ESP-Claw together. AFE uses WebRTC VAD;
+# the gateway's Silero VAD owns conversation endpointing/barge-in, so the
+# much larger VADNet model only duplicated work and exhausted both heaps.
+# Keep WebRTC NS and no command recogniser. Models are packed into
+# srmodels.bin and flashed to the `model` partition. The AFE input layout
+# is in mpx_voice_wake.c (WAKE_FORMAT_4CH).
 CONFIG_MODEL_IN_FLASH=y
 CONFIG_AFE_INTERFACE_V1=y
-CONFIG_SR_WN_WN9_HIESP=y
-CONFIG_SR_VADN_VADNET1_MEDIUM=y
+CONFIG_SR_WN_WN9S_HIESP=y
+CONFIG_SR_VADN_WEBRTC=y
 CONFIG_SR_NSN_WEBRTC=y
 CONFIG_SR_MN_CN_NONE=y
 CONFIG_SR_MN_EN_NONE=y

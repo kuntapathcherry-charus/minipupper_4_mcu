@@ -64,7 +64,7 @@
   const active = $derived(!!st?.active);
   const running = $derived(st?.phase === "run");
   const otherRobot = $derived(!!st && st.loaded && st.robot && st.robot !== st.this_robot);
-  const max = $derived(st?.cmd_max || [0.1, 0.1, 0.5]);
+  const max = $derived(st?.loaded && st.cmd_max ? st.cmd_max : [0.1, 0.1, 0.5]);
   const omni = $derived(!!st?.omni);
 
   // The command (m/s, m/s, rad/s): vy and wz positive = left. Walk forward
@@ -78,12 +78,12 @@
       ]);
 
   $effect(() => {
-    if (ownCal === null && st && st.available !== false) ownCal = !!st.own_calibration;
-    if (getupAuto === null && st && st.available !== false && st.getup_ready !== undefined) getupAuto = !!st.getup_auto;
+    if (ownCal === null && st?.loaded) ownCal = !!st.own_calibration;
+    if (getupAuto === null && st?.loaded) getupAuto = !!st.getup_auto;
   });
   $effect(() => { if (!active) { getupRun = false; climbRun = false; } });
-  const canGetUp = $derived(!!st?.getup_ready);
-  const canClimb = $derived(!!st?.climb_ready);
+  const canGetUp = $derived(!!st && st.available !== false && (st.getup_ready || !st.loaded));
+  const canClimb = $derived(!!st && st.available !== false && (st.climb_ready || !st.loaded));
   // Without Wi-Fi nothing can steer it: walk forward, for a set time.
   const offlineOk = $derived(mode === "forward" && seconds > 0 && seconds <= (st?.offline_max_s ?? 120));
 
@@ -192,10 +192,17 @@
     try {
       const body = {
         action: "run", seconds, vx: offline ? cmd[0] : 0, vy: 0, wz: 0, hold: 2, dry, force,
-        log: wantLog || offline, own_calibration: !!ownCal, offline,
+        log: wantLog || offline, offline,
       };
-      if (canGetUp) body.getup_auto = !!getupAuto;
+      // Before initialization these are unknown, not false: let firmware
+      // choose the calibration and recovery defaults of the selected model.
+      if (ownCal !== null) body.own_calibration = ownCal;
+      if (canGetUp && getupAuto !== null) body.getup_auto = getupAuto;
       const { r, j } = await call(body);
+      if (r.ok && runMeta) {
+        runMeta.ownCal = !!j?.own_calibration;
+        runMeta.getupAuto = !!j?.getup_auto;
+      }
       if (!r.ok) runMeta = null;
       if (!r.ok) say(j?.error ? `The robot said no: ${j.error}` : `The robot said no (HTTP ${r.status}).`, true);
       else if (offline) {
@@ -227,6 +234,10 @@
     if (busy || !recoveryWalk) return;
     if (st?.builtin !== recoveryWalk) await selectPolicy(recoveryWalk);
     if (st?.builtin !== recoveryWalk) return;   // could not load it (selectPolicy said why)
+    if (!st?.getup_ready) {
+      say("Balance needs the get-up policy, but it could not be loaded.", true);
+      return;
+    }
     mode = "forward";
     fwdSpeed = balSpeed;
     seconds = 0;
@@ -392,7 +403,7 @@
   // ── The built-in walk policies (main/rl/policies/) ──
   const POLICY_LABEL = { walk: "Walk · SKU1 v2 · 405 g", terrain: "Terrain · SKU2", sku1: "Walk · SKU1", sku1_terrain: "Terrain · SKU1", sku1_terr11k: "Terrain 2 · SKU1 · 11k", sku1_terr15k: "Terrain 2 · SKU1 · 15k", sku1v2_stairs: "Stairs · SKU1 v2", sku1v2_405_stairs: "Stairs · SKU1 v2 · 405 g", sku1v2_405_walk: "Walk · SKU1 v2 · 405 g", sku1v2_405v2_stairs: "Stairs · SKU1 v2 · v3", sku2_stairs: "Stairs · SKU2", sku2_recovery: "Walk + get-up · SKU2", sku1v2_recovery: "Walk + get-up · SKU1 v2" };
   async function selectPolicy(name) {
-    if (busy || st?.builtin === name) return;
+    if (busy || (st?.loaded && st?.builtin === name)) return;
     busy = true;
     say(`Loading the ${POLICY_LABEL[name] || name} policy…`);
     try {
@@ -624,7 +635,7 @@
             <span class="txt">
               <span class="t">{away ? "On its own · Wi-Fi off" : PHASE[st.phase] || st.state}{st.dry && active ? " · dry" : ""}</span>
               <span class="d">
-                {climbRun ? `${st.climb_name} · the climb policy` : getupRun ? `${st.getup_name} · the get-up policy` : st.loaded ? `${st.name} · for ${st.robot}` : "No policy loaded"}
+                {climbRun ? `${st.climb_name} · the climb policy` : getupRun ? `${st.getup_name} · the get-up policy` : st.loaded ? `${st.name} · for ${st.robot}` : "Loads on first start · audio off until Stop or run end"}
                 {st.own_calibration ? " · your calibration" : " · the policy's calibration"}
               </span>
             </span>
@@ -757,7 +768,7 @@
                 <button type="button" role="radio" aria-checked={balSpeed === b.v} class:on={balSpeed === b.v} onclick={() => (balSpeed = b.v)}>{b.label}</button>
               {/each}
             </div>
-            <button type="button" class="go" disabled={busy || !st.loaded} onclick={balance}>Start · {balSpeed === 0 ? "stand" : "walk 0.10 m/s"}, get up when it falls</button>
+            <button type="button" class="go" disabled={busy} onclick={balance}>Start · {balSpeed === 0 ? "stand" : "walk 0.10 m/s"}, get up when it falls</button>
             <p class="note">{POLICY_LABEL[recoveryWalk] || recoveryWalk}, until you press Stop. Push it from the front or the side: it rides out what it can, and when it falls it gets up by itself (up to 10 times) and goes back to {balSpeed === 0 ? "standing" : "walking"}. Clear space around it, and a soft floor for the first tries.</p>
           </section>
         {/if}
@@ -851,7 +862,7 @@
           </div>
         </section>
 
-        <button type="button" class="go" disabled={busy || !st.loaded} onclick={start}>{mode === "forward" ? `Start · ${fwdSpeed === 0 ? "stand and take pushes" : "walk forward " + fwdSpeed + " m/s"}${noWifi && offlineOk ? " · no Wi-Fi" : ""}` : "Start"}</button>
+        <button type="button" class="go" disabled={busy} onclick={start}>{mode === "forward" ? `Start · ${fwdSpeed === 0 ? "stand and take pushes" : "walk forward " + fwdSpeed + " m/s"}${noWifi && offlineOk ? " · no Wi-Fi" : ""}` : "Start"}</button>
         <p class="note">First runs: robot on a stand, feet off the ground. It stands up first (about 3 s), then walks where you drag. It stops by itself on a big tilt, a hot servo, or if this page stops talking to it for 2 s.</p>
 
         {#if canClimb}

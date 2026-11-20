@@ -205,7 +205,10 @@ constexpr double  STEP_S = TICKS_PER_STEP * TICK_US * 1e-6;
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
 // The loaded policy (PSRAM). Replaced only while idle.
-uint8_t  *s_file = nullptr;
+const uint8_t *s_file = nullptr;   /* built-ins map directly from firmware */
+bool       s_file_owned = false;   /* only heap-copied external files are freed */
+bool       s_gu_file_owned = false;
+bool       s_cl_file_owned = false;
 size_t    s_file_len = 0;
 pol_net_t s_net;
 float    *s_work = nullptr;
@@ -222,6 +225,7 @@ int       s_bits = CONFIG_APP_POLICY_WEIGHT_BITS;
 // The get-up policy (PSRAM; loaded once at init when built in).
 pol_net_t s_gu_net;
 float    *s_gu_work = nullptr;
+void     *s_gu_int_blk[MPXP_MAX_LAYERS] = {};
 bool      s_gu_ok = false;
 // The climb policy (policies/climb.mpxp), installed like the get-up's.
 pol_net_t s_cl_net;
@@ -319,6 +323,9 @@ volatile bool s_saving = false;
 enum class AudioHold : uint8_t { FREE, ACQUIRING, HELD, FAILED, RELEASING };
 std::atomic<AudioHold> s_audio_hold{AudioHold::FREE};
 esp_err_t s_audio_hold_err = ESP_OK;
+// Init loads under the audio hold, but must not release it before the HTTP
+// request has queued its run. A cancelled or finished request sets this.
+std::atomic<bool> s_release_on_idle{false};
 
 bool release_audio_hold()
 {
@@ -338,6 +345,46 @@ volatile mpx_policy_state_t s_state = MPX_POLICY_IDLE;
 
 TaskHandle_t       s_task  = nullptr;
 esp_timer_handle_t s_timer = nullptr;
+/* Published only after the walk and every required runtime resource are
+ * ready. The mutex itself is static: lazy init allocates no heap object just
+ * to serialize two first commands. */
+std::atomic<bool>  s_ready{false};
+StaticSemaphore_t  s_init_mutex_buf;
+SemaphoreHandle_t  s_init_mutex = nullptr;
+std::atomic<bool>  s_workers_run{false};
+StaticSemaphore_t  s_tick_done_buf, s_infer_done_buf, s_after_done_buf;
+SemaphoreHandle_t  s_tick_done, s_infer_done, s_after_done;
+std::atomic<uint32_t> s_stop_serial{0};
+
+void policy_lock()
+{
+    portENTER_CRITICAL(&s_mux);
+    if (!s_init_mutex) s_init_mutex = xSemaphoreCreateMutexStatic(&s_init_mutex_buf);
+    portEXIT_CRITICAL(&s_mux);
+    xSemaphoreTake(s_init_mutex, portMAX_DELAY);
+}
+
+void policy_unlock()
+{
+    xSemaphoreGive(s_init_mutex);
+}
+
+esp_err_t policy_acquire_audio()
+{
+    if (s_audio_hold.load() == AudioHold::HELD) return ESP_OK;
+    const esp_err_t err = voice_glue::hold("policy");
+    if (err != ESP_OK) {
+        voice_glue::release("policy");
+        return err;
+    }
+    const esp_err_t free_err = voice_glue::release_front_end();
+    if (free_err != ESP_OK) {
+        voice_glue::release("policy");
+        return free_err;
+    }
+    s_audio_hold.store(AudioHold::HELD);
+    return ESP_OK;
+}
 
 // ── run state (tick task only) ──────────────────────────────────────────
 struct Run {
@@ -1040,14 +1087,17 @@ void policy_apply()
 
 void infer_task(void *)
 {
-    for (;;) {
-        (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    while (s_workers_run.load(std::memory_order_acquire)) {
+        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
+        if (!s_workers_run.load(std::memory_order_acquire)) break;
         if (s_job.state.load() != JOB_RUNNING) continue;
         const int64_t t0 = esp_timer_get_time();
         pol_forward(s_job.net, s_job.obs, s_job.raw, s_job.work);
         s_job.us = static_cast<uint32_t>(esp_timer_get_time() - t0);
         s_job.state.store(JOB_DONE);
     }
+    xSemaphoreGive(s_infer_done);
+    vTaskDelete(NULL);
 }
 
 /* A GETUP step: the get-up network, then is the robot standing (upright,
@@ -1633,8 +1683,9 @@ void tick_cb(void *)
 
 void tick_task(void *)
 {
-    for (;;) {
-        (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    while (s_workers_run.load(std::memory_order_acquire)) {
+        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
+        if (!s_workers_run.load(std::memory_order_acquire)) break;
         const int64_t now = esp_timer_get_time();
         bool start, stop;
         char why[64];
@@ -1679,12 +1730,14 @@ void tick_task(void *)
             continue;
         }
         if (s_state == MPX_POLICY_IDLE) {
-            if (s_audio_hold.load() == AudioHold::HELD) {
+            if (s_audio_hold.load() == AudioHold::HELD && s_release_on_idle.load()) {
                 release_audio_hold();
             } else if (s_audio_hold.load() == AudioHold::FAILED) {
                 s_audio_hold.store(AudioHold::FREE);
             }
-            if (s_audio_hold.load() == AudioHold::FREE) auto_right_tick(now);
+            const AudioHold audio = s_audio_hold.load();
+            if (audio == AudioHold::FREE ||
+                (audio == AudioHold::HELD && !s_release_on_idle.load())) auto_right_tick(now);
             continue;
         }
         read_imu(now);
@@ -1707,6 +1760,8 @@ void tick_task(void *)
             portEXIT_CRITICAL(&s_mux);
         }
     }
+    xSemaphoreGive(s_tick_done);
+    vTaskDelete(NULL);
 }
 
 bool place_layers(pol_net_t *net, int bits, void *blk[MPXP_MAX_LAYERS], size_t *bytes_int, size_t *bytes_all,
@@ -1723,7 +1778,8 @@ bool selftest_ok(int bits, float raw, float worst_deg)
     return worst_deg < 5.0f;
 }
 
-esp_err_t install(uint8_t *file, size_t len, bool builtin, int bits, char *why, int why_len)
+esp_err_t install(const uint8_t *file, size_t len, bool builtin, bool file_owned,
+                  int bits, char *why, int why_len)
 {
     pol_net_t net;
     const char *err = pol_parse(file, len, &net);
@@ -1782,7 +1838,8 @@ esp_err_t install(uint8_t *file, size_t len, bool builtin, int bits, char *why, 
                                static_cast<double>(worst_deg));
         return ESP_ERR_INVALID_STATE;
     }
-    uint8_t *old_file = s_file;
+    const uint8_t *old_file = s_file;
+    const bool old_file_owned = s_file_owned;
     float *old_work = s_work;
     void *old_blk[MPXP_MAX_LAYERS];
     std::memcpy(old_blk, s_int_blk, sizeof(old_blk));
@@ -1791,6 +1848,7 @@ esp_err_t install(uint8_t *file, size_t len, bool builtin, int bits, char *why, 
     s_weight_bytes = b_all;
     s_bits = bits;
     s_file = file;
+    s_file_owned = file_owned;
     s_file_len = len;
     s_net = net;
     s_work = work;
@@ -1811,7 +1869,7 @@ esp_err_t install(uint8_t *file, size_t len, bool builtin, int bits, char *why, 
     s_st.weights_worst_deg = worst_deg;
     s_st.weights_mean_deg = mean_deg;
     portEXIT_CRITICAL(&s_mux);
-    if (old_file) heap_caps_free(old_file);
+    if (old_file_owned && old_file) heap_caps_free((void *)old_file);
     if (old_work) heap_caps_free(old_work);
     free_blocks(old_blk);
     ESP_LOGI(TAG, "policy %s (%s, for %s): %u layers, %d-bit weights, %u of %u KB in internal RAM, "
@@ -1827,15 +1885,8 @@ esp_err_t install(uint8_t *file, size_t len, bool builtin, int bits, char *why, 
 #define CONFIG_APP_POLICY_INTERNAL_RESERVE_KB 96
 #endif
 
-uint8_t *alloc_file(size_t len)
-{
-    uint8_t *p = static_cast<uint8_t *>(heap_caps_aligned_alloc(4, len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    if (!p) p = static_cast<uint8_t *>(heap_caps_aligned_alloc(4, len, MALLOC_CAP_8BIT));
-    return p;
-}
-
-/* The built-in get-up policy, once at init (it stays in PSRAM: GETUP is
- * short, and internal RAM goes to the walk first). It must be a get-up
+/* The built-in get-up policy, once at init (the MPXP stays mapped in
+ * firmware; only quantized layers/scratch allocate). It must be a get-up
  * policy, run on the walk's timing and servo directions, and pass its own
  * self-test. */
 void install_getup()
@@ -1862,9 +1913,7 @@ void install_getup()
         }
     }
     const size_t len = static_cast<size_t>(cand[pick].end - cand[pick].start);
-    uint8_t *f = alloc_file(len);
-    if (!f) return;
-    std::memcpy(f, cand[pick].start, len);
+    const uint8_t *f = cand[pick].start;
     pol_net_t net;
     const char *err = pol_parse(f, len, &net);
     const mpxp_header_t *h = err ? nullptr : net.h;
@@ -1904,6 +1953,7 @@ void install_getup()
             gworst = pol_selftest_deg(&net, work, &mean_deg);
             if (selftest_ok(s_bits, e, gworst)) {
                 gbits = s_bits;
+                std::memcpy(s_gu_int_blk, blk, sizeof(s_gu_int_blk));
             } else {
                 free_blocks(blk);
                 (void)pol_parse(f, len, &net);   // back to the file's floats
@@ -1917,7 +1967,6 @@ void install_getup()
     if (err) {
         ESP_LOGE(TAG, "built-in get-up policy refused: %s", err);
         if (work) heap_caps_free(work);
-        heap_caps_free(f);
         return;
     }
     if (gbits != 32)
@@ -1940,15 +1989,13 @@ void install_getup()
 #endif
 }
 
-/* The built-in climb policy, once at init (PSRAM, like the get-up's): a CLIMB policy with its reference, on the
+/* The built-in climb policy, once at init (mapped like the get-up's): a CLIMB policy with its reference, on the
  * walk's timing and servo directions, passing its own self-test. */
 void install_climb()
 {
 #ifdef MPX_POLICY_HAVE_CLIMB
     const size_t len = static_cast<size_t>(climb_mpxp_end - climb_mpxp_start);
-    uint8_t *f = alloc_file(len);
-    if (!f) return;
-    std::memcpy(f, climb_mpxp_start, len);
+    const uint8_t *f = climb_mpxp_start;
     pol_net_t net;
     const char *err = pol_parse(f, len, &net);
     const mpxp_header_t *h = err ? nullptr : net.h;
@@ -1974,7 +2021,6 @@ void install_climb()
     if (err) {
         ESP_LOGE(TAG, "built-in climb policy refused: %s", err);
         if (work) heap_caps_free(work);
-        heap_caps_free(f);
         return;
     }
     s_cl_net = net;
@@ -2097,7 +2143,7 @@ const Builtin BUILTINS[] = {
 #endif
 #ifdef MPX_POLICY_HAVE_SKU2_RECOVERY
     // mini_pupper_4_recovery's walker (SKU2): with getup.mpxp (its get-up) and "never stays down", its Pi runner;
-    // before the SKU2 stairs, so an sku2 robot boots with it (the first built-in made for the robot)
+    // before the SKU2 stairs, so an sku2 robot defaults to it (the first built-in made for the robot)
     { "sku2_recovery", sku2_recovery_mpxp_start, sku2_recovery_mpxp_end },
 #endif
 #ifdef MPX_POLICY_HAVE_SKU2_STAIRS
@@ -2109,25 +2155,34 @@ const Builtin BUILTINS[] = {
 #endif
 };
 constexpr int N_BUILTINS = static_cast<int>(sizeof(BUILTINS) / sizeof(BUILTINS[0]));
-int s_builtin_sel = 0;
+int s_builtin_sel = -1;  // prospective default until a load or explicit selection
+
+int default_builtin_index()
+{
+    for (int i = 0; i < N_BUILTINS; ++i) {
+        const size_t len = static_cast<size_t>(BUILTINS[i].end - BUILTINS[i].start);
+        if (len < sizeof(mpxp_header_t)) continue;
+        mpxp_header_t hd;
+        std::memcpy(&hd, BUILTINS[i].start, sizeof(hd));
+        if (std::strncmp(hd.robot, CONFIG_APP_POLICY_ROBOT, sizeof(hd.robot)) == 0) return i;
+    }
+    return 0;
+}
 
 esp_err_t policy_load_builtin(int bits, char *why, int why_len)
 {
+    if (s_builtin_sel < 0) s_builtin_sel = default_builtin_index();
     if (s_state != MPX_POLICY_IDLE) {
         std::snprintf(why, why_len, "a run is on");
         return ESP_ERR_INVALID_STATE;
     }
     const Builtin &bi = BUILTINS[s_builtin_sel];
     const size_t len = static_cast<size_t>(bi.end - bi.start);
-    uint8_t *f = alloc_file(len);
-    if (!f) {
-        std::snprintf(why, why_len, "out of memory");
-        return ESP_ERR_NO_MEM;
-    }
-    std::memcpy(f, bi.start, len);
-    const esp_err_t e = install(f, len, true, bits, why, why_len);
-    if (e != ESP_OK) heap_caps_free(f);
-    return e;
+    /* Embedded MPXP is already readable const data. Copying 393 KiB into one
+     * PSRAM block made loading depend on heap fragmentation even when total
+     * free memory was ample; quantized runtime weights still get their own
+     * smaller blocks in place_layers(). */
+    return install(bi.start, len, true, false, bits, why, why_len);
 }
 
 /* The built-in policy in `bits`, or in floats when that fails (memory, or an
@@ -2560,20 +2615,89 @@ void save_getup_file()
     ESP_LOGW(TAG, "get-up log saved: %s (GET /v1/policy/getup_log)", GU_LOG_FILE);
 }
 
+void policy_free_resources()
+{
+    /* pol_parse keeps header/layer pointers into each MPXP file. Built-ins
+     * stay mapped in firmware; only an owned external copy would be freed. */
+    free_blocks(s_int_blk);
+    free_blocks(s_gu_int_blk);
+    if (s_work) heap_caps_free(s_work);
+    if (s_gu_work) heap_caps_free(s_gu_work);
+    if (s_cl_work) heap_caps_free(s_cl_work);
+    if (s_file_owned && s_file) heap_caps_free((void *)s_file);
+    if (s_gu_file_owned && s_gu_net.h) heap_caps_free((void *)s_gu_net.h);
+    if (s_cl_file_owned && s_cl_net.h) heap_caps_free((void *)s_cl_net.h);
+    if (s_log) heap_caps_free(s_log);
+    if (s_gu) heap_caps_free(s_gu);
+    s_file = nullptr;
+    s_file_owned = false;
+    s_gu_file_owned = s_cl_file_owned = false;
+    s_file_len = 0;
+    s_work = nullptr;
+    s_gu_work = nullptr;
+    s_cl_work = nullptr;
+    s_log = nullptr;
+    s_gu = nullptr;
+    s_log_n = s_log_dropped = s_gu_n = 0;
+    s_log_on = false;
+    std::memset(&s_net, 0, sizeof(s_net));
+    std::memset(&s_gu_net, 0, sizeof(s_gu_net));
+    std::memset(&s_cl_net, 0, sizeof(s_cl_net));
+    s_int_bytes = s_weight_bytes = 0;
+    s_gu_ok = s_cl_ok = s_auto_getup = false;
+    s_auto_right.store(false);
+    s_ar_run = false;
+    s_ar_since = s_ar_up_since = -1;
+    s_ar_next = 0;
+    s_ar_tries = 0;
+    s_ar_bias_ready = false;
+    s_job.net = nullptr;
+    s_job.state.store(JOB_IDLE);
+    portENTER_CRITICAL(&s_mux);
+    s_st.name[0] = '\0';
+    s_st.robot[0] = '\0';
+    s_st.omni = false;
+    s_st.getup_ready = s_st.climb_ready = false;
+    s_st.getup_name[0] = '\0';
+    s_st.climb_name[0] = '\0';
+    s_st.auto_getup = s_st.auto_right = false;
+    s_st.weights_bytes = s_st.weights_internal = 0;
+    s_st.weights_worst_deg = s_st.weights_mean_deg = 0;
+    portEXIT_CRITICAL(&s_mux);
+}
+
+void policy_stop_workers()
+{
+    if (s_timer) (void)esp_timer_stop(s_timer);
+    s_workers_run.store(false, std::memory_order_release);
+    if (s_task) xTaskNotifyGive(s_task);
+    if (s_infer) xTaskNotifyGive(s_infer);
+    /* Both workers leave every spinlock and model access before acknowledging.
+     * Never free a network underneath an in-flight inference or tick. */
+    if (s_task) xSemaphoreTake(s_tick_done, portMAX_DELAY);
+    if (s_infer) xSemaphoreTake(s_infer_done, portMAX_DELAY);
+    s_task = s_infer = nullptr;
+    if (s_timer) {
+        (void)esp_timer_delete(s_timer);
+        s_timer = nullptr;
+    }
+}
+
 void after_task(void *)
 {
     for (;;) {
         (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if (!s_workers_run.load(std::memory_order_acquire)) {
+            xSemaphoreGive(s_after_done);
+            vTaskDelete(NULL);
+        }
         const AudioHold audio = s_audio_hold.load();
         if (audio == AudioHold::ACQUIRING) {
             const esp_err_t err = voice_glue::hold("policy");
             s_audio_hold_err = err;
             s_audio_hold.store(err == ESP_OK ? AudioHold::HELD : AudioHold::FAILED);
-        } else if (audio == AudioHold::RELEASING) {
-            voice_glue::release("policy");
-            s_audio_hold.store(AudioHold::FREE);
         }
-        // Audio-only notifications must not save the previous run again.
+        // Save before freeing the log buffers and their model metadata.
         if (s_saving && s_state == MPX_POLICY_IDLE) {
             if (s_log && s_log_n > 0) {
                 log_summary();
@@ -2582,7 +2706,55 @@ void after_task(void *)
             if (s_gu && s_gu_n > 0) save_getup_file();
         }
         s_saving = false;
+        if (audio != AudioHold::RELEASING) continue;
+
+        /* Every exit lands here: timed completion, graceful/manual stop,
+         * dead-man, safety stop and an unlimited run stopped by the user.
+         * Release the model before recreating AFE; both need the same PSRAM. */
+        /* Stop/join policy workers before taking the lifecycle lock. The size
+         * benchmark does not use that lock; waiting for it while holding the
+         * lock would deadlock its own cleanup path. */
+        policy_stop_workers();
+        for (;;) {
+            portENTER_CRITICAL(&s_mux);
+            const bool busy = s_bench_busy;
+            portEXIT_CRITICAL(&s_mux);
+            if (!busy) break;
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        /* Self-tests, model changes and log/status readers now exclude the
+         * actual free. A concurrent new load may finish first, but cannot be
+         * freed while its caller is still using its allocations. */
+        policy_lock();
+        policy_free_resources();
+        s_release_on_idle.store(false);
+        voice_glue::release("policy");
+        s_audio_hold.store(AudioHold::FREE);
+        s_after = nullptr;
+        s_ready.store(false, std::memory_order_release);
+        ESP_LOGI(TAG, "policy resources released; PSRAM %u free, %u largest",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        policy_unlock();
+        xSemaphoreGive(s_after_done);
+        vTaskDelete(NULL);
     }
+}
+
+/* Failed initialization must not strand either policy allocations or the
+ * audio hold. The caller releases voice after this rollback. */
+void policy_init_rollback()
+{
+    policy_stop_workers();
+    if (s_after) {
+        s_workers_run.store(false, std::memory_order_release);
+        xTaskNotifyGive(s_after);
+        xSemaphoreTake(s_after_done, portMAX_DELAY);
+        s_after = nullptr;
+    }
+    policy_free_resources();
+    s_release_on_idle.store(false);
+    s_ready.store(false, std::memory_order_release);
 }
 
 }  // namespace
@@ -2612,60 +2784,100 @@ extern "C" bool mpx_policy_log_saving(void)
 
 extern "C" esp_err_t mpx_policy_init(void)
 {
-    if (s_task) return ESP_OK;
-    char why[64] = "";
-    // Start with the first built-in walk trained for this robot (the header's
-    // robot name), else the first one.
-    for (int i = 0; i < N_BUILTINS; ++i) {
-        const size_t len = static_cast<size_t>(BUILTINS[i].end - BUILTINS[i].start);
-        if (len < sizeof(mpxp_header_t)) continue;
-        mpxp_header_t hd;
-        std::memcpy(&hd, BUILTINS[i].start, sizeof(hd));
-        if (std::strncmp(hd.robot, CONFIG_APP_POLICY_ROBOT, sizeof(hd.robot)) == 0) {
-            s_builtin_sel = i;
-            break;
-        }
+    if (s_ready.load(std::memory_order_acquire)) return ESP_OK;
+    policy_lock();
+    if (s_ready.load(std::memory_order_acquire)) {
+        policy_unlock();
+        return ESP_OK;
     }
+    const uint32_t stop_at_start = s_stop_serial.load(std::memory_order_acquire);
+    s_release_on_idle.store(false);
+    esp_err_t result = ESP_OK;
+    bool audio_held = false;
+    char why[64] = "";
     const int bits = (CONFIG_APP_POLICY_WEIGHT_BITS == 8 || CONFIG_APP_POLICY_WEIGHT_BITS == 16) ?
                      CONFIG_APP_POLICY_WEIGHT_BITS : 32;
-    if (policy_load_builtin_or_float(bits, why, sizeof(why)) != ESP_OK) {
-        ESP_LOGE(TAG, "built-in policy refused: %s", why);
-    }
-    install_getup();
-    install_climb();
-
     const esp_timer_create_args_t ta = { .callback = tick_cb, .arg = nullptr,
                                          .dispatch_method = ESP_TIMER_TASK, .name = "policy",
                                          .skip_unhandled_events = true };
-    if (esp_timer_create(&ta, &s_timer) != ESP_OK) return ESP_FAIL;
+    // AFE/WakeNet and the policy cannot both fit in PSRAM. Use the existing
+    // counted hold to stop/join voice first, then destroy only the front end.
+    // HTTP, IMU, servo guards, the agent and the app remain available.
+    result = policy_acquire_audio();
+    if (result != ESP_OK) goto done;
+    audio_held = true;
+    s_audio_hold_err = ESP_OK;
+    // Start with the first built-in walk trained for this robot (the header's
+    // robot name), else the first one. A policy explicitly selected before
+    // initialization must survive a failed default and remain selected here.
+    if (s_builtin_sel < 0) s_builtin_sel = default_builtin_index();
+    if (!s_net.h) result = policy_load_builtin_or_float(bits, why, sizeof(why));
+    if (result != ESP_OK) {
+        ESP_LOGE(TAG, "built-in policy refused: %s", why);
+        goto done;
+    }
+    // Optional models survive a late worker/timer failure; do not allocate a
+    // second copy on every retry. GET reports a model that could not load.
+    if (!s_gu_ok) install_getup();
+    if (!s_cl_ok) install_climb();
+
+    result = esp_timer_create(&ta, &s_timer);
+    if (result != ESP_OK) goto done;
+    /* Previous self-deleting workers leave static semaphore objects behind;
+     * destroy them before reusing the storage for the next policy load. */
+    if (s_tick_done) vSemaphoreDelete(s_tick_done);
+    if (s_infer_done) vSemaphoreDelete(s_infer_done);
+    if (s_after_done) vSemaphoreDelete(s_after_done);
+    s_tick_done = xSemaphoreCreateBinaryStatic(&s_tick_done_buf);
+    s_infer_done = xSemaphoreCreateBinaryStatic(&s_infer_done_buf);
+    s_after_done = xSemaphoreCreateBinaryStatic(&s_after_done_buf);
+    s_workers_run.store(true, std::memory_order_release);
     // Core 1 with the gait (parked while a run is on), above everything but
     // the servo bus itself; the network has its own task just below. These two
     // never write flash, so their stacks can live in PSRAM (XIP stays on).
     if (xTaskCreatePinnedToCoreWithCaps(tick_task, "policy", 6144, nullptr, 22, &s_task, 1,
                                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
         s_task = nullptr;
-        return ESP_ERR_NO_MEM;
+        result = ESP_ERR_NO_MEM;
+        goto done;
     }
     // The network: same core, just below the tick, so the 5 ms tick always
     // gets its turn and the network has the time between.
     if (xTaskCreatePinnedToCoreWithCaps(infer_task, "pol_net", 4096, nullptr, 21, &s_infer, 1,
                                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
         s_infer = nullptr;
-        return ESP_ERR_NO_MEM;
+        result = ESP_ERR_NO_MEM;
+        goto done;
     }
     // Audio holds and log writes: low priority, core 0. The voice hold can
     // block, and neither it nor a flash write may hold up the policy tick.
     if (xTaskCreatePinnedToCore(after_task, "pol_after", 4096, nullptr, 3, &s_after, 0) != pdPASS) {
         s_after = nullptr;
-        return ESP_ERR_NO_MEM;
+        result = ESP_ERR_NO_MEM;
+        goto done;
     }
-    return esp_timer_start_periodic(s_timer, TICK_US);
+    result = esp_timer_start_periodic(s_timer, TICK_US);
+    if (result == ESP_OK) {
+        s_ready.store(true, std::memory_order_release);
+        if (s_stop_serial.load(std::memory_order_acquire) != stop_at_start) s_release_on_idle.store(true);
+        policy_unlock();
+        return ESP_OK;
+    }
+
+done:
+    policy_init_rollback();
+    if (audio_held) {
+        voice_glue::release("policy");
+        s_audio_hold.store(AudioHold::FREE);
+    }
+    policy_unlock();
+    return result;
 }
 
-extern "C" esp_err_t mpx_policy_start(float seconds, float hold_s, bool force, bool dry, char *why, int why_len)
+esp_err_t policy_start_locked(float seconds, float hold_s, bool force, bool dry, char *why, int why_len)
 {
-    if (!s_task || !s_infer || !s_after) {
-        std::snprintf(why, why_len, "a policy worker is not running");
+    if (!s_ready.load(std::memory_order_acquire)) {
+        std::snprintf(why, why_len, "policy initialization is incomplete");
         return ESP_ERR_INVALID_STATE;
     }
     if (!s_net.h) {
@@ -2725,9 +2937,11 @@ extern "C" esp_err_t mpx_policy_start(float seconds, float hold_s, bool force, b
     }
     bool busy;
     portENTER_CRITICAL(&s_mux);
+    const AudioHold audio = s_audio_hold.load();
     busy = s_state != MPX_POLICY_IDLE || s_req_start || s_bench_busy || s_job.state.load() == JOB_RUNNING || s_saving ||
-           s_audio_hold.load() != AudioHold::FREE;
+           (audio != AudioHold::FREE && audio != AudioHold::HELD);
     if (!busy) {
+        s_release_on_idle.store(true);
         s_req_start = true;
         s_req_stop = false;
         s_keepalive_us = esp_timer_get_time();
@@ -2744,6 +2958,14 @@ extern "C" esp_err_t mpx_policy_start(float seconds, float hold_s, bool force, b
         return ESP_ERR_INVALID_STATE;
     }
     return ESP_OK;
+}
+
+extern "C" esp_err_t mpx_policy_start(float seconds, float hold_s, bool force, bool dry, char *why, int why_len)
+{
+    policy_lock();
+    const esp_err_t e = policy_start_locked(seconds, hold_s, force, dry, why, why_len);
+    policy_unlock();
+    return e;
 }
 
 extern "C" bool mpx_policy_set_auto_getup(bool on)
@@ -2764,18 +2986,22 @@ extern "C" void mpx_policy_set_auto_right(bool on)
 
 extern "C" esp_err_t mpx_policy_getup(bool force, char *why, int why_len)
 {
+    policy_lock();
     if (!s_gu_ok) {
         std::snprintf(why, why_len, "no get-up policy (policies/getup.mpxp) is built in");
+        policy_unlock();
         return ESP_ERR_NOT_FOUND;
     }
     if (!force && std::strcmp(s_gu_net.h->robot, CONFIG_APP_POLICY_ROBOT) != 0) {
         std::snprintf(why, why_len, "the get-up policy is for %s, the robot is %s (add `force` to run it anyway)",
                       s_gu_net.h->robot, CONFIG_APP_POLICY_ROBOT);
+        policy_unlock();
         return ESP_ERR_INVALID_ARG;
     }
     if (s_net.h && std::memcmp(s_gu_net.h->signs, s_net.h->signs, sizeof(s_net.h->signs)) != 0) {
         std::snprintf(why, why_len, "the get-up's servo directions differ from the walk's (%s): choose a %s walk",
                       s_net.h->name, s_gu_net.h->robot);
+        policy_unlock();
         return ESP_ERR_INVALID_ARG;
     }
     portENTER_CRITICAL(&s_mux);
@@ -2784,24 +3010,28 @@ extern "C" esp_err_t mpx_policy_getup(bool force, char *why, int why_len)
     portEXIT_CRITICAL(&s_mux);
     if (busy) {
         std::snprintf(why, why_len, "a run or the size test is on");
+        policy_unlock();
         return ESP_ERR_INVALID_STATE;
     }
     // The walk's checks and start (its servo configuration, calibration and
     // gyro bias); `force` also covers the walk policy's robot.
     const float gmax = s_gu_net.dec ? s_gu_net.dec->getup_timeout_s : GETUP_MAX_S;
-    const esp_err_t e = mpx_policy_start(gmax + 5.0f, 0.0f, true, false, why, why_len);
+    const esp_err_t e = policy_start_locked(gmax + 5.0f, 0.0f, true, false, why, why_len);
     if (e != ESP_OK) {
         portENTER_CRITICAL(&s_mux);
         s_req_getup = false;
         portEXIT_CRITICAL(&s_mux);
     }
+    policy_unlock();
     return e;
 }
 
 extern "C" esp_err_t mpx_policy_climb(bool force, char *why, int why_len)
 {
+    policy_lock();
     if (!s_cl_ok) {
         std::snprintf(why, why_len, "no climb policy (policies/climb.mpxp) is built in");
+        policy_unlock();
         return ESP_ERR_NOT_FOUND;
     }
     // trained for this robot, or a variant of it (sku1_lidar on an sku1)
@@ -2811,6 +3041,7 @@ extern "C" esp_err_t mpx_policy_climb(bool force, char *why, int why_len)
     if (!force && !same) {
         std::snprintf(why, why_len, "the climb policy is for %s, the robot is %s (add `force` to run it anyway)", pr,
                       CONFIG_APP_POLICY_ROBOT);
+        policy_unlock();
         return ESP_ERR_INVALID_ARG;
     }
     portENTER_CRITICAL(&s_mux);
@@ -2819,17 +3050,19 @@ extern "C" esp_err_t mpx_policy_climb(bool force, char *why, int why_len)
     portEXIT_CRITICAL(&s_mux);
     if (busy) {
         std::snprintf(why, why_len, "a run or the size test is on");
+        policy_unlock();
         return ESP_ERR_INVALID_STATE;
     }
     // The walk's checks and start (servo configuration, calibration, gyro bias, the ramp to the stand), then a
     // 1 s hold, then CLIMB (which ends the run itself).
     const float total = RAMP_IN_S + CLIMB_HOLD_IN_S + s_cl_net.h->cmd_max[0] + CLIMB_HOLD_TOP_S + 10.0f;
-    const esp_err_t e = mpx_policy_start(total, CLIMB_HOLD_IN_S, true, false, why, why_len);
+    const esp_err_t e = policy_start_locked(total, CLIMB_HOLD_IN_S, true, false, why, why_len);
     if (e != ESP_OK) {
         portENTER_CRITICAL(&s_mux);
         s_req_climb = false;
         portEXIT_CRITICAL(&s_mux);
     }
+    policy_unlock();
     return e;
 }
 
@@ -2857,12 +3090,19 @@ extern "C" bool mpx_policy_selftest(float *max_err, float *us_avg, float *us_max
 extern "C" bool mpx_policy_selftest_full(float *max_err, float *worst_deg, int *bits, bool *ok, float *us_avg,
                                          float *us_max)
 {
-    if (!s_net.h || !s_work) return false;
+    policy_lock();
+    if (!s_net.h || !s_work) {
+        policy_unlock();
+        return false;
+    }
     portENTER_CRITICAL(&s_mux);
     const bool busy = s_state != MPX_POLICY_IDLE || s_req_start || s_bench_busy || s_job.state.load() == JOB_RUNNING;
     if (!busy) s_bench_busy = true;
     portEXIT_CRITICAL(&s_mux);
-    if (busy) return false;
+    if (busy) {
+        policy_unlock();
+        return false;
+    }
     const float e = pol_selftest(&s_net, s_work);
     float mean_deg = 0.0f;
     const float wdeg = pol_selftest_deg(&s_net, s_work, &mean_deg);
@@ -2877,6 +3117,7 @@ extern "C" bool mpx_policy_selftest_full(float *max_err, float *worst_deg, int *
     if (ok) *ok = selftest_ok(s_bits, e, wdeg);
     if (us_avg) *us_avg = avg;
     if (us_max) *us_max = worst;
+    policy_unlock();
     return true;
 }
 
@@ -2925,16 +3166,18 @@ extern "C" const char *mpx_policy_builtin_id(int i)
 
 extern "C" const char *mpx_policy_builtin_current(void)
 {
-    return BUILTINS[s_builtin_sel].id;
+    return BUILTINS[s_builtin_sel >= 0 ? s_builtin_sel : default_builtin_index()].id;
 }
 
 extern "C" esp_err_t mpx_policy_select(const char *id, char *why, int why_len)
 {
+    policy_lock();
     int k = -1;
     for (int i = 0; i < N_BUILTINS; ++i)
         if (id && std::strcmp(id, BUILTINS[i].id) == 0) k = i;
     if (k < 0) {
         std::snprintf(why, why_len, "no built-in policy '%s'", id ? id : "");
+        policy_unlock();
         return ESP_ERR_NOT_FOUND;
     }
     portENTER_CRITICAL(&s_mux);
@@ -2943,24 +3186,38 @@ extern "C" esp_err_t mpx_policy_select(const char *id, char *why, int why_len)
     portEXIT_CRITICAL(&s_mux);
     if (busy) {
         std::snprintf(why, why_len, "a run or a test is on");
+        policy_unlock();
         return ESP_ERR_INVALID_STATE;
     }
+    const bool fresh = !s_ready.load(std::memory_order_acquire) && !s_net.h;
+    esp_err_t e = fresh ? policy_acquire_audio() : ESP_OK;
     const int old = s_builtin_sel;
     s_builtin_sel = k;
     // install() keeps the old policy until the new one is placed and self-tested.
-    const esp_err_t e = policy_load_builtin(s_bits, why, why_len);
-    if (e != ESP_OK) s_builtin_sel = old;
-    else ESP_LOGI(TAG, "built-in policy now '%s'", id);
+    if (e == ESP_OK) e = policy_load_builtin(s_bits, why, why_len);
+    if (e != ESP_OK) {
+        s_builtin_sel = old;
+        if (fresh) {
+            policy_init_rollback();
+            voice_glue::release("policy");
+            s_audio_hold.store(AudioHold::FREE);
+        }
+    } else {
+        ESP_LOGI(TAG, "built-in policy now '%s'", id);
+    }
     portENTER_CRITICAL(&s_mux);
     s_bench_busy = false;
     portEXIT_CRITICAL(&s_mux);
+    policy_unlock();
     return e;
 }
 
 extern "C" esp_err_t mpx_policy_set_weight_bits(int bits, char *why, int why_len)
 {
+    policy_lock();
     if (bits != 32 && bits != 16 && bits != 8) {
         std::snprintf(why, why_len, "bits: 32, 16 or 8");
+        policy_unlock();
         return ESP_ERR_INVALID_ARG;
     }
     portENTER_CRITICAL(&s_mux);
@@ -2969,15 +3226,24 @@ extern "C" esp_err_t mpx_policy_set_weight_bits(int bits, char *why, int why_len
     portEXIT_CRITICAL(&s_mux);
     if (busy) {
         std::snprintf(why, why_len, "a run or a test is on");
+        policy_unlock();
         return ESP_ERR_INVALID_STATE;
     }
+    const bool fresh = !s_ready.load(std::memory_order_acquire) && !s_net.h;
+    esp_err_t e = fresh ? policy_acquire_audio() : ESP_OK;
     // The old copy stays until the new one is placed and self-tested
     // (install()), so both fit or the old one stays.
-    esp_err_t e = policy_load_builtin(bits, why, why_len);
+    if (e == ESP_OK) e = policy_load_builtin(bits, why, why_len);
+    if (e != ESP_OK && fresh) {
+        policy_init_rollback();
+        voice_glue::release("policy");
+        s_audio_hold.store(AudioHold::FREE);
+    }
     if (e == ESP_OK) ESP_LOGI(TAG, "weights now %d-bit", bits);
     portENTER_CRITICAL(&s_mux);
     s_bench_busy = false;
     portEXIT_CRITICAL(&s_mux);
+    policy_unlock();
     return e;
 }
 
@@ -2990,7 +3256,7 @@ extern "C" void mpx_policy_bench_get(mpx_policy_bench_t *out)
 
 extern "C" bool mpx_policy_cmd_max(float out[3])
 {
-    if (!s_net.h) return false;
+    if (!s_ready.load(std::memory_order_acquire) || !s_net.h) return false;
     std::memcpy(out, s_net.h->cmd_max, sizeof(float) * 3);
     return true;
 }
@@ -3012,8 +3278,11 @@ extern "C" void mpx_policy_set_log(bool on)
 
 extern "C" size_t mpx_policy_log_count(size_t *dropped)
 {
+    policy_lock();
     if (dropped) *dropped = s_log_dropped;
-    return s_log ? s_log_n : 0;
+    const size_t n = s_log ? s_log_n : 0;
+    policy_unlock();
+    return n;
 }
 
 extern "C" const char *mpx_policy_log_header(void)
@@ -3024,7 +3293,11 @@ extern "C" const char *mpx_policy_log_header(void)
 
 extern "C" bool mpx_policy_log_row(size_t i, char *buf, size_t len)
 {
-    if (!s_log || i >= s_log_n || s_state != MPX_POLICY_IDLE) return false;
+    policy_lock();
+    if (!s_log || i >= s_log_n || s_state != MPX_POLICY_IDLE) {
+        policy_unlock();
+        return false;
+    }
     static const char *const ph[] = { "idle", "prep", "ramp_in", "hold_in", "run", "ramp_out", "hold_out",
                                       "getup", "climb" };
     const LogRec &r = s_log[i];
@@ -3037,11 +3310,17 @@ extern "C" bool mpx_policy_log_row(size_t i, char *buf, size_t len)
                   __builtin_popcount(r.flags >> 4), tilt, r.temp_dc / 10.0, r.cur_ma,
                   r.trk_mean_cdeg / 100.0, r.trk_max_cdeg / 100.0, r.vx_mm / 1000.0, r.vy_mm / 1000.0,
                   r.wz_mrad / 1000.0);
+    policy_unlock();
     return true;
 }
 
 extern "C" void mpx_policy_stop(const char *reason)
 {
+    /* Stop is also the explicit way out of a loaded-but-idle RL resource
+     * mode. Latch it even during lazy initialization; init compares this
+     * serial before enabling a subsequent start. */
+    s_stop_serial.fetch_add(1, std::memory_order_acq_rel);
+    s_release_on_idle.store(true);
     portENTER_CRITICAL(&s_mux);
     if (s_req_start) {
         // Accepted but not begun: cancel it; nothing has moved.
@@ -3058,6 +3337,7 @@ extern "C" void mpx_policy_stop(const char *reason)
 
 extern "C" void mpx_policy_set_cmd(float vx, float vy, float wz)
 {
+    policy_lock();
     float m[3] = { 0.1f, 0.1f, 0.5f };
     if (s_net.h) std::memcpy(m, s_net.h->cmd_max, sizeof(m));
     const float in[3] = { vx, vy, wz };
@@ -3070,6 +3350,7 @@ extern "C" void mpx_policy_set_cmd(float vx, float vy, float wz)
         s_st.cmd[i] = v;
     }
     portEXIT_CRITICAL(&s_mux);
+    policy_unlock();
 }
 
 extern "C" bool mpx_policy_active(void)
@@ -3081,8 +3362,12 @@ extern "C" bool mpx_policy_active(void)
  * "landed / still down" check. */
 extern "C" float mpx_policy_tilt_now(void)
 {
+    policy_lock();
     const pol_net_t &n = (s_gu_ok && s_gu_net.h) ? s_gu_net : s_net;
-    if (!n.h) return NAN;
+    if (!n.h) {
+        policy_unlock();
+        return NAN;
+    }
     const robot::ImuData d = robot::imu_read();
     const double a[3] = { d.ax, d.ay, d.az };
     const double an = std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
@@ -3091,20 +3376,24 @@ extern "C" float mpx_policy_tilt_now(void)
     double b[3];
     for (int r = 0; r < 3; ++r) b[r] = m[3 * r] * a[0] + m[3 * r + 1] * a[1] + m[3 * r + 2] * a[2];
     const double as_sensor[3] = { b[0], b[1], -b[2] };
-    return static_cast<float>(pol_tilt_deg(as_sensor));
+    const float tilt = static_cast<float>(pol_tilt_deg(as_sensor));
+    policy_unlock();
+    return tilt;
 }
 
 extern "C" void mpx_policy_get_status(mpx_policy_status_t *out)
 {
+    policy_lock();
     portENTER_CRITICAL(&s_mux);
     *out = s_st;
     portEXIT_CRITICAL(&s_mux);
     out->state = s_state;
-    out->auto_right = s_auto_right.load() && s_gu_ok;
+    out->auto_right = s_ready.load(std::memory_order_acquire) && s_auto_right.load() && s_gu_ok;
     constexpr uint32_t caps_int = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
     out->ram_free = static_cast<uint32_t>(heap_caps_get_free_size(caps_int));
     out->ram_min_free = static_cast<uint32_t>(heap_caps_get_minimum_free_size(caps_int));
     out->ram_largest = static_cast<uint32_t>(heap_caps_get_largest_free_block(caps_int));
+    policy_unlock();
 }
 
 extern "C" const char *mpx_policy_state_name(mpx_policy_state_t s)

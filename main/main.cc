@@ -65,6 +65,9 @@ static void log_internal_heap(const char *stage)
 	ESP_LOGI(TAG, "internal RAM after %s: %u free, %u largest", stage,
 	         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
 	         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+	ESP_LOGI(TAG, "PSRAM after %s: %u free, %u largest", stage,
+	         (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+	         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
 }
 
 static void init_nvs()
@@ -228,30 +231,29 @@ extern "C" void app_main(void)
 	}
 	log_internal_heap("HTTP + chat + WASM + Lua");
 
+	// ── Reserve the voice front end before the agent ──────────
+	// ESP-SR 2.3.4 dereferences null model buffers after an allocation
+	// failure. MMNR + WakeNet must therefore take their internal/PSRAM
+	// before ESP-Claw; this does not open a socket or start capture tasks.
+	voice_glue::prepare();
+	log_internal_heap("voice front end");
+
 	// ── The on-device agent (ESP-Claw) ────────────────────────
-	// After the HTTP server and the sandbox (its tools start skills through
-	// them) and the chat pipeline (which bound the agent's outbound before
-	// this), before voice. Its own storage is the "system" partition plus
-	// CONFIG_APP_AGENT_DATA_DIR on the storage LittleFS. Never fatal: with
-	// the agent down the PWA's "cloud" brain still works.
+	// Its tools use the HTTP server and sandbox above. Voice networking and
+	// tools start afterward, so the device-brain bridge still sees a running
+	// agent even though its AFE was reserved first. Never fatal: with the
+	// agent down the PWA's "cloud" brain still works.
 	if (agent::start() != ESP_OK) {
 		ESP_LOGW(TAG, "on-device agent not running — chat uses the cloud only");
 	}
 	log_internal_heap("agent");
 
-	// ── Voice: wake word, the MangDang voice gateway, music ───
-	// Last, as in mpv2-claw: esp-sr's front end is the biggest consumer of
-	// internal RAM to come up, and the voice tools start skills through the
-	// HTTP server's helpers and the sandbox, which both exist by now. Nothing
-	// touches the network until the first wake word.
+	// ── Voice: gateway, MCP tools and music ───────────────────
+	// The AFE is already reserved by prepare(); start() will not construct it
+	// twice. Nothing touches the voice network until the first wake word.
 	voice_glue::start();
 
-	// Load policies last: weights use internal RAM only when the configured
-	// reserve remains after Wi-Fi, the agent and voice have taken their share.
-#if CONFIG_APP_POLICY_ENABLE
-	if (mpx_policy_init() != ESP_OK) {
-		ESP_LOGW(TAG, "RL policy not available");
-	}
-	log_internal_heap("RL policy");
-#endif
+	// Policies are deliberately lazy: main/network/http_policy.cc calls
+	// mpx_policy_init() only for an actual load/run/test command. Boot and
+	// status polling allocate no weights and create no policy tasks/timer.
 }

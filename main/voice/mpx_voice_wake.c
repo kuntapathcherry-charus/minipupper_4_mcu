@@ -54,14 +54,6 @@
 #ifndef CONFIG_APP_VOICE_BARGE_IN
 #define CONFIG_APP_VOICE_BARGE_IN 1
 #endif
-/* No fallback for DUAL_MIC_AEC: a Kconfig bool that is OFF is simply not defined in sdkconfig.h, so
- * "#ifndef ... 1" turned it back ON and the setting could never be switched off (2026-11-20: the
- * dual-mic AFE ran out of PSRAM at boot with the RL policies built in). Undefined = single-mic. */
-#if defined(CONFIG_APP_VOICE_DUAL_MIC_AEC) && CONFIG_APP_VOICE_DUAL_MIC_AEC
-#define MPX_VOICE_DUAL_MIC_AEC 1
-#else
-#define MPX_VOICE_DUAL_MIC_AEC 0
-#endif
 
 static const char *TAG = "mpx_voice_wake";
 
@@ -89,26 +81,25 @@ static const char *TAG = "mpx_voice_wake";
  * insistence on measuring: `wake levels` prints the table above and says
  * whether it still matches this format.
  *
- * Two microphones plus the electrical reference ("MMNR") enable ESP-SR's
- * dual-microphone array processing and AEC for the cleaned uplink. Raw DMA
- * order is R,M,N,M, so feed_task reorders each frame before calling AFE.
- * If the dual-mic AFE cannot be created, init retries the proven single-mic
- * "RMNN" layout and logs the fallback.
+ * Single microphone plus electrical reference ("RMNN") preserves the FD
+ * nonlinear echo cancellation needed for barge-in without the dual-mic BSS
+ * pass. FD MMNR kept the opposite core saturated until its idle watchdog
+ * fired even with WakeNet disabled. Raw DMA order is R,M,N,M, already the
+ * RMNN prefix AFE consumes; the unused fourth slot is ignored.
  *
  * If the codec will not open 4 channels, fall back to 2 channels as "MN":
  * the wake word still works, but with no reference there is no echo
  * cancellation, so barge-in cannot hear you over the robot's own voice. */
-#if MPX_VOICE_DUAL_MIC_AEC
-#define WAKE_FORMAT_4CH        "MMNR"
-#else
 #define WAKE_FORMAT_4CH        "RMNN"
-#endif
-#define WAKE_FORMAT_4CH_SINGLE "RMNN"
 #define WAKE_FORMAT_2CH        "MN"
+
+/* SR mode has linear AEC only. Its residual speaker echo is enough to trip
+ * the gateway's VAD and cancel the reply that caused it. FD mode adds the
+ * nonlinear suppression needed while microphone and speaker run together. */
+#define WAKE_AFE_TYPE          AFE_TYPE_FD
 
 static uint8_t     s_capture_channels;   /* 4 or 2, decided by init */
 static const char *s_input_format;
-static bool        s_dual_mic;
 
 /* Enhanced AFE output waiting for the Opus task. PSRAM only: 16 KiB holds
  * 500 ms of 16 kHz mono PCM without consuming scarce internal/DMA RAM. */
@@ -222,14 +213,15 @@ esp_err_t mpx_voice_wake_init(void)
         ESP_LOGW(TAG, "codec will not open 4 channels -- no echo reference, so "
                       "barge-in cannot hear you while the robot is talking");
     }
-    s_dual_mic = s_capture_channels == 4 && strcmp(s_input_format, "MMNR") == 0;
-    ESP_LOGI(TAG, "capture: %u channels, AFE input format \"%s\"%s",
-             (unsigned)s_capture_channels, s_input_format,
-             s_dual_mic ? " (dual-mic AEC)" : "");
+    ESP_LOGI(TAG, "capture: %u channels, AFE input format \"%s\" (single-mic FD AEC)",
+             (unsigned)s_capture_channels, s_input_format);
 
     afe_config_t *afe_config = afe_config_init(s_input_format, s_models,
-                                               AFE_TYPE_SR, AFE_MODE_LOW_COST);
-    ESP_RETURN_ON_FALSE(afe_config, ESP_FAIL, TAG, "afe_config_init failed");
+                                               WAKE_AFE_TYPE, AFE_MODE_LOW_COST);
+    if (!afe_config) {
+        ESP_LOGE(TAG, "afe_config_init failed");
+        goto fail;
+    }
 
     /* Internal RAM is the scarce resource on this board (see the
      * CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL comment in
@@ -240,43 +232,23 @@ esp_err_t mpx_voice_wake_init(void)
     afe_config->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;
     /* Core 1, as xiaozhi-esp32 does: core 0 carries the main task, LVGL,
      * Wi-Fi and the agent, and a starved AFE task drops audio silently
-     * (ringbuff_free_pct in the fetch result is the tell). */
+     * (ringbuff_free_pct in the fetch result is the tell). The calling tasks
+     * are pinned below too: this preference does not set their affinity. */
     afe_config->afe_perferred_core = 1;
 
     s_afe_handle = esp_afe_handle_from_config(afe_config);
     if (!s_afe_handle) {
         ESP_LOGE(TAG, "esp_afe_handle_from_config failed");
-        afe_config_free(afe_config);
-        return ESP_FAIL;
+        goto fail;
     }
 
     s_afe_data = s_afe_handle->create_from_config(afe_config);
-    /* Deliberately not calling afe_config_free() here: create_from_config's
-     * header comment doesn't say whether AFE copies the config or keeps
-     * the pointer, and freeing it if AFE kept it would be a use-after-free
-     * that would take a lot longer to notice than the ~200 bytes this
-     * leaks once, at boot, for the life of the firmware. */
-    if (!s_afe_data && s_dual_mic) {
-        /* Two-mic BSS costs more RAM/CPU and may be unavailable in a
-         * particular esp-sr build. Preserve the existing single-mic AEC
-         * rather than losing the wake service altogether. */
-        ESP_LOGW(TAG, "dual-mic MMNR AFE unavailable; retrying single-mic RMNN AEC");
-        s_dual_mic = false;
-        s_input_format = WAKE_FORMAT_4CH_SINGLE;
-        afe_config = afe_config_init(s_input_format, s_models,
-                                     AFE_TYPE_SR, AFE_MODE_LOW_COST);
-        if (afe_config) {
-            afe_config->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;
-            afe_config->afe_perferred_core = 1;
-            s_afe_handle = esp_afe_handle_from_config(afe_config);
-            if (s_afe_handle) {
-                s_afe_data = s_afe_handle->create_from_config(afe_config);
-            }
-        }
-    }
+    /* The public config API is caller-owned; AFE copies it during create. */
+    afe_config_free(afe_config);
+    afe_config = NULL;
     if (!s_afe_data) {
         ESP_LOGE(TAG, "create_from_config failed");
-        return ESP_FAIL;
+        goto fail;
     }
 
 #if CONFIG_APP_VOICE_BARGE_IN
@@ -301,6 +273,46 @@ esp_err_t mpx_voice_wake_init(void)
              s_afe_handle->get_feed_chunksize(s_afe_data),
              s_afe_handle->get_fetch_chunksize(s_afe_data));
     s_afe_handle->print_pipeline(s_afe_data);
+    return ESP_OK;
+
+fail:
+    if (afe_config) afe_config_free(afe_config);
+    if (s_afe_data && s_afe_handle) s_afe_handle->destroy(s_afe_data);
+    s_afe_data = NULL;
+    s_afe_handle = NULL;
+    s_afe_ready = false;
+    if (s_models) esp_srmodel_deinit(s_models);
+    s_models = NULL;
+    return ESP_FAIL;
+}
+
+esp_err_t mpx_voice_wake_deinit(void)
+{
+    /* voice_glue must hold voice and join feed/fetch/auto/talk before this.
+     * Destroying AFE underneath fetch is a use-after-free, not a memory fix. */
+    if (s_feed_task || s_fetch_task || s_active || s_auto_active || s_auto_run ||
+        s_barge_streaming || mpx_voice_stream_is_playing()) {
+        ESP_LOGE(TAG, "AFE teardown refused: voice activity is still running");
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (s_afe_data && s_afe_handle) s_afe_handle->destroy(s_afe_data);
+    s_afe_data = NULL;
+    s_afe_handle = NULL;
+    s_afe_ready = false;
+    if (s_models) esp_srmodel_deinit(s_models);
+    s_models = NULL;
+    if (s_barge_ring) {
+        vRingbufferDeleteWithCaps(s_barge_ring);
+        s_barge_ring = NULL;
+    }
+    if (s_barge_lock) {
+        vSemaphoreDelete(s_barge_lock);
+        s_barge_lock = NULL;
+    }
+    s_barge_streaming = false;
+    ESP_LOGI(TAG, "AFE/WakeNet released for policy use; PSRAM %u free, %u largest",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     return ESP_OK;
 }
 
@@ -343,18 +355,6 @@ static void feed_task(void *arg)
             s_feed_failed = true;
             s_run = false;
             break;
-        }
-        if (s_dual_mic) {
-            /* ES7210 DMA order is R,M,N,M; ESP-SR MMNR expects M,M,N,R.
-             * Reorder in place, retaining the electrical reference. */
-            for (int i = 0; i < chunk; ++i) {
-                int16_t reference = buf[4 * i];
-                int16_t mic_1 = buf[4 * i + 1];
-                int16_t mic_2 = buf[4 * i + 3];
-                buf[4 * i] = mic_1;
-                buf[4 * i + 1] = mic_2;
-                buf[4 * i + 3] = reference;
-            }
         }
         s_afe_handle->feed(s_afe_data, buf);
     }
@@ -587,10 +587,14 @@ esp_err_t mpx_voice_wake_start(void)
     s_run = true;
     s_feed_failed = false;
 
-    s_feed_task = xTaskCreateStatic(feed_task, "wake_feed",
-                                    WAKE_FEED_TASK_STACK / sizeof(StackType_t),
-                                    NULL, (UBaseType_t)s_task_priority,
-                                    s_feed_stack, &s_feed_tcb);
+    /* xTaskCreateStatic() leaves both DSP tasks unpinned. FD feed() alone
+     * can then occupy core 0 until IDLE0 trips the task watchdog.
+     * Keep feed/fetch on the core requested in afe_config and leave core 0
+     * for Wi-Fi, Opus, LVGL and the rest of the firmware. */
+    s_feed_task = xTaskCreateStaticPinnedToCore(feed_task, "wake_feed",
+                                                WAKE_FEED_TASK_STACK / sizeof(StackType_t),
+                                                NULL, (UBaseType_t)s_task_priority,
+                                                s_feed_stack, &s_feed_tcb, 1);
     if (!s_feed_task) {
         s_run = false;
         mpx_audio_capture_stop();
@@ -598,10 +602,10 @@ esp_err_t mpx_voice_wake_start(void)
         return ESP_ERR_NO_MEM;
     }
 
-    s_fetch_task = xTaskCreateStatic(fetch_task, "wake_fetch",
-                                     WAKE_FETCH_TASK_STACK / sizeof(StackType_t),
-                                     NULL, (UBaseType_t)s_task_priority,
-                                     s_fetch_stack, &s_fetch_tcb);
+    s_fetch_task = xTaskCreateStaticPinnedToCore(fetch_task, "wake_fetch",
+                                                 WAKE_FETCH_TASK_STACK / sizeof(StackType_t),
+                                                 NULL, (UBaseType_t)s_task_priority,
+                                                 s_fetch_stack, &s_fetch_tcb, 1);
     if (!s_fetch_task) {
         /* feed_task is already running -- stop it the normal way rather
          * than leaving it orphaned. */
@@ -618,29 +622,34 @@ esp_err_t mpx_voice_wake_start(void)
     return ESP_OK;
 }
 
-void mpx_voice_wake_stop(void)
+esp_err_t mpx_voice_wake_stop(void)
 {
-    if (!s_active) {
-        return;
-    }
+    if (!s_active) return ESP_OK;
     s_run = false;
 
-    if (xSemaphoreTake(s_feed_done, pdMS_TO_TICKS(WAKE_TASK_WAIT_MS)) != pdTRUE) {
-        ESP_LOGW(TAG, "feed task did not confirm stop within %d ms", WAKE_TASK_WAIT_MS);
+    /* Clear each self-deleted task handle only after its completion semaphore
+     * confirms exit. A timeout leaves the front end marked active so a later
+     * deinit cannot destroy AFE underneath a still-running DSP task. */
+    if (s_feed_task) {
+        if (xSemaphoreTake(s_feed_done, pdMS_TO_TICKS(WAKE_TASK_WAIT_MS)) == pdTRUE) {
+            s_feed_task = NULL;
+        } else {
+            ESP_LOGW(TAG, "feed task did not confirm stop within %d ms", WAKE_TASK_WAIT_MS);
+        }
     }
-    if (xSemaphoreTake(s_fetch_done, pdMS_TO_TICKS(WAKE_TASK_WAIT_MS)) != pdTRUE) {
-        ESP_LOGW(TAG, "fetch task did not confirm stop within %d ms", WAKE_TASK_WAIT_MS);
+    if (s_fetch_task) {
+        if (xSemaphoreTake(s_fetch_done, pdMS_TO_TICKS(WAKE_TASK_WAIT_MS)) == pdTRUE) {
+            s_fetch_task = NULL;
+        } else {
+            ESP_LOGW(TAG, "fetch task did not confirm stop within %d ms", WAKE_TASK_WAIT_MS);
+        }
     }
-
-    /* Both tasks delete themselves, so the handles are dangling from here on:
-     * a set_task_priority() that reached one of them would be setting the
-     * priority of freed memory. */
-    s_feed_task = NULL;
-    s_fetch_task = NULL;
+    if (s_feed_task || s_fetch_task) return ESP_ERR_TIMEOUT;
 
     mpx_audio_capture_stop();
     s_active = false;
     ESP_LOGI(TAG, "stopped");
+    return ESP_OK;
 }
 
 bool mpx_voice_wake_active(void)
@@ -1078,18 +1087,18 @@ esp_err_t mpx_voice_wake_auto_start(void)
     return ESP_OK;
 }
 
-void mpx_voice_wake_auto_stop(void)
+esp_err_t mpx_voice_wake_auto_stop(void)
 {
-    if (!s_auto_active) {
-        return;
-    }
+    if (!s_auto_active) return ESP_OK;
     s_auto_run = false;
     /* If it is mid-talk, cut that short so the task can leave the loop. */
     s_barge_streaming = false;
     mpx_voice_talk_stop();
     if (xSemaphoreTake(s_auto_done, pdMS_TO_TICKS(WAKE_TASK_WAIT_MS + 5000)) != pdTRUE) {
         ESP_LOGW(TAG, "hands-free task did not confirm stop");
+        return ESP_ERR_TIMEOUT;
     }
+    return ESP_OK;
 }
 
 bool mpx_voice_wake_auto_active(void)

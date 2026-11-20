@@ -163,11 +163,14 @@ esp_err_t mpx_voice_stream_init(void)
         return ESP_ERR_NO_MEM;
     }
 
-    BaseType_t ok = xTaskCreateWithCaps(playback_task, "voice_rx", VOICE_STREAM_TASK_STACK,
-                                        NULL, 5, NULL, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    /* AFE feed/fetch are pinned to core 1. Pin Opus decode to core 0 rather
+     * than letting the scheduler pile it onto the already saturated AFE core;
+     * the captured WDT trace showed IDLE0 while IDLE1 starved. */
+    BaseType_t ok = xTaskCreatePinnedToCoreWithCaps(playback_task, "voice_rx", VOICE_STREAM_TASK_STACK,
+                                        NULL, 5, NULL, 0, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (ok != pdPASS) {
-        ok = xTaskCreateWithCaps(playback_task, "voice_rx", VOICE_STREAM_TASK_STACK,
-                                 NULL, 5, NULL, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        ok = xTaskCreatePinnedToCoreWithCaps(playback_task, "voice_rx", VOICE_STREAM_TASK_STACK,
+                                 NULL, 5, NULL, 0, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     }
     if (ok != pdPASS) {
         vSemaphoreDelete(s_playback_lock);
@@ -633,12 +636,13 @@ static esp_err_t talk_start_common(uint32_t max_seconds, bool auto_mode, bool ph
     s_server_turn = false;
     s_talk_active = true;
 
-    BaseType_t ok = xTaskCreateWithCaps(talk_task, "voice_talk", VOICE_STREAM_TASK_STACK,
-                                        (void *)(uintptr_t)max_seconds, 5, NULL,
+    /* Encode shares core 0 with decode; AFE keeps core 1. See init above. */
+    BaseType_t ok = xTaskCreatePinnedToCoreWithCaps(talk_task, "voice_talk", VOICE_STREAM_TASK_STACK,
+                                        (void *)(uintptr_t)max_seconds, 5, NULL, 0,
                                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (ok != pdPASS) {
-        ok = xTaskCreateWithCaps(talk_task, "voice_talk", VOICE_STREAM_TASK_STACK,
-                                 (void *)(uintptr_t)max_seconds, 5, NULL,
+        ok = xTaskCreatePinnedToCoreWithCaps(talk_task, "voice_talk", VOICE_STREAM_TASK_STACK,
+                                 (void *)(uintptr_t)max_seconds, 5, NULL, 0,
                                  MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     }
     if (ok != pdPASS) {
