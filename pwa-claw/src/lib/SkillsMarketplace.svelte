@@ -200,7 +200,7 @@
 
   // ── Checkout (link-out: card entry happens on HTTPS) ──
   let checkoutSkill = $state(null);
-  let checkoutStage = $state("creating");  // creating | awaiting | installing | install-error | paid | error
+  let checkoutStage = $state("creating");  // creating | awaiting | fulfilling | owned | installing | install-error | paid | error
   let checkoutUrl = $state("");
   let checkoutError = $state("");
   let checkoutOrderId = $state("");
@@ -276,20 +276,35 @@
     if (purchaseStarted || generation !== checkoutGeneration) return;
     purchaseStarted = true;
     stopCheckoutPoll();
-    checkoutStage = typeOf(skill) === "wasm" ? "installing" : "fulfilling";
+    checkoutStage = "fulfilling";
     try {
       await fetchRobotSkills();
       if (generation !== checkoutGeneration) return;
-      if (typeOf(skill) === "wasm") {
-        // The gateway returns Lua deployment steps; fetching them alone does
-        // not put the Move skill on the robot.
-        await installMotionSkill(skill.id, {
-          deploySkill,
-          enqueueLua,
-          onPaths: (paths) => rememberDeployment(skill.id, paths),
-        });
-        if (generation !== checkoutGeneration) return;
-      }
+      // Owning a Move skill and installing it are separate choices. Leave the
+      // package in the Store until the owner explicitly downloads it.
+      checkoutStage = typeOf(skill) === "wasm" ? "owned" : "paid";
+    } catch (e) {
+      if (generation !== checkoutGeneration) return;
+      console.error("Fulfillment failed:", e);
+      checkoutStage = "install-error";
+      checkoutError = e.message || "The skill could not be prepared";
+    }
+  }
+  async function installPurchasedSkill() {
+    const skill = checkoutSkill;
+    const generation = checkoutGeneration;
+    if (!skill || typeOf(skill) !== "wasm" || !["owned", "install-error"].includes(checkoutStage)) return;
+    checkoutStage = "installing";
+    checkoutError = "";
+    try {
+      // The gateway returns Lua deployment steps; fetching them alone does
+      // not put the Move skill on the robot.
+      await installMotionSkill(skill.id, {
+        deploySkill,
+        enqueueLua,
+        onPaths: (paths) => rememberDeployment(skill.id, paths),
+      });
+      if (generation !== checkoutGeneration) return;
       checkoutStage = "paid";
     } catch (e) {
       if (generation !== checkoutGeneration) return;
@@ -299,8 +314,11 @@
     }
   }
   function retryPurchase() {
-    purchaseStarted = false;
-    finishPurchase(checkoutSkill);
+    if (typeOf(checkoutSkill) === "wasm") installPurchasedSkill();
+    else {
+      purchaseStarted = false;
+      finishPurchase(checkoutSkill);
+    }
   }
   async function copyCheckoutUrl() {
     try { await navigator.clipboard.writeText(checkoutUrl); copied = true; setTimeout(() => (copied = false), 1800); } catch {}
@@ -578,7 +596,16 @@
         <b class="pay-amt">{priceLabel(checkoutSkill)}</b>
       </div>
 
-      {#if checkoutStage === "paid"}
+      {#if checkoutStage === "owned"}
+        <div class="done">
+          <span class="tick" aria-hidden="true"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l6 5.5L20 6"/></svg></span>
+          <h3>It's yours</h3>
+          <p class="muted">You now own {checkoutSkill.title}. Download it to the robot now, or install it later from Skills.</p>
+          {#if checkoutOrderId}<p class="order">Order {checkoutOrderId}</p>{/if}
+        </div>
+        <button type="button" class="dark-btn wide" onclick={installPurchasedSkill}>Download now</button>
+        <button type="button" class="text-btn wide" onclick={closeCheckout}>Dismiss</button>
+      {:else if checkoutStage === "paid"}
         <div class="done">
           <span class="tick" aria-hidden="true"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l6 5.5L20 6"/></svg></span>
           <h3>{isFree(checkoutSkill) ? "It's yours" : "Payment done"}</h3>
@@ -598,7 +625,7 @@
       {:else if checkoutStage === "installing"}
         <p class="muted center"><span class="spinner" aria-hidden="true"></span>Installing on the robot…</p>
       {:else if checkoutStage === "fulfilling"}
-        <p class="muted center"><span class="spinner" aria-hidden="true"></span>Preparing your Web skill…</p>
+        <p class="muted center"><span class="spinner" aria-hidden="true"></span>{typeOf(checkoutSkill) === "wasm" ? "Confirming your Move skill…" : "Preparing your Web skill…"}</p>
       {:else if checkoutStage === "creating"}
         <p class="muted center"><span class="spinner" aria-hidden="true"></span>Getting checkout ready…</p>
       {:else}
