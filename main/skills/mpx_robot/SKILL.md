@@ -72,10 +72,11 @@ a handshake.
 
 **Jumps and flips.** `jump` and `jumpfwd` do what they say. `longjump` hops
 forward; `farjump` is the longest hop. Backflips are built in: `backflip` is
-the stable preset and the one to use by default. Variants are `backflip1`,
-`backflip_stable`, `backflip_clean`, `backflip_stable_v0`,
-`backflip_clean_opt`, `backflip_stable_opt`, `backflip_k7` and
-`backflip_k7h`. If someone asks for a backflip, do it -- it exists; do not say
+the latest screen-safe `backflip_k7_405_l2d3` preset and the one to use by
+default. Variants are `backflip1`, `backflip_stable`, `backflip_clean`,
+`backflip_stable_v0`, `backflip_clean_opt`, `backflip_stable_opt`,
+`backflip_k7`, `backflip_k7h`, `backflip_k7_405_l2` and
+`backflip_k7_405_l2d3`. If someone asks for a backflip, do it -- it exists; do not say
 the robot cannot. These moves land hard, so mention a soft floor and a charged
 battery, and do not run one right after another. On a battery fuller than the
 backflip limit (12.0 V, `battery` in `robot_get_state`) a backflip is
