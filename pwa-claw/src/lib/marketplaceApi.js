@@ -49,6 +49,16 @@ export async function listSkills() {
 }
 
 /**
+ * List public tag facets in promoted-first gateway order.
+ * GET /v1/marketplace/skills/tags → GET /v1/skills/tags
+ */
+export async function listSkillTags() {
+  const res = await fetch("/v1/marketplace/skills/tags");
+  if (!res.ok) throw new Error(`Failed to list skill tags: ${res.status}`);
+  return res.json();
+}
+
+/**
  * Get details on a single skill.
  * GET /v1/marketplace/skills/{skillId}?currency=…
  *   → GET /v1/skills/{skillId}?currency=…

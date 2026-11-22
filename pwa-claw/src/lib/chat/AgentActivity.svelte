@@ -6,8 +6,9 @@
    *
    * @prop steps   — [{ text, seq, total, ts }]
    * @prop active  — true while the agent is still working on this turn
+   * @prop title   — optional completed-group label, e.g. the MCP tool name
    */
-  let { steps = [], active = false } = $props();
+  let { steps = [], active = false, title = "" } = $props();
 
   let total = $derived(steps.reduce((m, s) => Math.max(m, s.total || 0), 0) || steps.length);
   let last = $derived(steps[steps.length - 1]);
@@ -39,6 +40,8 @@
     <span class="head-text">
       {#if active}
         <span class="head-title">Working{last ? `: ${last.text}` : "…"}</span>
+      {:else if title}
+        <span class="head-title">{title}</span>
       {:else}
         <span class="head-title">Worked through {steps.length} {steps.length === 1 ? "step" : "steps"}</span>
       {/if}
@@ -159,6 +162,6 @@
   .step-seq { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.1em; color: var(--sub); }
   .step.current .step-seq { color: #5B4E00; }
   .step-time { font-size: 11px; color: var(--sub); margin-left: auto; font-variant-numeric: tabular-nums; }
-  .step-text { font-size: 14px; color: #4F4C46; line-height: 1.4; margin-top: 1px; }
+  .step-text { font-size: 14px; color: #4F4C46; line-height: 1.4; margin-top: 1px; overflow-wrap: anywhere; }
   .step.current .step-text { color: var(--ink); font-weight: 600; }
 </style>

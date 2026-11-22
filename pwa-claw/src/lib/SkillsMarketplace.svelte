@@ -6,6 +6,7 @@
   import { installMotionSkill, marketplaceSkillType } from "./skillActions.js";
   import {
     listSkills,
+    listSkillTags,
     getSkill,
     getSkillManifest,
     listRobotSkills,
@@ -15,6 +16,12 @@
     createCheckout,
     getOrder,
   } from "./marketplaceApi.js";
+  import {
+    normalizeTagFacets,
+    skillHasTag,
+    skillTags as tagsOf,
+    tagFacetsForSkills,
+  } from "./marketplaceTags.js";
 
   /**
    * The Store: Web skills, Move skills and RL skills, App Store style. RL skills are
@@ -38,13 +45,9 @@
     CLF: 4, UYW: 4,
   };
   const DISPLAY_CURRENCIES = ["USD", "HKD", "CNY", "EUR", "GBP", "JPY", "SGD"];
-  const PLACEHOLDER_TAGS = {
-    awa: ["store", "search", "media"],
-    wasm: ["basic", "dance", "gaits", "acrobatics"],
-    rl: ["walk"],
-  };
 
   let skills = $state([]);
+  let tagFacets = $state(null);  // null = gateway unavailable, derive from skills
   let robotSkills = $state([]);
   let loading = $state(true);
   let error = $state("");
@@ -82,10 +85,20 @@
     catch (e) { error = e.message || "Failed to load the store"; skills = []; }
     loading = false;
   }
+  async function fetchSkillTags() {
+    try {
+      const facets = normalizeTagFacets(await listSkillTags());
+      if (!facets) throw new Error("Invalid tag facet response");
+      tagFacets = facets;
+    } catch (e) {
+      tagFacets = null;
+      console.warn("Store: using locally derived tags", e);
+    }
+  }
   async function fetchRobotSkills() {
     try { robotSkills = await listRobotSkills(); } catch { /* ignore */ }
   }
-  async function refreshAll() { await Promise.all([fetchSkills(), fetchRobotSkills()]); }
+  async function refreshAll() { await Promise.all([fetchSkills(), fetchSkillTags(), fetchRobotSkills()]); }
   async function onCurrencyChange(code) {
     setPreferredCurrency(code);
     displayCurrency = code;
@@ -129,35 +142,20 @@
   const kindName = $derived(kind === "wasm" ? "Move" : kind === "rl" ? "RL" : "Web");
   const ofKind = $derived(skills.filter((s) => typeOf(s) === kind));
   const featured = $derived(ofKind.find((s) => !isOwned(s.id)) ?? ofKind[0] ?? null);
-  const tagsOf = (s) => Array.isArray(s?.tags)
-    ? [...new Set(s.tags.filter((t) => typeof t === "string" && t.trim()).map((t) => t.trim()))]
-    : [];
   const tagLabel = (tag) => tag.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   const rowSubtitle = (s) => {
     const label = `${typeOf(s) === "wasm" ? "Move" : "Web"} skill`;
     return tagsOf(s).length ? `${label} · ${tagLabel(tagsOf(s)[0])}` : label;
   };
-  const categories = $derived.by(() => {
-    const seen = new Map();
-    for (const s of ofKind) {
-      for (const t of tagsOf(s)) {
-        const key = t.toLocaleLowerCase();
-        const current = seen.get(key);
-        seen.set(key, { tag: current?.tag || t, count: (current?.count || 0) + 1 });
-      }
-    }
-    if (!seen.size) return PLACEHOLDER_TAGS[kind].map((tag) => ({ tag, count: 0 }));
-    return [...seen.values()].sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
-  });
+  const categories = $derived(tagFacetsForSkills(tagFacets, ofKind));
   // The gateway returns discovery order. Keep it for Popular until ranking
   // metrics are supplied; created_at powers the explicit date sorts.
   const ranked = $derived([...ofKind]);
   const topChart = $derived(ranked.slice(0, 5));
   const collectionSkills = $derived.by(() => {
     if (!collection) return [];
-    const activeTag = collection.tag?.toLocaleLowerCase();
-    const list = activeTag
-      ? ofKind.filter((s) => tagsOf(s).some((t) => t.toLocaleLowerCase() === activeTag))
+    const list = collection.tag
+      ? ofKind.filter((s) => skillHasTag(s, collection.tag))
       : [...ofKind];
     if (sortOrder === "latest") list.sort((a, b) => Date.parse(b.created_at || 0) - Date.parse(a.created_at || 0));
     if (sortOrder === "oldest") list.sort((a, b) => Date.parse(a.created_at || 0) - Date.parse(b.created_at || 0));
@@ -216,7 +214,7 @@
 
   // ── Checkout (link-out: card entry happens on HTTPS) ──
   let checkoutSkill = $state(null);
-  let checkoutStage = $state("creating");  // creating | awaiting | installing | install-error | paid | error
+  let checkoutStage = $state("creating");  // creating | awaiting | fulfilling | owned | installing | install-error | paid | error
   let checkoutUrl = $state("");
   let checkoutError = $state("");
   let checkoutOrderId = $state("");
@@ -292,20 +290,35 @@
     if (purchaseStarted || generation !== checkoutGeneration) return;
     purchaseStarted = true;
     stopCheckoutPoll();
-    checkoutStage = typeOf(skill) === "wasm" ? "installing" : "fulfilling";
+    checkoutStage = "fulfilling";
     try {
       await fetchRobotSkills();
       if (generation !== checkoutGeneration) return;
-      if (typeOf(skill) === "wasm") {
-        // The gateway returns Lua deployment steps; fetching them alone does
-        // not put the Move skill on the robot.
-        await installMotionSkill(skill.id, {
-          deploySkill,
-          enqueueLua,
-          onPaths: (paths) => rememberDeployment(skill.id, paths),
-        });
-        if (generation !== checkoutGeneration) return;
-      }
+      // Owning a Move skill and installing it are separate choices. Leave the
+      // package in the Store until the owner explicitly downloads it.
+      checkoutStage = typeOf(skill) === "wasm" ? "owned" : "paid";
+    } catch (e) {
+      if (generation !== checkoutGeneration) return;
+      console.error("Fulfillment failed:", e);
+      checkoutStage = "install-error";
+      checkoutError = e.message || "The skill could not be prepared";
+    }
+  }
+  async function installPurchasedSkill() {
+    const skill = checkoutSkill;
+    const generation = checkoutGeneration;
+    if (!skill || typeOf(skill) !== "wasm" || !["owned", "install-error"].includes(checkoutStage)) return;
+    checkoutStage = "installing";
+    checkoutError = "";
+    try {
+      // The gateway returns Lua deployment steps; fetching them alone does
+      // not put the Move skill on the robot.
+      await installMotionSkill(skill.id, {
+        deploySkill,
+        enqueueLua,
+        onPaths: (paths) => rememberDeployment(skill.id, paths),
+      });
+      if (generation !== checkoutGeneration) return;
       checkoutStage = "paid";
     } catch (e) {
       if (generation !== checkoutGeneration) return;
@@ -315,8 +328,11 @@
     }
   }
   function retryPurchase() {
-    purchaseStarted = false;
-    finishPurchase(checkoutSkill);
+    if (typeOf(checkoutSkill) === "wasm") installPurchasedSkill();
+    else {
+      purchaseStarted = false;
+      finishPurchase(checkoutSkill);
+    }
   }
   async function copyCheckoutUrl() {
     try { await navigator.clipboard.writeText(checkoutUrl); copied = true; setTimeout(() => (copied = false), 1800); } catch {}
@@ -525,7 +541,10 @@
               <div class="tag-scroller collection-tags" aria-label="Filter by tag">
                 <button type="button" class:on={!collection.tag} onclick={() => openCollection()}>All</button>
                 {#each categories as c}
-                  <button type="button" class:on={collection.tag?.toLocaleLowerCase() === c.tag.toLocaleLowerCase()} onclick={() => openCollection(c.tag)}>{tagLabel(c.tag)}</button>
+                  <button type="button" class:on={collection.tag?.toLocaleLowerCase() === c.tag.toLocaleLowerCase()} onclick={() => openCollection(c.tag)} aria-label={`${c.promoted ? "Promoted: " : ""}${tagLabel(c.tag)}, ${c.count} ${c.count === 1 ? "skill" : "skills"}`}>
+                    {#if c.promoted}<span class="promoted-mark" aria-hidden="true">★</span>{/if}
+                    <span>{tagLabel(c.tag)}</span><span class="tag-count">{c.count}</span>
+                  </button>
                 {/each}
               </div>
             {/if}
@@ -555,13 +574,16 @@
           {:else}
             <section class="category-section">
               <div class="sec-head">
-                <h2>Skill categories</h2>
+                <h2>Browse by tag</h2>
                 <button type="button" class="text-btn" onclick={() => openCollection()}>See all</button>
               </div>
               {#if categories.length}
-                <div class="tag-scroller" aria-label={`${kindName} skill categories`}>
+                <div class="tag-scroller" aria-label={`${kindName} skill tags`}>
                   {#each categories.slice(0, 8) as c, i}
-                    <button type="button" class:accent={i % 3 !== 1} class:motion={kind === "wasm"} onclick={() => openCollection(c.tag)}>{tagLabel(c.tag)}</button>
+                    <button type="button" class:accent={i % 3 !== 1} class:motion={kind === "wasm"} onclick={() => openCollection(c.tag)} aria-label={`${c.promoted ? "Promoted: " : ""}${tagLabel(c.tag)}, ${c.count} ${c.count === 1 ? "skill" : "skills"}`}>
+                      {#if c.promoted}<span class="promoted-mark" aria-hidden="true">★</span>{/if}
+                      <span>{tagLabel(c.tag)}</span><span class="tag-count">{c.count}</span>
+                    </button>
                   {/each}
                 </div>
               {:else}
@@ -616,7 +638,16 @@
         <b class="pay-amt">{priceLabel(checkoutSkill)}</b>
       </div>
 
-      {#if checkoutStage === "paid"}
+      {#if checkoutStage === "owned"}
+        <div class="done">
+          <span class="tick" aria-hidden="true"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l6 5.5L20 6"/></svg></span>
+          <h3>It's yours</h3>
+          <p class="muted">You now own {checkoutSkill.title}. Download it to the robot now, or install it later from Skills.</p>
+          {#if checkoutOrderId}<p class="order">Order {checkoutOrderId}</p>{/if}
+        </div>
+        <button type="button" class="dark-btn wide" onclick={installPurchasedSkill}>Download now</button>
+        <button type="button" class="text-btn wide" onclick={closeCheckout}>Dismiss</button>
+      {:else if checkoutStage === "paid"}
         <div class="done">
           <span class="tick" aria-hidden="true"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l6 5.5L20 6"/></svg></span>
           <h3>{isFree(checkoutSkill) ? "It's yours" : "Payment done"}</h3>
@@ -636,7 +667,7 @@
       {:else if checkoutStage === "installing"}
         <p class="muted center"><span class="spinner" aria-hidden="true"></span>Installing on the robot…</p>
       {:else if checkoutStage === "fulfilling"}
-        <p class="muted center"><span class="spinner" aria-hidden="true"></span>Preparing your Web skill…</p>
+        <p class="muted center"><span class="spinner" aria-hidden="true"></span>{typeOf(checkoutSkill) === "wasm" ? "Confirming your Move skill…" : "Preparing your Web skill…"}</p>
       {:else if checkoutStage === "creating"}
         <p class="muted center"><span class="spinner" aria-hidden="true"></span>Getting checkout ready…</p>
       {:else}
@@ -686,7 +717,10 @@
 
   .tag-scroller { display: flex; gap: 8px; overflow-x: auto; margin: 0 -20px; padding: 0 20px 4px; scrollbar-width: none; scroll-padding: 20px; }
   .tag-scroller::-webkit-scrollbar { display: none; }
-  .tag-scroller button { flex: 0 0 auto; min-height: 38px; padding: 0 16px; border: none; border-radius: 19px; background: var(--ground); color: var(--ink); font-size: 14px; font-weight: 750; cursor: pointer; }
+  .tag-scroller button { flex: 0 0 auto; min-height: 38px; padding: 0 16px; border: none; border-radius: 19px; background: var(--ground); color: var(--ink); font-size: 14px; font-weight: 750; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .promoted-mark { font-size: 12px; }
+  .tag-count { min-width: 18px; padding: 1px 5px; border-radius: 9px; background: rgba(17, 17, 17, 0.08); font-size: 11px; line-height: 16px; text-align: center; }
+  .tag-scroller button.on .tag-count { background: rgba(255, 255, 255, 0.18); }
   .tag-scroller button.accent { background: var(--mpx-yellow); }
   .tag-scroller button.accent.motion { background: #CFE3FF; }
   .all-category { width: 100%; min-height: 48px; padding: 0 15px; border: none; border-radius: 14px; background: var(--ground); display: flex; align-items: center; justify-content: space-between; font-size: 14px; font-weight: 700; cursor: pointer; }

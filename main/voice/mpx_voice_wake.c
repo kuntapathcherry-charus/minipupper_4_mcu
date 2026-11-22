@@ -154,6 +154,9 @@ static int          s_task_priority = 5;   /* what the tasks have always run at 
 #define WAKE_AUTO_TASK_STACK   6144   /* internal RAM: it only waits and orchestrates */
 #define WAKE_AUTO_BEEP_HZ      1000
 #define WAKE_AUTO_BEEP_MS      120
+#define WAKE_AUTO_END_BEEP_START_HZ  660
+#define WAKE_AUTO_END_BEEP_END_HZ    440
+#define WAKE_AUTO_END_BEEP_MS        180
 #define WAKE_AUTO_CONNECT_RETRY_MS 2000
 
 /* The WAKE button (SW3, GPIO 21, momentary to ground -- see board_buttons
@@ -680,20 +683,23 @@ int mpx_voice_wake_task_priority(void)
 
 /* ── hands-free: wake word -> talk -> reply -> listen again ──────────────── */
 
-/* A short tone, so you know it heard you and is listening. Generated here
- * rather than through mpx_audio_play_tone(), whose resolution is whole
- * seconds. Played with the microphone closed, so no echo path exists. */
-static void wake_auto_beep(void)
+/* Short cues generated here rather than through mpx_audio_play_tone(), whose
+ * resolution is whole seconds. Played with the microphone closed, so no echo
+ * path exists. Accumulating phase makes the end cue a true falling tone rather
+ * than a frequency-labelled sine whose pitch would sweep in the wrong way. */
+static void wake_auto_tone(uint32_t start_hz, uint32_t end_hz, uint32_t duration_ms,
+                           double amplitude)
 {
     if (!mpx_audio_have_speaker()) {
         return;
     }
-    const size_t frames = (size_t)MPX_VOICE_PLAYBACK_RATE * WAKE_AUTO_BEEP_MS / 1000;
+    const size_t frames = (size_t)MPX_VOICE_PLAYBACK_RATE * duration_ms / 1000;
     int16_t *buf = malloc(frames * sizeof(int16_t));
     if (!buf) {
         return;
     }
     const size_t ramp = frames / 8;
+    double phase = 0.0;
     for (size_t i = 0; i < frames; i++) {
         double env = 1.0;
         if (i < ramp) {
@@ -701,8 +707,10 @@ static void wake_auto_beep(void)
         } else if (i >= frames - ramp) {
             env = (double)(frames - 1 - i) / (double)ramp;
         }
-        buf[i] = (int16_t)(8000.0 * env *
-                           sin(2.0 * M_PI * WAKE_AUTO_BEEP_HZ * (double)i / MPX_VOICE_PLAYBACK_RATE));
+        const double t = frames > 1 ? (double)i / (double)(frames - 1) : 0.0;
+        const double hz = start_hz + ((double)end_hz - start_hz) * t;
+        phase += 2.0 * M_PI * hz / MPX_VOICE_PLAYBACK_RATE;
+        buf[i] = (int16_t)(amplitude * env * sin(phase));
     }
     if (mpx_audio_output_start(MPX_VOICE_PLAYBACK_RATE) == ESP_OK) {
         size_t off = 0;
@@ -716,6 +724,18 @@ static void wake_auto_beep(void)
         mpx_audio_output_stop();
     }
     free(buf);
+}
+
+static void wake_auto_beep(void)
+{
+    wake_auto_tone(WAKE_AUTO_BEEP_HZ, WAKE_AUTO_BEEP_HZ, WAKE_AUTO_BEEP_MS, 8000.0);
+}
+
+static void wake_auto_end_beep(void)
+{
+    /* Roughly half the start cue's amplitude: audible, but not another alert. */
+    wake_auto_tone(WAKE_AUTO_END_BEEP_START_HZ, WAKE_AUTO_END_BEEP_END_HZ,
+                   WAKE_AUTO_END_BEEP_MS, 4200.0);
 }
 
 /* Seconds to keep listening for a follow-up after a reply, with no wake
@@ -924,6 +944,8 @@ static void wake_auto_task(void *arg)
             if (!mpx_voice_talk_server_took_turn()) {
                 /* Nothing was said, or nothing the server could use. */
                 ESP_LOGI(TAG, "hands-free: nothing heard -- listening for the wake word");
+                wake_auto_release_mic();
+                wake_auto_end_beep();
                 state = WAKE_ST_LISTEN;
                 break;
             }
@@ -1031,10 +1053,17 @@ static void wake_auto_task(void *arg)
                 state = WAKE_ST_TALK;
             } else if (finished || ended) {
                 wake_barge_talk_stop();
+                /* The gateway can close immediately after its goodbye TTS.
+                 * Wait for that playback above, close the mic, then give the
+                 * session a distinct, softer falling-tone ending. */
+                wake_auto_release_mic();
+                wake_auto_end_beep();
                 ESP_LOGI(TAG, "hands-free: session ended -- listening for the wake word");
                 state = WAKE_ST_LISTEN;
             } else {
                 wake_barge_talk_stop();
+                wake_auto_release_mic();
+                wake_auto_end_beep();
                 ESP_LOGW(TAG, "hands-free: no reply within %d s -- listening for the wake word",
                          WAKE_REPLY_TIMEOUT_MS / 1000);
                 state = WAKE_ST_LISTEN;

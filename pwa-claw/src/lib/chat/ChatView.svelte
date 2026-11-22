@@ -13,7 +13,6 @@
   import AgentActivity from "./AgentActivity.svelte";
   import EmptyChat from "./EmptyChat.svelte";
   import VoicePanel from "./VoicePanel.svelte";
-  import { PhoneAudio, phoneAudioControl } from "../voice/phoneAudio.js";
   import {
     saveConversation,
     getConversation,
@@ -22,10 +21,7 @@
     normalizeBrain,
     getPreferredBrain,
     setPreferredBrain,
-    appendVoiceTurn,
-    importVoiceHistory,
     markConversationRead,
-    clearConversationMessages,
   } from "../conversationStore.js";
 
   /**
@@ -70,31 +66,16 @@
   let inputEl = $state(null);
   let pendingActions = $state([]);
   let conversationArchived = $state(false);
-  let voiceState = $state({ state: "idle", id: null });
+  let voiceState = $state("idle");
   let voiceWakeBusy = $state(false);
   let voiceWakeError = $state("");
-  let voiceWakeRequested = $state(false);
   let showVoicePanel = $state(false);
-  let voicePanelId = $state(null);
-  let voicePanelConversation = $derived.by(() => {
-    sidebarRefreshKey;
-    return voicePanelId ? getConversation(voicePanelId) : null;
-  });
-  let voicePanelState = $derived(
-    voiceState.id && voiceState.id === voicePanelId ? voiceState.state : "idle",
-  );
+  /* MCP ASR/TTS is deliberately ephemeral: this array is the only copy. */
+  let liveVoiceMessages = $state([]);
+  let liveVoiceSeq = 0;
   let voiceWakeMode = $derived(
     messages.length === 0 && !inputText.trim() && !sending && !conversationArchived,
   );
-
-  /* Phone-side audio. Off by default: the robot's own mic/speaker stay the
-   * normal path, and these are opt-in for testing while across the room. */
-  let phoneMic = $state(false);
-  let phoneSpeaker = $state(false);
-  let phoneAudioError = $state("");
-  let phoneAudio = null;
-  let phoneAudioAvailable = $state(false);
-  const phoneAudioSupported = PhoneAudio.supported;
 
   // ── Brain: who answers this conversation ───
   // "cloud" (OpenClaw, relayed by the robot) or "local" (ESP-Claw's agent
@@ -288,8 +269,7 @@
   });
 
   // ── Conversation actions ──────────────────
-  function openVoicePanel(id = null) {
-    voicePanelId = id || (voiceState.id?.startsWith("voice-") ? voiceState.id : null);
+  function openVoicePanel() {
     voiceWakeError = "";
     showVoicePanel = true;
   }
@@ -306,9 +286,7 @@
     conversationArchived = !!convo.archived;
     markConversationRead(convo.id);
     voiceWakeError = "";
-    voiceWakeRequested = false;
     sending = false;
-    if (convo.source === "voice") openVoicePanel(convo.id);
     if (window.innerWidth < 768) showSidebar = false;
     sendSessionReset(sessionId);
   }
@@ -321,7 +299,6 @@
     pendingActions = [];
     conversationArchived = false;
     voiceWakeError = "";
-    voiceWakeRequested = false;
     sending = false;
     brain = nextBrain;
     if (brain === BRAINS.LOCAL && !localBrainAvailable) brain = BRAINS.CLOUD;
@@ -331,10 +308,7 @@
   function newConversation() {
     if (messages.length > 0) saveConversation(sessionId, { messages, brain });
     sidebarRefreshKey++;
-    // Text chat owns a UUID, not the robot's voice session. In particular,
-    // do not wait for /v1/voice/history/new here: its firmware handler takes
-    // the voice-turn lock and can block for an entire in-flight agent reply.
-    // The voice panel has its own explicit newVoiceSession() for that path.
+    // Text chat owns a UUID; MCP voice has no stored conversation or session UI.
     startFresh(undefined, brain);
     inputEl?.focus();
   }
@@ -406,8 +380,6 @@
       connected = true;
       sendSessionReset(sessionId, { pwa_build: "brains-v23" });
       probeLocalBrain();
-      void loadVoiceCapabilities();
-      void loadVoiceHistory();
     };
 
     socket.onclose = () => {
@@ -423,11 +395,7 @@
 
     socket.binaryType = "arraybuffer";
     socket.onmessage = (event) => {
-      if (event.data instanceof ArrayBuffer) {
-        // PCM16 from the robot's TTS, only arriving when phone speaker is on.
-        phoneAudio?.play(new Int16Array(event.data));
-        return;
-      }
+      if (event.data instanceof ArrayBuffer) return;
       try {
         const data = JSON.parse(event.data);
         handleMessage(data);
@@ -455,78 +423,60 @@
     return -1;
   }
 
-  async function loadVoiceCapabilities() {
-    try {
-      const res = await fetch("/v1/voice", { cache: "no-store" });
-      if (!res.ok) throw new Error(`voice status HTTP ${res.status}`);
-      const status = await res.json();
-      phoneAudioAvailable = status.phone_audio === true;
-      if (!phoneAudioAvailable) await stopPhoneAudio();
-    } catch {
-      phoneAudioAvailable = false;
-    }
+  function appendLiveVoiceTurn(role, text) {
+    if (typeof text !== "string" || !text.trim()) return;
+    const normalizedRole = role === "user" ? "user" : "assistant";
+    const now = Date.now();
+    const last = liveVoiceMessages[liveVoiceMessages.length - 1];
+    /* Some gateways send the same partial and final ASR back to back. */
+    if (last && last.role === normalizedRole && last.text === text && now - last.ts < 3000) return;
+    liveVoiceMessages = [...liveVoiceMessages, {
+      id: ++liveVoiceSeq,
+      role: normalizedRole,
+      text,
+      ts: now,
+    }].slice(-200);
   }
 
-  async function loadVoiceHistory() {
-    try {
-      /* Fewer conversations keeps the LittleFS read short: the history handler
-       * runs on the httpd task, and a long read stalls every other request. */
-      const res = await fetch("/v1/voice/history?limit=6", { cache: "no-store" });
-      if (!res.ok) return;
-      importVoiceHistory(await res.json());
-      // Refresh an open voice transcript; never steal focus from a text chat.
-      const open = getConversation(sessionId);
-      if (open?.source === "voice" && !sending) {
-        messages = open.messages;
-        brain = BRAINS.LOCAL;
-        conversationArchived = !!open.archived;
-        markConversationRead(sessionId);
-      }
-      sidebarRefreshKey++;
-    } catch {
-      // Older firmware and MCP/server brain have no local history endpoint.
+  function appendVoiceTool(data) {
+    if (typeof data.name !== "string" || !data.name) return;
+    const id = ++liveVoiceSeq;
+    let text;
+    if (data.phase === "start") {
+      let args = "";
+      try {
+        const json = data.arguments == null ? "" : JSON.stringify(data.arguments);
+        if (json && json !== "{}") args = ` ${json.length > 240 ? `${json.slice(0, 237)}…` : json}`;
+      } catch {}
+      text = `Calling ${data.name}${args}`;
+    } else {
+      text = `${data.name} ${data.isError ? "failed" : "completed"}`;
+      if (typeof data.text === "string" && data.text) text += `: ${data.text}`;
     }
+    liveVoiceMessages = [...liveVoiceMessages, {
+      id,
+      role: "step",
+      text,
+      toolName: data.name,
+      ts: Date.now(),
+      seq: id,
+    }].slice(-200);
+    voiceState = "thinking";
   }
 
   function handleMessage(data) {
-    if (data.type === "phone_audio") {
-      if (data.event === "stop") {
-        phoneAudio?.interrupt();
-      } else if (data.ok === false) {
-        phoneAudioError = data.error || "Phone audio could not start";
-        phoneMic = false;
-        void phoneAudio?.setMic(false).then(() => sendPhoneAudioState());
-      } else {
-        phoneAudioError = "";
-      }
+    if (data.type === "voice_tool") {
+      appendVoiceTool(data);
       return;
     }
-    if (data.type === "voice_turn") {
-      const convo = appendVoiceTurn(data, { activeId: sessionId });
-      if (voiceWakeRequested && convo) {
-        /* A wake from a fresh Cloud chat moves to the robot-owned voice
-         * session as soon as its first transcript exists. */
-        voiceWakeRequested = false;
-        selectConversation(convo.id);
-      } else if (convo && data.conversation_id === sessionId) {
-        messages = convo.messages;
-        brain = BRAINS.LOCAL;
-        markConversationRead(sessionId);
-      }
-      sidebarRefreshKey++;
+    if (data.type === "voice_live" || data.type === "voice_turn") {
+      appendLiveVoiceTurn(data.role, data.text);
+      if (data.type === "voice_live") voiceState = data.role === "user" ? "thinking" : "speaking";
       return;
     }
-    if (data.type === "voice_step") {
-      if (data.conversation_id === sessionId && typeof data.text === "string") {
-        messages = [...messages, { role: "step", text: data.text, ts: Date.now() }];
-        saveConversation(sessionId, { messages, brain: BRAINS.LOCAL });
-      }
-      sidebarRefreshKey++;
-      return;
-    }
-    if (data.type === "voice_state") {
-      voiceState = { state: data.state || "idle", id: data.conversation_id || null };
-      sidebarRefreshKey++;
+    if (data.type === "voice_step") return;
+    if (data.type === "voice_state" || data.type === "voice_live_state") {
+      voiceState = data.state || "idle";
       return;
     }
 
@@ -714,11 +664,12 @@
   // ── Send message / wake voice ─────────────
   async function wakeVoice() {
     if (voiceWakeBusy || !connected) return;
-    openVoicePanel(voicePanelId);
+    openVoicePanel();
+    if (!["idle", "ended", "cleared"].includes(voiceState)) return;
+    liveVoiceMessages = [];
     voiceWakeBusy = true;
     voiceWakeError = "";
-    voiceWakeRequested = true;
-    voiceState = { state: "starting", id: voicePanelId };
+    voiceState = "starting";
     try {
       const res = await fetch("/v1/voice", {
         method: "POST",
@@ -727,9 +678,9 @@
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Voice chat could not start");
+      if (voiceState === "starting") voiceState = "listening";
     } catch (error) {
-      voiceWakeRequested = false;
-      voiceState = { state: "idle", id: voicePanelId };
+      if (voiceState === "starting") voiceState = "idle";
       voiceWakeError = error?.message || "Voice chat could not start";
     } finally {
       voiceWakeBusy = false;
@@ -738,9 +689,10 @@
 
   async function endVoiceSession() {
     if (voiceWakeBusy) return;
-    await stopPhoneAudio();
+    const stateBeforeStop = voiceState;
     voiceWakeBusy = true;
     voiceWakeError = "";
+    voiceState = "stopping";
     try {
       const res = await fetch("/v1/voice", {
         method: "POST",
@@ -749,127 +701,17 @@
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Could not end voice chat");
-      voiceWakeRequested = false;
-      voiceState = { state: "ended", id: voicePanelId };
+      if (voiceState === "stopping") voiceState = "ended";
     } catch (error) {
+      if (voiceState === "stopping") voiceState = stateBeforeStop;
       voiceWakeError = error?.message || "Could not end voice chat";
     } finally {
       voiceWakeBusy = false;
     }
   }
 
-  async function newVoiceSession() {
-    if (voiceWakeBusy) return;
-    await stopPhoneAudio();
-    voiceWakeBusy = true;
-    voiceWakeError = "";
-    try {
-      const res = await fetch("/v1/voice/history/new", { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.id) throw new Error(data.error || "Could not create a voice session");
-      startFresh(data.id, BRAINS.LOCAL);
-      voicePanelId = data.id;
-      voiceState = { state: "idle", id: data.id };
-      voiceWakeRequested = false;
-      showVoicePanel = true;
-      sidebarRefreshKey++;
-    } catch (error) {
-      voiceWakeError = error?.message || "Could not create a voice session";
-    } finally {
-      voiceWakeBusy = false;
-    }
-  }
-
-  async function clearVoiceContext() {
-    const id = voicePanelId;
-    if (!id || voiceWakeBusy) return;
-    if (!window.confirm("Clear this voice session's context and transcript from the robot and this phone?")) return;
-    voiceWakeBusy = true;
-    voiceWakeError = "";
-    try {
-      const res = await fetch("/v1/voice", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clear_context: id }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Could not clear voice context");
-      clearConversationMessages(id);
-      if (sessionId === id) messages = [];
-      voiceState = { state: "cleared", id };
-      sidebarRefreshKey++;
-    } catch (error) {
-      voiceWakeError = error?.message || "Could not clear voice context";
-    } finally {
-      voiceWakeBusy = false;
-    }
-  }
-
-  function sendPhoneAudioState() {
-    if (!phoneAudio || !ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(phoneAudioControl({ mic: phoneAudio.mic, speaker: phoneAudio.speaker }));
-  }
-
-  async function ensurePhoneAudio() {
-    if (!phoneAudio) {
-      phoneAudio = new PhoneAudio({
-        sendBinary: (buffer) => {
-          if (ws && ws.readyState === WebSocket.OPEN) ws.send(buffer);
-        },
-        onError: (message) => {
-          phoneAudioError = message;
-        },
-      });
-    }
-    return phoneAudio;
-  }
-
-  async function togglePhoneMic() {
-    if (voiceWakeBusy) return;
-    phoneAudioError = "";
-    const next = !phoneMic;
-    try {
-      const audio = await ensurePhoneAudio();
-      await audio.setMic(next);
-      phoneMic = next;
-      if (!next) audio.interrupt();
-      sendPhoneAudioState();
-    } catch (error) {
-      phoneAudioError = error?.message || "Phone microphone unavailable — check browser permission";
-      phoneMic = false;
-    }
-  }
-
-  async function togglePhoneSpeaker() {
-    if (voiceWakeBusy) return;
-    phoneAudioError = "";
-    const next = !phoneSpeaker;
-    try {
-      const audio = await ensurePhoneAudio();
-      await audio.setSpeaker(next);
-      phoneSpeaker = next;
-      sendPhoneAudioState();
-    } catch (error) {
-      phoneAudioError = error?.message || "Phone speaker unavailable";
-      phoneSpeaker = false;
-    }
-  }
-
-  /* Microphone capture must not outlive the panel: a page left open would
-   * otherwise keep streaming room audio to the robot. */
-  async function stopPhoneAudio() {
-    if (!phoneAudio) return;
-    await phoneAudio.disable();
-    phoneMic = false;
-    phoneSpeaker = false;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(phoneAudioControl({ mic: false, speaker: false }));
-    }
-  }
-
   function closeVoicePanel() {
     showVoicePanel = false;
-    void stopPhoneAudio();
   }
 
   function submitChat() {
@@ -1135,22 +977,13 @@
 
   {#if showVoicePanel}
     <VoicePanel
-      conversation={voicePanelConversation}
-      voiceState={voicePanelState}
+      messages={liveVoiceMessages}
+      {voiceState}
       busy={voiceWakeBusy}
       error={voiceWakeError}
-      onWake={wakeVoice}
-      onEnd={endVoiceSession}
-      onNew={newVoiceSession}
-      onClear={clearVoiceContext}
+      onStart={wakeVoice}
+      onStop={endVoiceSession}
       onClose={closeVoicePanel}
-      phoneMic={phoneMic}
-      phoneSpeaker={phoneSpeaker}
-      phoneError={phoneAudioError}
-      phoneSupported={phoneAudioSupported}
-      phoneAudioAvailable={phoneAudioAvailable}
-      onToggleMic={togglePhoneMic}
-      onToggleSpeaker={togglePhoneSpeaker}
     />
   {/if}
 </div>

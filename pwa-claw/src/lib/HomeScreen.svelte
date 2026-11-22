@@ -13,7 +13,6 @@
   import SkillsManagement from "./SkillsManagement.svelte";
   import SettingsPage from "./SettingsPage.svelte";
   import WifiSheet from "./WifiSheet.svelte";
-  import SystemMonitor from "./SystemMonitor.svelte";
   import { normalizeDeployedSkills, reconcileDeployedSkills, runSkill, skillActionsFromInstalled } from "./skillActions.js";
 
   let { network } = $props();
@@ -78,16 +77,6 @@
   const KEY_ASSIGN = "mpx_action_assignments_v2";   // v2 (2026-11-20): the new move list and button defaults
   const KEY_CUSTOM = "mpx_custom_actions";
   const KEY_PINNED = "mpx_pinned_actions_v2";
-  const KEY_SYSTEM_MONITOR = "mpx_system_monitor_enabled";
-  let systemMonitorEnabled = $state(true);
-  try {
-    const saved = localStorage.getItem(KEY_SYSTEM_MONITOR);
-    if (saved !== null) systemMonitorEnabled = saved === "true";
-  } catch {}
-  function setSystemMonitorEnabled(enabled) {
-    systemMonitorEnabled = enabled;
-    try { localStorage.setItem(KEY_SYSTEM_MONITOR, String(enabled)); } catch {}
-  }
   let actionAssignments = $state({});
   let customActions = $state([]);
   let pinnedActions = $state([]);
@@ -320,9 +309,6 @@
             <img class="logo" src="/md.svg" alt="MangDang" />
             <div class="head-right">
               <BatteryChip {online} />
-              {#if systemMonitorEnabled}
-                <SystemMonitor {online} />
-              {/if}
               {#if !desktop}
               <button type="button" class="round" onclick={enterWide} aria-label="Landscape controller">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="10" rx="3"/><path d="M8 10v4M6 12h4M16 11h.01M18 13h.01"/></svg>
@@ -405,9 +391,7 @@
         {network}
         {controlScheme}
         {controlSchemeReady}
-        {systemMonitorEnabled}
         onControlScheme={selectControlScheme}
-        onSystemMonitorChange={setSystemMonitorEnabled}
       />
     {/if}
   </main>
