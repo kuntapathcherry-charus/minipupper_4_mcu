@@ -4,6 +4,7 @@
   import { installMotionSkill, marketplaceSkillType } from "./skillActions.js";
   import {
     listSkills,
+    listSkillTags,
     getSkill,
     getSkillManifest,
     listRobotSkills,
@@ -13,6 +14,12 @@
     createCheckout,
     getOrder,
   } from "./marketplaceApi.js";
+  import {
+    normalizeTagFacets,
+    skillHasTag,
+    skillTags as tagsOf,
+    tagFacetsForSkills,
+  } from "./marketplaceTags.js";
 
   /**
    * The Store: Web skills and Move skills, App Store style.
@@ -34,12 +41,9 @@
     CLF: 4, UYW: 4,
   };
   const DISPLAY_CURRENCIES = ["USD", "HKD", "CNY", "EUR", "GBP", "JPY", "SGD"];
-  const PLACEHOLDER_TAGS = {
-    awa: ["store", "search", "media"],
-    wasm: ["basic", "dance", "gaits", "acrobatics"],
-  };
 
   let skills = $state([]);
+  let tagFacets = $state(null);  // null = gateway unavailable, derive from skills
   let robotSkills = $state([]);
   let loading = $state(true);
   let error = $state("");
@@ -67,10 +71,20 @@
     catch (e) { error = e.message || "Failed to load the store"; skills = []; }
     loading = false;
   }
+  async function fetchSkillTags() {
+    try {
+      const facets = normalizeTagFacets(await listSkillTags());
+      if (!facets) throw new Error("Invalid tag facet response");
+      tagFacets = facets;
+    } catch (e) {
+      tagFacets = null;
+      console.warn("Store: using locally derived tags", e);
+    }
+  }
   async function fetchRobotSkills() {
     try { robotSkills = await listRobotSkills(); } catch { /* ignore */ }
   }
-  async function refreshAll() { await Promise.all([fetchSkills(), fetchRobotSkills()]); }
+  async function refreshAll() { await Promise.all([fetchSkills(), fetchSkillTags(), fetchRobotSkills()]); }
   async function onCurrencyChange(code) {
     setPreferredCurrency(code);
     displayCurrency = code;
@@ -114,35 +128,20 @@
   const kindName = $derived(kind === "wasm" ? "Move" : "Web");
   const ofKind = $derived(skills.filter((s) => typeOf(s) === kind));
   const featured = $derived(ofKind.find((s) => !isOwned(s.id)) ?? ofKind[0] ?? null);
-  const tagsOf = (s) => Array.isArray(s?.tags)
-    ? [...new Set(s.tags.filter((t) => typeof t === "string" && t.trim()).map((t) => t.trim()))]
-    : [];
   const tagLabel = (tag) => tag.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   const rowSubtitle = (s) => {
     const label = `${typeOf(s) === "wasm" ? "Move" : "Web"} skill`;
     return tagsOf(s).length ? `${label} · ${tagLabel(tagsOf(s)[0])}` : label;
   };
-  const categories = $derived.by(() => {
-    const seen = new Map();
-    for (const s of ofKind) {
-      for (const t of tagsOf(s)) {
-        const key = t.toLocaleLowerCase();
-        const current = seen.get(key);
-        seen.set(key, { tag: current?.tag || t, count: (current?.count || 0) + 1 });
-      }
-    }
-    if (!seen.size) return PLACEHOLDER_TAGS[kind].map((tag) => ({ tag, count: 0 }));
-    return [...seen.values()].sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
-  });
+  const categories = $derived(tagFacetsForSkills(tagFacets, ofKind));
   // The gateway returns discovery order. Keep it for Popular until ranking
   // metrics are supplied; created_at powers the explicit date sorts.
   const ranked = $derived([...ofKind]);
   const topChart = $derived(ranked.slice(0, 5));
   const collectionSkills = $derived.by(() => {
     if (!collection) return [];
-    const activeTag = collection.tag?.toLocaleLowerCase();
-    const list = activeTag
-      ? ofKind.filter((s) => tagsOf(s).some((t) => t.toLocaleLowerCase() === activeTag))
+    const list = collection.tag
+      ? ofKind.filter((s) => skillHasTag(s, collection.tag))
       : [...ofKind];
     if (sortOrder === "latest") list.sort((a, b) => Date.parse(b.created_at || 0) - Date.parse(a.created_at || 0));
     if (sortOrder === "oldest") list.sort((a, b) => Date.parse(a.created_at || 0) - Date.parse(b.created_at || 0));
@@ -482,7 +481,10 @@
               <div class="tag-scroller collection-tags" aria-label="Filter by tag">
                 <button type="button" class:on={!collection.tag} onclick={() => openCollection()}>All</button>
                 {#each categories as c}
-                  <button type="button" class:on={collection.tag?.toLocaleLowerCase() === c.tag.toLocaleLowerCase()} onclick={() => openCollection(c.tag)}>{tagLabel(c.tag)}</button>
+                  <button type="button" class:on={collection.tag?.toLocaleLowerCase() === c.tag.toLocaleLowerCase()} onclick={() => openCollection(c.tag)} aria-label={`${c.promoted ? "Promoted: " : ""}${tagLabel(c.tag)}, ${c.count} ${c.count === 1 ? "skill" : "skills"}`}>
+                    {#if c.promoted}<span class="promoted-mark" aria-hidden="true">★</span>{/if}
+                    <span>{tagLabel(c.tag)}</span><span class="tag-count">{c.count}</span>
+                  </button>
                 {/each}
               </div>
             {/if}
@@ -512,13 +514,16 @@
           {:else}
             <section class="category-section">
               <div class="sec-head">
-                <h2>Skill categories</h2>
+                <h2>Browse by tag</h2>
                 <button type="button" class="text-btn" onclick={() => openCollection()}>See all</button>
               </div>
               {#if categories.length}
-                <div class="tag-scroller" aria-label={`${kindName} skill categories`}>
+                <div class="tag-scroller" aria-label={`${kindName} skill tags`}>
                   {#each categories.slice(0, 8) as c, i}
-                    <button type="button" class:accent={i % 3 !== 1} class:motion={kind === "wasm"} onclick={() => openCollection(c.tag)}>{tagLabel(c.tag)}</button>
+                    <button type="button" class:accent={i % 3 !== 1} class:motion={kind === "wasm"} onclick={() => openCollection(c.tag)} aria-label={`${c.promoted ? "Promoted: " : ""}${tagLabel(c.tag)}, ${c.count} ${c.count === 1 ? "skill" : "skills"}`}>
+                      {#if c.promoted}<span class="promoted-mark" aria-hidden="true">★</span>{/if}
+                      <span>{tagLabel(c.tag)}</span><span class="tag-count">{c.count}</span>
+                    </button>
                   {/each}
                 </div>
               {:else}
@@ -641,7 +646,10 @@
 
   .tag-scroller { display: flex; gap: 8px; overflow-x: auto; margin: 0 -20px; padding: 0 20px 4px; scrollbar-width: none; scroll-padding: 20px; }
   .tag-scroller::-webkit-scrollbar { display: none; }
-  .tag-scroller button { flex: 0 0 auto; min-height: 38px; padding: 0 16px; border: none; border-radius: 19px; background: var(--ground); color: var(--ink); font-size: 14px; font-weight: 750; cursor: pointer; }
+  .tag-scroller button { flex: 0 0 auto; min-height: 38px; padding: 0 16px; border: none; border-radius: 19px; background: var(--ground); color: var(--ink); font-size: 14px; font-weight: 750; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .promoted-mark { font-size: 12px; }
+  .tag-count { min-width: 18px; padding: 1px 5px; border-radius: 9px; background: rgba(17, 17, 17, 0.08); font-size: 11px; line-height: 16px; text-align: center; }
+  .tag-scroller button.on .tag-count { background: rgba(255, 255, 255, 0.18); }
   .tag-scroller button.accent { background: var(--mpx-yellow); }
   .tag-scroller button.accent.motion { background: #CFE3FF; }
   .all-category { width: 100%; min-height: 48px; padding: 0 15px; border: none; border-radius: 14px; background: var(--ground); display: flex; align-items: center; justify-content: space-between; font-size: 14px; font-weight: 700; cursor: pointer; }
