@@ -324,11 +324,10 @@ const GaitName GAIT_NAMES[] = {
     { "charshow",     GaitCmd::CharShow },
     { "alive",        GaitCmd::Alive },
     { "hiptest",      GaitCmd::HipTest },
-    // "backflip" = the "Backflip stable" preset (BF_PRESETS[1] in
-    // moves_mpe.inc): minipupperesp calls it the more repeatable one. The
-    // other presets and every trajopt table are found by their own names -
-    // see gait_from_name().
-    { "backflip",     static_cast<GaitCmd>(GAIT_BF_BASE + 1) },
+    // "backflip" = the latest, screen-safe K7 405 L2D3 preset
+    // (BF_PRESETS[12] in moves_mpe.inc). The other presets and every trajopt
+    // table remain available by their own names -- see gait_from_name().
+    { "backflip",     static_cast<GaitCmd>(GAIT_BF_BASE + 12) },
 };
 constexpr int GAIT_NAME_COUNT = sizeof(GAIT_NAMES) / sizeof(GAIT_NAMES[0]);
 
