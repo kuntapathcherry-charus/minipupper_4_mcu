@@ -19,6 +19,7 @@ set(sources
     # branch: these are mpv2-claw's components/mpx_robot/src/robot files, see
     # .cursor/PORT_NOTES.md). imu.cc stays this firmware's (shared I2C bus).
     "robot/robot.cc"
+    "robot/battery.cc"
     "robot/driver_board.c"
     "robot/stanford_gait.cc"
     "robot/stanford_kinematics.cc"

@@ -4,6 +4,7 @@
   import Ps4Controller from "./Ps4Controller.svelte";
   import ActionIcon from "./ActionIcon.svelte";
   import VolumeSlider from "./VolumeSlider.svelte";
+  import BatteryChip from "./BatteryChip.svelte";
   import ActionAssignment from "./ActionAssignment.svelte";
   import AddActionView from "./AddActionView.svelte";
   import AllActions from "./AllActions.svelte";
@@ -174,11 +175,16 @@
     flash = mode;
     setTimeout(() => { if (flash === mode) flash = null; }, 700);
     try {
-      await fetch("/v1/robot/gait", {
+      const r = await fetch("/v1/robot/gait", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode }),
       });
+      // Refused (a backflip on a too-full battery, say): show the robot's reason.
+      if (!r.ok) {
+        const j = await r.json().catch(() => null);
+        if (j?.error) showActionError(j.error);
+      }
     } catch { /* ignore */ }
   }
 
@@ -313,6 +319,7 @@
             </button>
             <img class="logo" src="/md.svg" alt="MangDang" />
             <div class="head-right">
+              <BatteryChip {online} />
               {#if systemMonitorEnabled}
                 <SystemMonitor {online} />
               {/if}

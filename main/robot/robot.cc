@@ -21,6 +21,7 @@ extern "C" {
 }
 
 #include "robot/alive.h"
+#include "robot/battery.h"
 #include "robot/board_config.h"
 #include "robot/mpe_tables.h"      // minipupperesp jump + Character tables
 #include "robot/stanford_gait.h"
@@ -1004,9 +1005,23 @@ void cancel_timed_move()
     taskEXIT_CRITICAL(&s_timed_move_mux);
 }
 
+/* A backflip on a battery fuller than CONFIG_APP_BACKFLIP_MAX_MV (robot/battery.cc): refused here, from the
+ * last reading (no bus traffic: callers may be any task). The HTTP route and the agent ask first, with a fresh
+ * reading, to give the reason back. */
+static bool battery_refuses(GaitCmd cmd)
+{
+    const char *name = gait_to_name(cmd);
+    if (!name || std::strncmp(name, "backflip", 8) != 0) return false;
+    char why[128];
+    if (!mpx_battery_backflip_refusal(why, sizeof(why), false)) return false;
+    ESP_LOGW(TAG, "%s refused: %s", name, why);
+    return true;
+}
+
 void send_gait_cmd_for(GaitCmd cmd, uint32_t duration_ms)
 {
     if (master_blocks("send_gait_cmd_for")) return;
+    if (battery_refuses(cmd)) return;
     taskENTER_CRITICAL(&s_timed_move_mux);
     s_gait_cmd = cmd;
     cancel_timed_move_locked();
@@ -1023,6 +1038,7 @@ void send_gait_cmd_for(GaitCmd cmd, uint32_t duration_ms)
 void send_gait_cmd(GaitCmd cmd)
 {
     if (master_blocks("send_gait_cmd")) return;
+    if (battery_refuses(cmd)) return;
     taskENTER_CRITICAL(&s_timed_move_mux);
     cancel_timed_move_locked();
     s_gait_cmd = cmd;

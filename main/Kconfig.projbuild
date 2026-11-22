@@ -191,6 +191,26 @@ config APP_MARKETPLACE_DEPLOY_TIMEOUT_S
         skill download as failed even though the gateway eventually
         succeeds.
 
+# ── Battery (read from the AT32 servo boards, robot/battery.cc) ─
+
+    config APP_BATTERY_CELLS
+        int "Battery: Li-ion cells in series (for the percentage)"
+        range 1 6
+        default 3
+        help
+            The robot's pack: 3S (12.6 V full). Only the percentage uses it;
+            the voltage comes from the servo boards (AT32 live value 14).
+
+    config APP_BACKFLIP_MAX_MV
+        int "Backflip: refuse above this battery voltage (mV, 0 = no limit)"
+        range 0 20000
+        default 12000
+        help
+            A full battery makes the servos stronger and the flip
+            over-rotates: above this the backflips are refused (the app,
+            voice and skills get the reason). With no servo board reporting
+            the voltage (older AT32 firmware) nothing is refused.
+
 # ── IMU logging ────────────────────────────────────────────────
 
     config APP_IMU_LOG_ENABLE

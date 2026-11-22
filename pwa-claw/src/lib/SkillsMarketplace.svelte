@@ -1,6 +1,8 @@
 <script>
   import { detectCurrency, setPreferredCurrency } from "./currency.js";
   import SkillPreview from "./SkillPreview.svelte";
+  import RLSkillSheet from "./RLSkillSheet.svelte";
+  import { RL_SKILLS, ROBOT_NAME } from "./rlSkills.js";
   import { installMotionSkill, marketplaceSkillType } from "./skillActions.js";
   import {
     listSkills,
@@ -15,7 +17,9 @@
   } from "./marketplaceApi.js";
 
   /**
-   * The Store: Web skills and Move skills, App Store style.
+   * The Store: Web skills, Move skills and RL skills, App Store style. RL skills are
+   * policies built into the firmware (rlSkills.js): their tab lists them and opens
+   * RLSkillSheet to run one.
    * Discover: a featured skill, tappable ranked chart, and tag categories.
    * Collections: complete sortable genre listings. Detail: Get / Buy; purchases link out to the
    * gateway's HTTPS checkout and polls the order, as before.
@@ -37,6 +41,7 @@
   const PLACEHOLDER_TAGS = {
     awa: ["store", "search", "media"],
     wasm: ["basic", "dance", "gaits", "acrobatics"],
+    rl: ["walk"],
   };
 
   let skills = $state([]);
@@ -45,7 +50,17 @@
   let error = $state("");
   let displayCurrency = $state(detectCurrency());
 
-  let kind = $state("awa");         // "awa" (Web) | "wasm" (Move)
+  let kind = $state("awa");         // "awa" (Web) | "wasm" (Move) | "rl" (RL, built into the firmware)
+  let rlOpen = $state(null);        // the RL skill whose sheet is open
+  let rlBuiltins = $state(null);    // GET /v1/policy "builtins"; [] = no RL walk in this firmware, null = not read
+  async function loadRl() {
+    try {
+      const r = await fetch("/v1/policy", { cache: "no-store" });
+      const j = r.ok ? await r.json() : null;
+      rlBuiltins = j && j.available !== false && Array.isArray(j.builtins) ? j.builtins : [];
+    } catch { rlBuiltins = null; }
+  }
+  $effect(() => { if (kind === "rl") loadRl(); });
   let collection = $state(null);    // null = discovery; { tag } = full listing
   let sortOrder = $state("popular");
   let scrollEl = $state(null);
@@ -111,7 +126,7 @@
   const buttonLabel = (s) => (isOwned(s.id) ? "Open" : isFree(s) ? "Get" : priceLabel(s));
 
   // ── Browse lists ──
-  const kindName = $derived(kind === "wasm" ? "Move" : "Web");
+  const kindName = $derived(kind === "wasm" ? "Move" : kind === "rl" ? "RL" : "Web");
   const ofKind = $derived(skills.filter((s) => typeOf(s) === kind));
   const featured = $derived(ofKind.find((s) => !isOwned(s.id)) ?? ofKind[0] ?? null);
   const tagsOf = (s) => Array.isArray(s?.tags)
@@ -452,10 +467,38 @@
           <div class="tabs" role="tablist" aria-label="Skill category">
             <button type="button" role="tab" aria-selected={kind === "awa"} class:on={kind === "awa"} onclick={() => pickKind("awa")}>Web skills</button>
             <button type="button" role="tab" aria-selected={kind === "wasm"} class:on={kind === "wasm"} onclick={() => pickKind("wasm")}>Move skills</button>
-            <button type="button" role="tab" class="soon" disabled aria-label="RL skills, coming soon">RL <span>Soon</span></button>
+            <button type="button" role="tab" aria-selected={kind === "rl"} class:on={kind === "rl"} onclick={() => pickKind("rl")}>RL skills</button>
           </div>
 
-          {#if loading}
+          {#if kind === "rl"}
+            <section class="collection-hero rl">
+              <div>
+                <span class="kicker">RL skills</span>
+                <h2>Learned on the robot's own chip</h2>
+                <p>Walks trained in simulation with reinforcement learning, running on the ESP32-S3 itself. Tap one to pick its speed, weights and how to run it.</p>
+              </div>
+              <span class="collection-mark" aria-hidden="true"><i></i><i></i></span>
+            </section>
+            <ul class="rows">
+              {#each RL_SKILLS as r (r.id)}
+                {@const onRobot = rlBuiltins?.includes(r.policy)}
+                <li class="row">
+                  <button type="button" class="row-main" onclick={() => (rlOpen = r)}>
+                    <span class="app-ico rl" style="--s: 58px" aria-hidden="true">
+                      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M7.5 7.5l3.5 8.5M16.5 7.5L13 16M8 6h8"/></svg>
+                    </span>
+                    <span class="row-txt">
+                      <span class="row-name">{r.title}</span>
+                      <span class="row-desc">RL skill · {r.tagline}</span>
+                      <span class="rl-meta">For {ROBOT_NAME[r.robot] || r.robot} · {r.price} · {rlBuiltins === null ? "checking the robot…" : onRobot ? "on this robot" : "not in this firmware"}</span>
+                    </span>
+                  </button>
+                  <button type="button" class="get" class:owned={onRobot} onclick={() => (rlOpen = r)} aria-label="Open {r.title}">Open</button>
+                </li>
+              {/each}
+            </ul>
+            <p class="muted small">RL skills come with the firmware: a new one arrives with a firmware update. Each runs the same way as Settings → RL walk.</p>
+          {:else if loading}
             <div class="sk-hero" aria-hidden="true"></div>
             {#each [0, 1, 2] as _}<div class="sk-row" aria-hidden="true"></div>{/each}
           {:else if error}
@@ -610,6 +653,10 @@
       {/if}
     </div>
   {/if}
+
+  {#if rlOpen}
+    <RLSkillSheet skill={rlOpen} onClose={() => { rlOpen = null; loadRl(); }} />
+  {/if}
 </div>
 
 <style>
@@ -632,8 +679,6 @@
   .tabs::-webkit-scrollbar { display: none; }
   .tabs button { height: 40px; padding: 0 17px; border-radius: 20px; border: none; background: var(--ground); color: #3F3C37; font-size: 14px; font-weight: 750; cursor: pointer; white-space: nowrap; transition: background var(--dur-fast), color var(--dur-fast); }
   .tabs button.on { background: var(--ink); color: #fff; }
-  .tabs button.soon { display: flex; align-items: center; gap: 6px; cursor: default; opacity: 0.55; }
-  .tabs button.soon span { padding: 2px 5px; border-radius: 5px; background: #E4E2DC; font-size: 9px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; }
 
   .kicker { font-size: 11px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sub); }
   .sec-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
@@ -678,6 +723,12 @@
   .back-link { align-self: flex-start; display: flex; align-items: center; gap: 2px; min-height: 36px; margin: -4px 0 -10px -7px; border: none; background: transparent; color: var(--sub); font-size: 14px; font-weight: 700; cursor: pointer; }
   .collection-hero { min-height: 156px; padding: 24px; border-radius: 24px; background: var(--mpx-yellow); display: flex; align-items: center; justify-content: space-between; gap: 16px; overflow: hidden; }
   .collection-hero.motion { background: #CFE3FF; }
+  .collection-hero.rl { background: var(--ink); color: #fff; }
+  .collection-hero.rl .kicker { color: rgba(255,255,255,.6); }
+  .collection-hero.rl p { color: rgba(255,255,255,.75); }
+  .collection-hero.rl .collection-mark i { background: var(--mpx-yellow); }
+  .app-ico.rl { background: var(--ink); color: var(--mpx-yellow); display: grid; place-items: center; }
+  .rl-meta { font-size: 12px; color: var(--sub); }
   .collection-hero > div { min-width: 0; }
   .collection-hero .kicker { color: rgba(17,17,17,.58); }
   .collection-hero h2 { margin-top: 5px; font-size: 30px; line-height: 1.05; letter-spacing: -0.035em; }

@@ -18,12 +18,16 @@
     runSkill,
     skillActionId,
   } from "./skillActions.js";
+  import RLSkillSheet from "./RLSkillSheet.svelte";
+  import { RL_SKILLS, ROBOT_NAME } from "./rlSkills.js";
 
   /**
    * Web skills run in the Agent and are switched on or off. Move skills are
    * files installed into the robot's storage. The firmware registry is the
    * installed-source-of-truth, so manually installed and encrypted skills
-   * survive reboots and appear even when the Store cannot be reached.
+   * survive reboots and appear even when the Store cannot be reached. RL skills
+   * are walk policies built into the firmware (rlSkills.js, /v1/policy): the RL
+   * tab lists the ones this robot has and opens RLSkillSheet to run one.
    *
    * @prop onNavigate — ("store") => void
    * @prop pinned — Quick action ids
@@ -33,7 +37,18 @@
    */
   let { onNavigate, online = true, pinned = [], onTogglePin, onRegistryChange, onDeployedChange } = $props();
 
-  let tab = $state("web");              // "web" (Agent) | "move" (robot)
+  let tab = $state("web");              // "web" (Agent) | "move" (robot) | "rl" (policies in the firmware)
+  let rlOpen = $state(null);            // the RL skill whose sheet is open
+  let rlBuiltins = $state(null);        // GET /v1/policy "builtins"; [] = no RL walk, null = not read yet
+  async function loadRl() {
+    try {
+      const r = await fetch("/v1/policy", { cache: "no-store" });
+      const j = r.ok ? await r.json() : null;
+      rlBuiltins = j && j.available !== false && Array.isArray(j.builtins) ? j.builtins : [];
+    } catch { rlBuiltins = null; }
+  }
+  $effect(() => { if (online) loadRl(); });
+  const rlSkills = $derived(RL_SKILLS.filter((r) => rlBuiltins?.includes(r.policy)));
   let owned = $state([]);               // /v1/marketplace/robot/skills
   let catalog = $state({});             // skill id -> { description }
   let registry = $state([]);            // /v1/skills/registry skills
@@ -266,6 +281,9 @@
       <button type="button" role="tab" aria-selected={tab === "move"} class:on={tab === "move"} onclick={() => (tab = "move")}>
         Move skills{loading ? "" : ` · ${moveSkills.length}`}
       </button>
+      <button type="button" role="tab" aria-selected={tab === "rl"} class:on={tab === "rl"} onclick={() => (tab = "rl")}>
+        RL skills{rlBuiltins === null ? "" : ` · ${rlSkills.length}`}
+      </button>
     </div>
   </header>
 
@@ -278,7 +296,35 @@
         <p class="note">Couldn't read the robot's skill index. Showing the last known list; install and run may be unavailable.</p>
       {/if}
 
-      {#if loading}
+      {#if tab === "rl"}
+        {#if rlBuiltins === null}
+          <p class="note">Reading the robot's RL policies…</p>
+        {:else if rlSkills.length === 0}
+          <div class="empty">
+            <p class="empty-title">No RL skills on this robot</p>
+            <p class="empty-desc">RL skills are walk policies built into the firmware. See them in the Store; a firmware with the policy brings it here.</p>
+            <button type="button" class="ghost" onclick={() => onNavigate?.("store")}>Go to the Store</button>
+          </div>
+        {:else}
+          <ul class="list">
+            {#each rlSkills as r (r.id)}
+              <li class="card">
+                <span class="ico rl" aria-hidden="true">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M7.5 7.5l3.5 8.5M16.5 7.5L13 16M8 6h8"/></svg>
+                </span>
+                <div class="info">
+                  <span class="name">{r.title}</span>
+                  <span class="desc">{r.tagline}</span>
+                  <span class="chip rl">RL skill · for {ROBOT_NAME[r.robot] || r.robot}</span>
+                </div>
+                <div class="acts">
+                  <button type="button" class="btn dark" onclick={() => (rlOpen = r)} aria-label="Open {r.title}">Open</button>
+                </div>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      {:else if loading}
         {#each [0, 1, 2] as _}<div class="card sk" aria-hidden="true"><span class="sk-ico"></span><span class="sk-line"></span></div>{/each}
       {:else if shown.length === 0}
         <div class="empty">
@@ -351,14 +397,18 @@
   {#if toast}
     <div class="toast" class:err={toast.tone === "err"} role="status">{toast.text}</div>
   {/if}
+
+  {#if rlOpen}
+    <RLSkillSheet skill={rlOpen} onClose={() => (rlOpen = null)} />
+  {/if}
 </div>
 
 <style>
   .skills { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--page); color: var(--ink); }
   .head { flex-shrink: 0; width: 100%; max-width: var(--page-max); margin: 0 auto; padding: calc(26px + var(--safe-top)) 20px 8px; display: flex; flex-direction: column; gap: 16px; }
   h1 { font-size: 34px; font-weight: 800; letter-spacing: -0.02em; }
-  .seg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); background: var(--hair); border-radius: 16px; padding: 4px; gap: 4px; }
-  .seg button { height: 44px; border: none; border-radius: 12px; background: transparent; color: #4F4C46; font-size: 15px; font-weight: 700; cursor: pointer; }
+  .seg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); background: var(--hair); border-radius: 16px; padding: 4px; gap: 4px; }
+  .seg button { height: 44px; padding: 0 4px; border: none; border-radius: 12px; background: transparent; color: #4F4C46; font-size: 14px; font-weight: 700; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .seg button.on { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
   .seg button:focus-visible { outline: 3px solid var(--ink); outline-offset: 1px; }
 
@@ -371,11 +421,13 @@
   .card.busy { opacity: 0.6; }
   .ico { width: 52px; height: 52px; border-radius: 15px; flex-shrink: 0; display: grid; place-items: center; background: var(--mpx-yellow); color: var(--ink); }
   .ico.motion { background: #CFE3FF; }
+  .ico.rl { background: var(--ink); color: var(--mpx-yellow); }
   .info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
   .name { font-size: 16px; font-weight: 700; }
   .desc { font-size: 13px; color: var(--sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .chip { align-self: flex-start; margin-top: 2px; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 8px; background: #FFF6B0; color: #5B4E00; }
   .chip.motion { background: #E3EEFF; color: #1F4F99; }
+  .chip.rl { background: #EDEBE6; color: var(--ink); }
   .acts { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; }
   .btn { height: 40px; min-width: 84px; padding: 0 14px; border-radius: 20px; border: none; background: var(--ground); color: var(--ink); font-size: 14px; font-weight: 800; cursor: pointer; }
   .btn.dark { background: var(--ink); color: var(--mpx-yellow); }

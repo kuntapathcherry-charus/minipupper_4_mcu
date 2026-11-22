@@ -17,6 +17,7 @@
 #include "sdkconfig.h"
 
 #include "mpx_robot.h"
+#include "robot/battery.h"
 #include "network/http_server.h"
 #include "wasm/registry.h"
 
@@ -114,6 +115,13 @@ Reply robot_move(const cJSON *args)
         /* Built-ins first, then a skill that provides the name (mpv2's
          * movement layer did the same: a downloaded skill must not shadow
          * "advance"). */
+        /* A backflip on a battery fuller than CONFIG_APP_BACKFLIP_MAX_MV is refused: say why. */
+        if (std::strncmp(movement, "backflip", 8) == 0) {
+            char why[128];
+            if (mpx_battery_backflip_refusal(why, sizeof(why), true)) {
+                return { std::string("Refused: ") + why + ". Tell the user; it is a safety rule, not a fault.", false };
+            }
+        }
         const bool continuous = mpx_robot_gait_is_continuous(movement);
         if (mpx_robot_gait_by_name_for(movement, (uint32_t)duration) == ESP_OK) {
             cJSON *o = cJSON_CreateObject();
@@ -225,6 +233,14 @@ Reply robot_get_state(const cJSON *)
         cJSON_AddNumberToObject(h, "celsius", hottest);
     }
     cJSON_AddStringToObject(o, "servos", mpx_robot_power_state());
+    {
+        mpx_battery_t bat;
+        if (mpx_battery_get(&bat)) {
+            cJSON *b = cJSON_AddObjectToObject(o, "battery");
+            cJSON_AddNumberToObject(b, "volts", std::round(bat.volts * 100.0f) / 100.0);
+            cJSON_AddNumberToObject(b, "percent", bat.percent);
+        }
+    }
     cJSON *moves = cJSON_AddArrayToObject(o, "movements");
     for (int k = 0; k < mpx_robot_gait_name_count(); k++) {
         if (const char *name = mpx_robot_gait_name_at(k)) {

@@ -88,6 +88,7 @@
     { k: "mode",    a: 110, n: "Operating mode", u: "", dp: 0 },
     { k: "loop",    a: 111, n: "Loop counter", u: "", dp: 0 },
     { k: "temp_c",  a: 112, n: "Motor temperature", u: "°C", dp: 1 },
+    { k: "vin_v",   a: 113, n: "Supply voltage (battery)", u: "V", dp: 2 },   // newer AT32 firmware only; "—" otherwise
   ];
   const MODES = ["IDLE", "POSITION", "TORQUE", "IK"];
 

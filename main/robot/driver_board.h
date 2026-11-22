@@ -340,6 +340,11 @@ enum {
  * Studio sizes its key table by DB_LIVE_COUNT and reads every entry, and this
  * one needs AT32 fw >= 0.0.9. driver_board_get_live() accepts it. */
 #define DB_LIVE_SUPPLY_CURRENT_MA  13   /* battery-side current |I| x duty, mA */
+/* The board's supply voltage (VIN = Vbat+, the same for its three servos), volts:
+ * AT32 firmware with the VM_SENSE divider on PA5 (2026-11-22). Older firmware
+ * clamps an unknown id to 0 and answers the pot reading instead, so a caller
+ * must check the value is a voltage (robot/battery.cc keeps 5..17 V). */
+#define DB_LIVE_SUPPLY_VOLTAGE_V   14
 
 bool driver_board_get_live(int servo /*1..12*/, int live_id, float *out);
 

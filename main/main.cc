@@ -23,6 +23,7 @@
 #include "mpx_identity.h"
 #include "mpx_provision.h"
 #include "mpx_selfprov.h"
+#include "robot/battery.h"
 #include "robot/mpx_robot.h"
 #include "robot/robot.h"
 #include "sdk/wasm_host_functions.h"
@@ -135,6 +136,8 @@ extern "C" void app_main(void)
 	// mpx_robot_ready(), whose state is set by mpx_robot_init().
 	if (!mpx_robot_init()) {
 		ESP_LOGE(TAG, "Robot HAL init failed — continuing without servo control");
+	} else {
+		mpx_battery_start();   // the battery voltage from the servo boards, every 10 s
 	}
 
 	// ── Screen: ST7789 + LVGL, the face ───────────────────────

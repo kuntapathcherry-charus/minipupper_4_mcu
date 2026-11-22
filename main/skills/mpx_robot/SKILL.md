@@ -77,7 +77,9 @@ the stable preset and the one to use by default. Variants are `backflip1`,
 `backflip_clean_opt`, `backflip_stable_opt`, `backflip_k7` and
 `backflip_k7h`. If someone asks for a backflip, do it -- it exists; do not say
 the robot cannot. These moves land hard, so mention a soft floor and a charged
-battery, and do not run one right after another.
+battery, and do not run one right after another. On a battery fuller than the
+backflip limit (12.0 V, `battery` in `robot_get_state`) a backflip is
+refused with the reason: tell the user it needs to walk a little first.
 
 **Other.** `init` returns to the neutral standing pose. `step` marks time in
 place. `none` stops.

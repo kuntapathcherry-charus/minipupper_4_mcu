@@ -705,7 +705,7 @@ bool driver_board_get_param(int servo, int param_id, float *out)
 
 bool driver_board_get_live(int servo, int live_id, float *out)
 {
-    if (servo < 1 || servo > 12 || live_id < 0 || live_id > DB_LIVE_SUPPLY_CURRENT_MA)
+    if (servo < 1 || servo > 12 || live_id < 0 || live_id > DB_LIVE_SUPPLY_VOLTAGE_V)
         return false;
     int p = db_phys(servo) - 1;                 /* logical -> physical */
     DB_LOCK();

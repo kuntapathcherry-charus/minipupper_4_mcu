@@ -38,6 +38,7 @@
 #include "sdkconfig.h"
 #include "robot/robot.h"
 #include "robot/driver_board.h"
+#include "robot/battery.h"
 #include "util/sys_monitor.h"
 #include "util/trace_ring.h"
 #include "voice/voice_glue.h"
@@ -1140,6 +1141,18 @@ static esp_err_t api_robot_gait(httpd_req_t *req)
     if (robot::master_active()) return send_pi_in_control(req);
 
     robot::GaitCmd cmd = robot::GaitCmd::None;
+    // A backflip on a battery fuller than CONFIG_APP_BACKFLIP_MAX_MV: say why (robot/battery.cc).
+    if (mode.compare(0, 8, "backflip") == 0) {
+        char why[128];
+        if (mpx_battery_backflip_refusal(why, sizeof(why), true)) {
+            ESP_LOGW(TAG, "POST /v1/robot/gait  %s refused: %s", mode.c_str(), why);
+            const std::string resp = "{\"ok\":false,\"error\":\"" + json_escape(why) + "\"}";
+            httpd_resp_set_status(req, "409 Conflict");
+            httpd_resp_set_type(req, "application/json");
+            httpd_resp_send(req, resp.c_str(), resp.size());
+            return ESP_OK;
+        }
+    }
     if (!robot::gait_from_name(mode.c_str(), cmd)) {
         // Not a built-in: a skill may provide a movement by this name
         // (its embedded manifest's provides_gait). Start it like
@@ -1478,6 +1491,19 @@ static esp_err_t api_robot_joy(httpd_req_t *req)
 }
 
 /* GET /v1/robot/status — current gait mode */
+/* GET /v1/robot/battery - the battery voltage from the AT32 servo boards (robot/battery.h):
+ * {"valid","volts","percent","cells","boards":[4 x volts|null],"age_ms","backflip_max_v"}.
+ * valid false: no board's AT32 firmware reports it. */
+static esp_err_t api_robot_battery(httpd_req_t *req)
+{
+    char buf[256];
+    mpx_battery_json(buf, sizeof(buf));
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
 static esp_err_t api_robot_status(httpd_req_t *req)
 {
     robot::GaitCmd cmd = robot::current_gait_cmd();
@@ -2068,6 +2094,11 @@ static esp_err_t studio_live_handler(httpd_req_t *req)
             lv[DB_LIVE_PWM_DUTY], static_cast<int>(lv[DB_LIVE_MODE]),
             static_cast<unsigned long>(lv[DB_LIVE_LOOP_COUNTER]));
         if (have_t) n += std::snprintf(b + n, sizeof b - n, R"(,"temp_c":%.1f)", t);
+        // The board's supply voltage (AT32 live value 14, newer AT32 firmware only). Older firmware answers the
+        // pot reading for an unknown id, so only a plausible voltage is sent; otherwise the row shows "-".
+        float vin;
+        if (driver_board_get_live(id, DB_LIVE_SUPPLY_VOLTAGE_V, &vin) && vin >= 5.0f && vin <= 17.0f)
+            n += std::snprintf(b + n, sizeof b - n, R"(,"vin_v":%.2f)", vin);
         std::snprintf(b + n, sizeof b - n, "}");
     } else if (driver_board_poll(id)) {
         const float t = driver_board_present_temperature(id);
@@ -3107,7 +3138,7 @@ bool start_http_server()
     // marketplace and the PWA catch-all). Keep twelve spare slots: each slot
     // is only a pointer, while one short silently drops the last routes.
     // See the note on register_uri() - this number is load-bearing.
-    config.max_uri_handlers = 112;
+    config.max_uri_handlers = 116;
     // LWIP has CONFIG_LWIP_MAX_SOCKETS=20. HTTPD reserves 3 internal sockets,
     // so 12 sessions leave 5 for outbound cloud/proxy/DNS clients. The PWA can
     // hold two WebSockets while a browser opens about six HTTP connections;
@@ -3210,6 +3241,7 @@ bool start_http_server()
     register_api(s_server, "POST", "/v1/robot/gait",           HTTP_POST, api_robot_gait);
     register_api(s_server, "POST", "/v1/robot/joy",            HTTP_POST, api_robot_joy);
     register_api(s_server, "GET",  "/v1/robot/status",         HTTP_GET,  api_robot_status);
+    register_api(s_server, "GET",  "/v1/robot/battery",        HTTP_GET,  api_robot_battery);
     // ── Ported from mpv2-claw (see .cursor/PORT_NOTES.md) ──
     register_api(s_server, "GET",  "/v1/robot/moves",          HTTP_GET,  api_robot_moves);
     register_api(s_server, "GET",  "/v1/robot/look",           HTTP_GET,  api_robot_look);
