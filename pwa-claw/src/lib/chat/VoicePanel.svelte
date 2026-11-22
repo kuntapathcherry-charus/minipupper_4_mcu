@@ -1,257 +1,222 @@
 <script>
+  import AgentActivity from "./AgentActivity.svelte";
+  import ChatMessage from "./ChatMessage.svelte";
+
   let {
-    conversation = null,
+    messages = [],
     voiceState = "idle",
     busy = false,
     error = "",
-    onWake,
-    onEnd,
-    onNew,
-    onClear,
-    onClose,
-    phoneMic = false,
-    phoneSpeaker = false,
-    phoneError = "",
-    phoneSupported = false,
-    phoneAudioAvailable = false,
-    onToggleMic,
-    onToggleSpeaker,
+    onStart = async () => {},
+    onStop = async () => {},
+    onClose = () => {},
   } = $props();
 
   let transcriptEl = $state(null);
-  let turns = $derived(conversation?.messages || []);
-  let live = $derived(!["idle", "ended", "cleared"].includes(voiceState));
-  let statusLabel = $derived.by(() => {
-    if (voiceState === "listening") return "Listening — speak naturally";
-    if (voiceState === "thinking") return "Pupper is thinking";
-    if (voiceState === "speaking") return "Speaking — you can interrupt";
-    if (voiceState === "ended") return "Voice chat ended";
-    if (voiceState === "cleared") return "Context cleared";
-    return turns.length ? "Ready for a follow-up" : "Ready to start voice chat";
+  let active = $derived(!["idle", "ended", "cleared"].includes(voiceState));
+  let renderItems = $derived.by(() => {
+    const items = [];
+    for (let i = 0; i < messages.length; i++) {
+      const message = messages[i];
+      if (message.role === "step") {
+        const previous = items[items.length - 1];
+        if (previous?.kind === "activity") {
+          previous.steps.push(message);
+          previous.endIndex = i;
+        } else {
+          items.push({ kind: "activity", key: message.id, steps: [message], endIndex: i });
+        }
+      } else {
+        items.push({ kind: "message", key: message.id, message, endIndex: i });
+      }
+    }
+    return items;
   });
+
+  function activityTitle(steps) {
+    const names = [...new Set(steps.map((step) => step.toolName).filter(Boolean))];
+    return names.length === 1 ? `MCP · ${names[0]}` : "MCP tool calls";
+  }
 
   $effect(() => {
-    turns.length;
-    queueMicrotask(() => {
-      if (transcriptEl) transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    messages.length;
+    if (!transcriptEl) return;
+    const el = transcriptEl;
+    const frame = requestAnimationFrame(() => {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
     });
+    return () => cancelAnimationFrame(frame);
   });
+
+  const stateLabels = {
+    idle: "Ready",
+    starting: "Connecting to voice gateway…",
+    stopping: "Stopping…",
+    listening: "Listening…",
+    thinking: "Pupper is thinking…",
+    speaking: "Pupper is speaking…",
+    ended: "Stopped",
+    cleared: "Ready",
+  };
+
+  function statusText(state) {
+    return stateLabels[state] || "Listening…";
+  }
 </script>
 
-<div class="voice-panel-backdrop" role="presentation">
-  <div class="voice-panel" role="dialog" aria-modal="true" aria-label="Voice chat">
-    <header class="voice-panel-header">
-      <div>
-        <span class="eyebrow">Pupper voice</span>
-        <h2>Voice chat</h2>
-      </div>
-      <button class="icon-button" aria-label="Close voice chat" title="Close" onclick={() => onClose?.()}>×</button>
-    </header>
-
-    <div class="voice-status" class:live>
-      <span class="status-orb" class:pulsing={live} aria-hidden="true">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="9" y="3" width="6" height="11" rx="3" />
-          <path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6" />
-        </svg>
-      </span>
-      <strong>{statusLabel}</strong>
-      <span class="status-detail">
-        Gateway STT/TTS · {phoneMic ? "phone mic" : "robot mic"} → {phoneSpeaker ? "phone speaker" : "robot speaker"}
-      </span>
+<div class="voice-backdrop" role="presentation" onclick={onClose}></div>
+<div class="voice-panel" role="dialog" aria-modal="true" aria-label="Live voice conversation">
+  <div class="voice-head">
+    <div>
+      <span class="voice-kicker">MCP VOICE</span>
+      <h2>Live conversation</h2>
     </div>
-
-    {#if phoneAudioAvailable}
-    <div class="phone-audio">
-      <div class="phone-audio-head">
-        <span>This phone</span>
-        <span class="phone-audio-hint">Useful when you are testing movement from across the room</span>
-      </div>
-      <div class="phone-audio-toggles">
-        <button
-          class:on={phoneMic}
-          aria-pressed={phoneMic}
-          disabled={busy || !phoneSupported}
-          onclick={() => onToggleMic?.()}
-        >Phone mic</button>
-        <button
-          class:on={phoneSpeaker}
-          aria-pressed={phoneSpeaker}
-          disabled={busy || !phoneSupported}
-          onclick={() => onToggleSpeaker?.()}
-        >Phone speaker</button>
-      </div>
-      {#if !phoneSupported}
-        <p class="phone-audio-error">
-          Phone audio needs a secure page. Use HTTPS, or allow this origin in
-          chrome://flags/#unsafely-treat-insecure-origin-as-secure.
-        </p>
-      {:else if phoneError}
-        <p class="phone-audio-error" role="alert">{phoneError}</p>
-      {/if}
-    </div>
-    {/if}
-
-    <div class="voice-transcript" bind:this={transcriptEl} aria-live="polite">
-      {#if turns.length === 0}
-        <div class="empty-transcript">
-          <p>No voice turns in this session yet.</p>
-          <span>Tap the microphone, then speak. You can interrupt a spoken reply with the same button.</span>
-        </div>
-      {:else}
-        {#each turns as turn, index (`${turn.ts || index}-${index}`)}
-          {#if turn.role !== "step"}
-            <div class="turn" class:user={turn.role === "user"}>
-              <span class="speaker">{turn.role === "user" ? "You" : "Pupper"}</span>
-              <p>{turn.text}</p>
-            </div>
-          {/if}
-        {/each}
-      {/if}
-    </div>
-
-    {#if error}<p class="voice-error" role="alert">{error}</p>{/if}
-
-    <div class="voice-primary-actions">
-      <button
-        class="wake-button"
-        disabled={busy || voiceState === "thinking"}
-        onclick={() => onWake?.()}
-      >
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="9" y="3" width="6" height="11" rx="3" />
-          <path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6" />
-        </svg>
-        {busy ? "Working…" : voiceState === "speaking" ? "Interrupt & speak" : turns.length ? "Speak again" : "Start talking"}
-      </button>
-      <button class="end-button" disabled={busy || voiceState === "ended"} onclick={() => onEnd?.()}>
-        <span aria-hidden="true">■</span> End voice chat
-      </button>
-    </div>
-
-    <div class="voice-secondary-actions">
-      <button disabled={busy} onclick={() => onNew?.()}>New session</button>
-      <button
-        disabled={busy || !conversation || voiceState === "thinking"}
-        onclick={() => onClear?.()}
-      >Clear context</button>
-    </div>
-    <p class="control-hint">New keeps this transcript and starts a fresh context. Clear deletes this session's robot memory and transcript.</p>
+    <button type="button" class="close" aria-label="Close live conversation" title="Close" onclick={onClose}>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
+        <path d="m6 6 12 12M18 6 6 18"/>
+      </svg>
+    </button>
   </div>
+
+  <div class="status-line">
+    <span class="status-dot" class:active></span>
+    <span>{statusText(voiceState)}</span>
+  </div>
+
+  <div class="transcript" bind:this={transcriptEl} aria-live="polite" aria-label="Live voice transcript">
+    {#if messages.length === 0}
+      <div class="empty">
+        <span class="empty-mic">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="9" y="3" width="6" height="11" rx="3"/>
+            <path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8"/>
+          </svg>
+        </span>
+        <h3>No speech yet</h3>
+        <p>Press Start, then speak to Pupper. Recognized speech and spoken replies appear here.</p>
+      </div>
+    {:else}
+      {#each renderItems as item (item.key)}
+        {#if item.kind === "activity"}
+          <AgentActivity
+            steps={item.steps}
+            title={activityTitle(item.steps)}
+            active={voiceState === "thinking" && item.endIndex === messages.length - 1}
+          />
+        {:else}
+          {@const chatMessage = { ...item.message, role: item.message.role === "user" ? "user" : "bot" }}
+          <ChatMessage msg={chatMessage} />
+        {/if}
+      {/each}
+    {/if}
+  </div>
+
+  {#if error}<p class="error" role="alert">{error}</p>{/if}
+
+  <div class="voice-actions">
+    {#if active}
+      <button type="button" class="action stop" disabled={busy} onclick={onStop}>
+        {#if busy}<span class="spinner"></span>{/if}
+        Stop
+      </button>
+    {:else}
+      <button type="button" class="action start" disabled={busy} onclick={onStart}>
+        {#if busy}<span class="spinner"></span>{/if}
+        Start
+      </button>
+    {/if}
+  </div>
+  <p class="privacy">Live only · this transcript is not saved</p>
 </div>
 
 <style>
-  .voice-panel-backdrop {
+  .voice-backdrop {
     position: fixed;
     inset: 0;
     z-index: 80;
-    display: flex;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.48);
-    backdrop-filter: blur(5px);
+    background: rgba(20, 20, 18, 0.48);
+    backdrop-filter: blur(3px);
   }
 
   .voice-panel {
+    position: fixed;
+    z-index: 81;
+    left: 50%;
+    bottom: max(16px, var(--safe-bottom));
+    transform: translateX(-50%);
+    width: min(560px, calc(100vw - 24px));
+    max-height: min(760px, calc(100dvh - 32px - var(--safe-top)));
     display: flex;
     flex-direction: column;
-    width: min(100%, 620px);
-    height: 100%;
-    padding: 20px;
+    padding: 22px;
+    border: 1px solid var(--line);
+    border-radius: 28px;
     background: var(--page);
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.25);
     color: var(--ink);
-    overflow: hidden;
   }
 
-  .voice-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-  .voice-panel-header h2 { margin: 2px 0 0; font-size: 24px; }
-  .eyebrow { color: var(--sub); font-size: 11px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
-  .icon-button { width: 42px; height: 42px; border: 1px solid var(--hair); border-radius: 50%; background: var(--panel, var(--page)); color: var(--ink); font-size: 28px; cursor: pointer; }
-
-  .phone-audio {
-    margin: 12px 0 4px;
-    padding: 10px 12px;
-    border: 1px solid var(--hair);
-    border-radius: 12px;
-    background: color-mix(in srgb, var(--panel) 60%, transparent);
-  }
-
-  .phone-audio-head {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 10px;
-    align-items: baseline;
-    font-size: 0.82rem;
-    font-weight: 600;
-  }
-
-  .phone-audio-hint {
-    font-weight: 400;
-    opacity: 0.62;
-  }
-
-  .phone-audio-toggles {
-    display: flex;
-    gap: 8px;
-    margin-top: 8px;
-  }
-
-  .phone-audio-toggles button {
-    flex: 1;
-    padding: 9px 10px;
-    border: 1px solid var(--hair);
-    border-radius: 999px;
-    background: transparent;
-    color: inherit;
-    font: inherit;
-    font-size: 0.84rem;
+  .voice-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+  .voice-kicker { color: var(--sub); font-size: 11px; font-weight: 800; letter-spacing: 0.14em; }
+  h2 { margin: 3px 0 0; font-size: 24px; line-height: 1.2; }
+  .close {
+    width: 40px;
+    height: 40px;
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    border: 0;
+    border-radius: 50%;
+    background: var(--ground);
+    color: var(--ink);
     cursor: pointer;
   }
 
-  .phone-audio-toggles button.on {
-    border-color: var(--mpx-yellow);
-    background: color-mix(in srgb, var(--mpx-yellow) 18%, transparent);
-    color: var(--mpx-yellow);
+  .status-line { display: flex; align-items: center; gap: 8px; margin: 16px 0 10px; color: var(--sub); font-size: 13px; font-weight: 700; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #929087; }
+  .status-dot.active { background: #1E7B34; box-shadow: 0 0 0 4px rgba(30, 123, 52, 0.12); }
+
+  .transcript {
+    min-height: 240px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 8px 0 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: var(--page);
   }
 
-  .phone-audio-toggles button:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
+  .empty { min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 14px; text-align: center; color: var(--sub); }
+  .empty-mic { width: 56px; height: 56px; display: grid; place-items: center; border-radius: 50%; background: var(--page); color: var(--ink); }
+  .empty h3 { margin: 14px 0 5px; color: var(--ink); font-size: 17px; }
+  .empty p { max-width: 330px; margin: 0; font-size: 13px; line-height: 1.55; }
+
+  .error { margin: 10px 2px 0; color: var(--danger, #b3261e); font-size: 13px; font-weight: 650; }
+  .voice-actions { display: flex; margin-top: 16px; }
+  .action {
+    min-height: 50px;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    border: 0;
+    border-radius: 16px;
+    background: var(--mpx-yellow);
+    color: var(--ink);
+    font-size: 16px;
+    font-weight: 800;
+    cursor: pointer;
   }
+  .action.stop { background: var(--ink); color: var(--mpx-yellow); }
+  .action:disabled { opacity: 0.5; cursor: default; }
+  .spinner { width: 17px; height: 17px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+  .privacy { margin: 10px 0 -4px; text-align: center; color: var(--sub); font-size: 11px; }
+  button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
-  .phone-audio-error {
-    margin: 8px 0 0;
-    font-size: 0.78rem;
-    color: #ff9d9d;
+  @media (min-width: 768px) {
+    .voice-panel { bottom: 50%; transform: translate(-50%, 50%); }
   }
-
-  .voice-status { display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 25px 10px 20px; text-align: center; }
-  .status-orb { display: grid; place-items: center; width: 78px; height: 78px; margin-bottom: 5px; border-radius: 50%; background: var(--panel, var(--hair)); color: var(--sub); }
-  .voice-status.live .status-orb { background: var(--mpx-yellow); color: var(--ink); }
-  .status-orb.pulsing { animation: voice-panel-pulse 1.8s ease-in-out infinite; }
-  .voice-status strong { font-size: 17px; }
-  .status-detail { color: var(--sub); font-size: 12px; }
-
-  .voice-transcript { flex: 1; min-height: 120px; overflow-y: auto; padding: 12px; border: 1px solid var(--hair); border-radius: 20px; background: var(--panel, var(--page)); }
-  .empty-transcript { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100%; padding: 24px; color: var(--sub); text-align: center; }
-  .empty-transcript p { margin: 0 0 8px; color: var(--ink); font-weight: 700; }
-  .empty-transcript span { max-width: 340px; font-size: 13px; line-height: 1.5; }
-  .turn { max-width: 88%; margin: 10px 0; }
-  .turn.user { margin-left: auto; text-align: right; }
-  .speaker { color: var(--sub); font-size: 10px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; }
-  .turn p { margin: 3px 0 0; padding: 10px 13px; border-radius: 15px 15px 15px 4px; background: var(--page); line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .turn.user p { border-radius: 15px 15px 4px 15px; background: var(--mpx-yellow); color: var(--ink); text-align: left; }
-
-  .voice-error { margin: 10px 0 0; padding: 9px 12px; border-radius: 10px; background: rgba(200, 40, 40, 0.1); color: #c33; font-size: 13px; }
-  .voice-primary-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
-  .voice-primary-actions button, .voice-secondary-actions button { min-height: 48px; border-radius: 14px; font: inherit; font-weight: 750; cursor: pointer; }
-  .voice-primary-actions button:disabled, .voice-secondary-actions button:disabled { opacity: 0.45; cursor: default; }
-  .wake-button { display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--mpx-yellow); background: var(--mpx-yellow); color: var(--ink); }
-  .end-button { display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid #b64343; background: transparent; color: #b64343; }
-  .voice-secondary-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
-  .voice-secondary-actions button { border: 1px solid var(--hair); background: var(--panel, var(--page)); color: var(--ink); font-size: 13px; }
-  .control-hint { margin: 10px 4px 0; color: var(--sub); font-size: 11px; line-height: 1.4; text-align: center; }
-
-  @keyframes voice-panel-pulse { 50% { transform: scale(1.06); box-shadow: 0 0 0 10px rgba(255, 213, 0, 0.12); } }
-  @media (min-width: 621px) { .voice-panel { height: min(850px, calc(100% - 40px)); margin: 20px 0; border: 1px solid var(--hair); border-radius: 26px; } }
-  @media (max-width: 390px) { .voice-panel { padding: 15px; } .voice-primary-actions { grid-template-columns: 1fr; } .voice-status { padding: 16px 8px 13px; } .status-orb { width: 62px; height: 62px; } }
 </style>

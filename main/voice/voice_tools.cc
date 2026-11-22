@@ -25,6 +25,7 @@
 
 #include "agent/robot_tools.h"
 #include "mpx_voice_link.h"
+#include "network/chat_ws.h"
 
 static const char *TAG = "voice_tools";
 
@@ -32,6 +33,29 @@ namespace {
 
 using robot_tools::Reply;
 using robot_tools::Tool;
+
+/* MCP activity belongs in the live voice transcript, not in local history.
+ * The PWA keeps these events in memory and drops them on reload. */
+void broadcast_tool_activity(const char *phase, const char *name,
+                             const cJSON *arguments, const Reply *reply)
+{
+    cJSON *root = cJSON_CreateObject();
+    if (!root) return;
+    cJSON_AddStringToObject(root, "type", "voice_tool");
+    cJSON_AddStringToObject(root, "phase", phase);
+    cJSON_AddStringToObject(root, "name", name);
+    if (arguments) cJSON_AddItemToObject(root, "arguments", cJSON_Duplicate(arguments, true));
+    if (reply) {
+        cJSON_AddStringToObject(root, "text", reply->text.c_str());
+        cJSON_AddBoolToObject(root, "isError", reply->error);
+    }
+    char *json = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (json) {
+        network::broadcast_voice_to_pwa(json);
+        cJSON_free(json);
+    }
+}
 
 /* Smaller than xiaozhi's own 8000 -- see mpx_mcp_ws.c: a tools/list page is
  * the largest message this device sends, on a freshly opened TLS socket. */
@@ -144,7 +168,9 @@ cJSON *handle_tools_call(const cJSON *id, const cJSON *params)
 
     const cJSON *arguments = params ? cJSON_GetObjectItem(params, "arguments") : nullptr;
     ESP_LOGI(TAG, "tools/call %s", tool->name);
+    broadcast_tool_activity("start", tool->name, arguments, nullptr);
     const Reply r = robot_tools::run(*tool, arguments);
+    broadcast_tool_activity("finish", tool->name, nullptr, &r);
 
     cJSON *resp = rpc_reply(id);
     cJSON *result = cJSON_AddObjectToObject(resp, "result");

@@ -41,6 +41,7 @@ bool voice_wanted()
 #include "mpx_robot.h"
 #include "mpx_voice_link.h"
 #include "mpx_voice_wake.h"
+#include "network/chat_ws.h"
 #include "voice_brain.h"
 #include "voice_tools.h"
 
@@ -73,6 +74,81 @@ int          s_task_priority = 5;  /* wake_feed/wake_fetch, see set_task_priorit
 StaticSemaphore_t s_hold_mutex_buf;
 SemaphoreHandle_t s_hold_mutex;
 portMUX_TYPE s_hold_init_mux = portMUX_INITIALIZER_UNLOCKED;
+
+/* MCP conversations live on the gateway, so voice_brain's local history
+ * events never fire. Mirror only those gateway turns to the PWA; the panel
+ * keeps them in memory and nothing is written to LittleFS or localStorage. */
+void broadcast_gateway_turn(const char *role, const char *text)
+{
+    if (mpx_voice_device_brain() || !text || !text[0]) return;
+    cJSON *root = cJSON_CreateObject();
+    if (!root) return;
+    cJSON_AddStringToObject(root, "type", "voice_live");
+    cJSON_AddStringToObject(root, "role", role);
+    cJSON_AddStringToObject(root, "text", text);
+    char *json = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (json) {
+        network::broadcast_voice_to_pwa(json);
+        cJSON_free(json);
+    }
+}
+
+void broadcast_gateway_state(const char *state)
+{
+    if (mpx_voice_device_brain()) return;
+    cJSON *root = cJSON_CreateObject();
+    if (!root) return;
+    cJSON_AddStringToObject(root, "type", "voice_live_state");
+    cJSON_AddStringToObject(root, "state", state);
+    char *json = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (json) {
+        network::broadcast_voice_to_pwa(json);
+        cJSON_free(json);
+    }
+}
+
+void voice_heard(const char *text)
+{
+#if CONFIG_APP_DISPLAY_ENABLE
+    cap_display_voice_heard(text);
+#endif
+    broadcast_gateway_turn("user", text);
+}
+
+void voice_saying(const char *text)
+{
+#if CONFIG_APP_DISPLAY_ENABLE
+    cap_display_voice_saying(text);
+#endif
+    broadcast_gateway_turn("assistant", text);
+}
+
+void voice_emotion(const char *name)
+{
+#if CONFIG_APP_DISPLAY_ENABLE
+    cap_display_voice_emotion(name);
+#else
+    (void)name;
+#endif
+}
+
+void voice_reply_done()
+{
+#if CONFIG_APP_DISPLAY_ENABLE
+    cap_display_voice_reply_done();
+#endif
+    broadcast_gateway_state("listening");
+}
+
+void voice_session_ended()
+{
+#if CONFIG_APP_DISPLAY_ENABLE
+    cap_display_voice_session_ended();
+#endif
+    broadcast_gateway_state("ended");
+}
 
 void lock_hold()
 {
@@ -232,18 +308,15 @@ void start()
         ESP_LOGW(TAG, "voice events task did not start");
     }
 
-#if CONFIG_APP_DISPLAY_ENABLE
-    /* The conversation on the face: what the server heard, says and feels.
-     * Registered here so neither voice nor display knows the other exists. */
-    static const mpx_voice_ui_hooks_t face_hooks = {
-        .heard         = cap_display_voice_heard,
-        .saying        = cap_display_voice_saying,
-        .emotion       = cap_display_voice_emotion,
-        .reply_done    = cap_display_voice_reply_done,
-        .session_ended = cap_display_voice_session_ended,
+    /* One hook table feeds both the optional face and the MCP live transcript. */
+    static const mpx_voice_ui_hooks_t voice_hooks = {
+        .heard         = voice_heard,
+        .saying        = voice_saying,
+        .emotion       = voice_emotion,
+        .reply_done    = voice_reply_done,
+        .session_ended = voice_session_ended,
     };
-    mpx_voice_set_ui_hooks(&face_hooks);
-#endif
+    mpx_voice_set_ui_hooks(&voice_hooks);
 
     /* Music works in every mode -- with voice off it is the app's
      * (POST /v1/voice {"music":...}). */
