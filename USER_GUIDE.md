@@ -101,8 +101,8 @@ The robot's screen shows its Wi-Fi name, `MP4-XXXXXX`. Join it on your phone in
 **Settings › Wi-Fi**. There is no password.
 
 <p align="center">
-  <img src="docs/user-guide/img/quickstart/3-wifi-name.gif" width="76%" alt="The robot's screen showing its Wi-Fi name, MP4-XXXXXX">
-  <img src="docs/user-guide/img/quickstart/4-join-wifi.gif" width="20%" alt="Phone Wi-Fi settings, joining MP4-XXXXXX">
+  <img src="docs/user-guide/img/quickstart/3-wifi-name.gif" width="65%" alt="The robot's screen showing its Wi-Fi name, MP4-XXXXXX">
+  <img src="docs/user-guide/img/quickstart/4-join-wifi.gif" width="31%" alt="Phone Wi-Fi settings, joining MP4-XXXXXX">
 </p>
 
 ### 3. Connect the robot to your Wi-Fi
@@ -112,8 +112,8 @@ your browser. **Slide to unlock**, pick your Wi-Fi, enter its password and tap
 **Join**. The robot's screen then shows its new **IP address**.
 
 <p align="center">
-  <img src="docs/user-guide/img/quickstart/5-setup-wifi.gif" width="20%" alt="Opening 192.168.2.1, unlocking, and joining a Wi-Fi network in the app">
-  <img src="docs/user-guide/img/quickstart/6-new-ip.gif" width="76%" alt="The robot's screen showing its new IP address">
+  <img src="docs/user-guide/img/quickstart/5-setup-wifi.gif" width="31%" alt="Opening 192.168.2.1, unlocking, and joining a Wi-Fi network in the app">
+  <img src="docs/user-guide/img/quickstart/6-new-ip.gif" width="65%" alt="The robot's screen showing its new IP address">
 </p>
 
 More help: [Connect your phone](#4-connect-your-phone).
