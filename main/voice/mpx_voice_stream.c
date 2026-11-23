@@ -79,9 +79,9 @@ static const char *TAG = "mpx_voice_stream";
 #define VOICE_STREAM_PREBUFFER   7
 
 /* Keep the voice talk capture in the same four-channel / 32-bit-slot layout
- * as the wake-word front end. The paired I2S DMA rings stay allocated after
+ * as the AFE front end. The paired I2S DMA rings stay allocated after
  * capture_stop(), but a two-channel open shrinks them to 16-bit slots; the
- * next wake-word open then has to find twelve fresh 1920-byte DMA buffers.
+ * next AFE open then has to find twelve fresh 1920-byte DMA buffers.
  * Once music, TLS and the agent have fragmented internal RAM that fails even
  * with enough total bytes free. Reading all four channels costs a little PSRAM
  * scratch bandwidth, but avoids the reallocations and keeps barge-in available
@@ -90,7 +90,7 @@ static const char *TAG = "mpx_voice_stream";
  * Pick slot 1, the microphone in the wake front end's measured "RMNN" layout.
  * Slot 0 is the amplifier's echo reference, not a microphone: selecting it
  * produces valid Opus frames containing almost no speech, so the server VAD
- * times out without an STT result even though the wake word works. The older
+ * times out without an STT result even though IO21/PWA triggering works. The older
  * two-channel talk capture used slot 0 for its microphone; that numbering does
  * not carry over to this four-channel layout. See WAKE_FORMAT_4CH. */
 #define TALK_CAPTURE_CHANNELS  4
@@ -103,6 +103,7 @@ typedef struct {
      * the global gate while playback is holding this frame. Its original
      * generation must remain attached so stale audio cannot pass later. */
     uint32_t generation;
+    uint32_t reply_generation; /* NULL-data stop sentinels validate their reply */
 } voice_rx_frame_t;
 
 static QueueHandle_t s_rx_queue;
@@ -121,6 +122,10 @@ static mpx_voice_pcm_reader_t s_talk_reader;
 static void *s_talk_reader_ctx;
 static volatile bool s_server_turn;      /* the server answered -- stop streaming */
 static volatile uint32_t s_tts_stops;    /* replies finished, see the header */
+static volatile uint32_t s_reply_generation;
+static volatile uint32_t s_reply_completions; /* increments only after queued audio drains */
+static volatile uint32_t s_stop_reply_generation;
+static volatile bool s_reply_active;     /* TTS started; remains set until queued audio drains */
 static volatile bool s_stop_pending;     /* a "tts stop" arrived; close once the queue drains */
 static SemaphoreHandle_t s_talk_done;
 static SemaphoreHandle_t s_playback_lock; /* abort vs held-frame decode/output */
@@ -212,11 +217,39 @@ void mpx_voice_stream_rx_frame(const uint8_t *data, size_t len)
         .data = copy,
         .len = len,
         .generation = s_playback_generation,
+        .reply_generation = s_reply_generation,
     };
     if (xQueueSend(s_rx_queue, &frame, 0) != pdTRUE) {
         ESP_LOGW(TAG, "RX queue full -- dropping a downlink frame");
         free(copy);
     }
+}
+
+void mpx_voice_stream_on_tts_start(bool explicit_start)
+{
+    if (s_playback_lock) {
+        xSemaphoreTake(s_playback_lock, portMAX_DELAY);
+    }
+    /* sentence_start messages belong to the current reply. An explicit start,
+     * or the first sentence after idle/abort, establishes a new generation. */
+    if (explicit_start || !s_reply_active) {
+        s_reply_generation++;
+        s_stop_pending = false;
+    }
+    s_reply_active = true;
+    if (s_playback_lock) {
+        xSemaphoreGive(s_playback_lock);
+    }
+}
+
+uint32_t mpx_voice_stream_reply_completion_count(void)
+{
+    return s_reply_completions;
+}
+
+bool mpx_voice_stream_reply_active(void)
+{
+    return s_reply_active;
 }
 
 void mpx_voice_stream_on_tts_stop(void)
@@ -225,17 +258,29 @@ void mpx_voice_stream_on_tts_stop(void)
     if (!s_rx_queue) {
         return;
     }
-    /* Two ways to tell the playback task, because one was not enough: the
-     * sentinel below is dropped if the queue happens to be full (the server
-     * sends the start of a reply in a burst), and a dropped sentinel left
-     * the speaker "open" forever -- mpx_voice_stream_is_playing() stayed
-     * true, the hands-free loop waited its full minute for a reply that had
-     * already ended, and the server, hearing nothing, said goodbye. The
-     * flag cannot be dropped: playback_task closes the speaker when it is
-     * set and the queue has drained. */
+    if (s_playback_lock) {
+        xSemaphoreTake(s_playback_lock, portMAX_DELAY);
+    }
+    /* An aborted reply's delayed stop must not terminate a newer raw turn. */
+    if (!s_reply_active) {
+        if (s_playback_lock) {
+            xSemaphoreGive(s_playback_lock);
+        }
+        return;
+    }
+    /* The flag is a fallback for a full queue dropping the sentinel. Both
+     * are generation-tagged so an old drain cannot complete a newer reply. */
     s_stop_pending = true;
-    const voice_rx_frame_t sentinel = { .data = NULL, .len = 0 };
+    s_stop_reply_generation = s_reply_generation;
+    const voice_rx_frame_t sentinel = {
+        .data = NULL,
+        .len = 0,
+        .reply_generation = s_reply_generation,
+    };
     (void)xQueueSend(s_rx_queue, &sentinel, 0);
+    if (s_playback_lock) {
+        xSemaphoreGive(s_playback_lock);
+    }
 }
 
 void mpx_voice_stream_on_barge_in_stop(void)
@@ -311,6 +356,8 @@ void mpx_voice_stream_abort_playback(void)
      * speaker after this flush, even if a new tts start quickly clears RX. */
     s_playback_generation++;
     s_drop_reply = true;
+    s_reply_active = false;
+    s_stop_reply_generation = s_reply_generation;
     /* xQueueReset() would leak every heap-allocated packet still in the
      * queue. Drain instead, including any normal stop sentinel. */
     voice_rx_frame_t dropped;
@@ -318,7 +365,11 @@ void mpx_voice_stream_abort_playback(void)
         free(dropped.data);
     }
     s_stop_pending = true;
-    const voice_rx_frame_t sentinel = { .data = NULL, .len = 0 };
+    const voice_rx_frame_t sentinel = {
+        .data = NULL,
+        .len = 0,
+        .reply_generation = s_reply_generation,
+    };
     (void)xQueueSend(s_rx_queue, &sentinel, 0);
     /* The phone buffers its own playback ahead of real time, so resetting the
      * robot queue alone would leave the first words of the old reply playing
@@ -337,34 +388,53 @@ static void playback_task(void *arg)
 
     for (;;) {
         if (xQueueReceive(s_rx_queue, &frame, pdMS_TO_TICKS(100)) != pdTRUE) {
-            /* Nothing queued. If a "tts stop" has arrived, the reply is
-             * over whether or not its sentinel made it into the queue. */
-            if (s_stop_pending && s_playback_open) {
-                /* Always stop I2S, even when the phone was the speaker: it
-                 * may have been left open by a turn that started on the robot
-                 * and ended on the phone. */
-                mpx_audio_output_stop();
-                s_playback_open = false;
+            /* Nothing queued. Serialize the fallback with a new TTS start
+             * and validate its generation before completing the reply. */
+            if (s_playback_lock) {
+                xSemaphoreTake(s_playback_lock, portMAX_DELAY);
             }
-            if (s_stop_pending) {
+            if (s_stop_pending && s_stop_reply_generation == s_reply_generation) {
+                if (s_playback_open) {
+                    mpx_audio_output_stop();
+                    s_playback_open = false;
+                }
+                if (s_reply_active) {
+                    s_reply_active = false;
+                    s_reply_completions++;
+                }
                 s_stop_pending = false;
+            }
+            if (s_playback_lock) {
+                xSemaphoreGive(s_playback_lock);
             }
             continue;
         }
 
         if (!frame.data) {
-            /* The "tts stop" sentinel: close the output stream rather than
-             * leaving I2S running with nothing feeding it. */
-            if (s_playback_open) {
-                mpx_audio_output_stop();
-                s_playback_open = false;
+            if (s_playback_lock) {
+                xSemaphoreTake(s_playback_lock, portMAX_DELAY);
             }
-            s_stop_pending = false;
+            const bool valid_stop = s_stop_pending &&
+                                    s_stop_reply_generation == frame.reply_generation &&
+                                    s_reply_generation == frame.reply_generation;
+            if (valid_stop) {
+                if (s_playback_open) {
+                    mpx_audio_output_stop();
+                    s_playback_open = false;
+                }
+                if (s_reply_active) {
+                    s_reply_active = false;
+                    s_reply_completions++;
+                }
+                s_stop_pending = false;
+            }
+            if (s_playback_lock) {
+                xSemaphoreGive(s_playback_lock);
+            }
             continue;
         }
 
         if (!s_playback_open) {
-            s_stop_pending = false;
             /* First frame of a reply. Let a few more arrive before the
              * speaker starts: the server sends the opening of a reply in a
              * burst and then paces to real time, and with the I2S driver
@@ -402,7 +472,7 @@ static void playback_task(void *arg)
             /* MPX_VOICE_PLAYBACK_RATE, not mpx_voice_downlink_rate(): the
              * decoder was opened at the playback rate in mpx_voice_talk_start(),
              * so this is what the PCM actually is -- and it is the only rate
-             * the I2S peripheral will accept while the wake-word front end
+             * the I2S peripheral will accept while the AFE front end
              * holds the microphone open (see the header for the full story). */
             if (mpx_phone_audio_speaker_enabled()) {
                 /* No I2S: the phone plays the PCM this task forwards below.
@@ -603,7 +673,7 @@ static esp_err_t talk_start_common(uint32_t max_seconds, bool auto_mode, bool ph
     /* Decode at MPX_VOICE_PLAYBACK_RATE regardless of what rate the server
      * said it encodes at (see the header): Opus resamples on the way out,
      * and the I2S peripheral will not run the speaker at a different rate
-     * from the microphone the wake-word front end keeps open. The loopback
+     * from the microphone the AFE front end keeps open. The loopback
      * test opens the codec at the same rates, so "already running" is the
      * same configuration either way. */
     if (!mpx_voice_codec_running()) {
@@ -669,7 +739,7 @@ esp_err_t mpx_voice_talk_start_auto(uint32_t max_seconds)
 
 esp_err_t mpx_voice_talk_start_phone(uint32_t max_seconds)
 {
-    /* Same auto listen mode as a wake-word turn: the gateway's VAD decides
+    /* Same auto listen mode as an IO21/PWA turn: the gateway's VAD decides
      * when the phone user stopped talking. */
     return talk_start_common(max_seconds, true, true, false, NULL, NULL);
 }

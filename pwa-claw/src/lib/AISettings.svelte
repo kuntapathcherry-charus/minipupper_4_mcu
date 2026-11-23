@@ -113,9 +113,11 @@
     if (voice.pi_in_control) return "Paused while the Raspberry Pi is in control.";
     if (voice.talking) return "Talking to MangDang…";
     if (voice.playing_reply) return "Pupper is answering.";
-    if (voice.hands_free === "listening") return "Listening for “Hi ESP”.";
-    if (voice.hands_free === "off") return "Hands-free listening is off.";
-    return `Hands-free: ${voice.hands_free}.`;
+    if (voice.hands_free === "ready" || voice.hands_free === "listening") {
+      return "WAKE starts/stops chat; the mic button starts chat.";
+    }
+    if (voice.hands_free === "off") return "Voice triggers are off.";
+    return `Voice triggers: ${voice.hands_free}.`;
   });
 
   function presetFor(own) {
@@ -360,7 +362,7 @@
           <p class="voice-line">{voiceLine}</p>
           <dl class="facts">
             <dt>Link</dt><dd>{voice.link}</dd>
-            <dt>Gateway</dt><dd>{voice.provisioned ? "Paired" : "Not paired yet (pairs on first wake word)"}</dd>
+            <dt>Gateway</dt><dd>{voice.provisioned ? "Paired" : "Not paired yet (pairs on first voice turn)"}</dd>
             <dt>Microphone</dt><dd>{voice.mic ? (voice.afe?.ready ? "Ready" : "Starting…") : "Not detected"}</dd>
             <dt>Speaker</dt><dd>{voice.speaker ? "Ready" : "Not detected"}</dd>
           </dl>
@@ -376,7 +378,7 @@
           <div class="row">
             <button class="pill" type="button" disabled={voiceBusy || voice.pi_in_control}
                     onclick={() => postVoice({ hands_free: !handsFreeOn })}>
-              {handsFreeOn ? "Stop listening" : "Start listening"}
+              {handsFreeOn ? "Disable voice triggers" : "Enable voice triggers"}
             </button>
             {#if !voice.provisioned}
               <button class="pill" type="button" disabled={voiceBusy}
@@ -399,7 +401,7 @@
                 <button class="pill" type="button" disabled={voiceBusy} onclick={() => postVoice({ music: "stop" })}>Stop</button>
               {/if}
             </div>
-            <p class="note">You can also just ask: “Hi ESP, play some jazz.”</p>
+            <p class="note">Press WAKE or tap the mic, then ask for music. Playback resumes after the command.</p>
           </div>
 
           {#if voiceError}<p class="note bad">{voiceError}</p>{/if}

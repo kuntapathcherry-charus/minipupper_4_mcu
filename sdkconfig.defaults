@@ -45,7 +45,7 @@ CONFIG_SPIRAM_BOOT_INIT=y
 CONFIG_SPIRAM_USE_MALLOC=y
 
 # local-claw: internal RAM is the scarce resource once the screen, audio and
-# the wake word are up -- with small mallocs forced internal (it was 16384)
+# the voice front end is up -- with small mallocs forced internal (it was 16384)
 # the robot booted with 2 KB of internal RAM left, and the Wi-Fi driver could
 # not get packet buffers ("wifi:m f null", phones dropped off the AP). Same
 # policy as mpv2-claw, which runs the same voice and display code: plain
@@ -114,7 +114,7 @@ CONFIG_VFS_MAX_COUNT=12
 # uxTaskGetSystemState(), and ESP-IDF's vTaskDeleteWithCaps() frees the TCB
 # before the idle task unlinks it -- so the next sample dereferences freed
 # memory and panics (LoadProhibited in vTaskGetInfo). This firmware deletes
-# WithCaps tasks on every skill run, voice loopback and wake-word teardown.
+# WithCaps tasks on every skill run, voice loopback and AFE teardown.
 # Off until those workers are made persistent; see main/Kconfig.projbuild.
 # CONFIG_APP_SYSMON_ENABLE is not set
 CONFIG_APP_CLAW_ENABLE_CLI=n
@@ -229,7 +229,7 @@ CONFIG_LV_BUILD_DEMOS=n
 # hands-free listening and the esp-sr feed/fetch tasks, aborts a voice turn,
 # stops music and frees the I2S capture for the skill (mpx_mic_start), then
 # puts back exactly what was running. Voice and the chat ingress are refused
-# while a skill runs, so the wake word and the LLM stay out of its way -- and
+# while a skill runs, so voice triggers and the LLM stay out of its way -- and
 # the agent's mpx_run_skill blocks until the skill is done, so no model turn
 # is started behind it either.
 #
@@ -251,7 +251,7 @@ CONFIG_APP_VOICE_AUTO_LISTEN=y
 
 # On-device RL policies (main/rl). The policy worker takes the same counted
 # voice hold as a skill before touching the robot and releases it afterwards,
-# so wake-word/audio work cannot run underneath inference or raw servo control.
+# so voice/audio work cannot run underneath inference or raw servo control.
 CONFIG_APP_POLICY_ENABLE=y
 CONFIG_APP_POLICY_ROBOT="sku1"
 # Opt-in: unattended motion must not be a new default on the full firmware.
@@ -262,17 +262,16 @@ CONFIG_APP_POLICY_WEIGHT_BITS=16
 # insecure-origin exception for microphone capture. End-user images hide it.
 # CONFIG_APP_VOICE_PHONE_AUDIO is not set
 
-# local-claw: voice (main/voice). WakeNet 9S is Espressif's cost-down
-# "Hi ESP" model: fewer parameters and lower CPU/RAM than WakeNet 9, leaving
-# enough internal RAM for MMNR + ESP-Claw together. AFE uses WebRTC VAD;
-# the gateway's Silero VAD owns conversation endpointing/barge-in, so the
-# much larger VADNet model only duplicated work and exhausted both heaps.
-# Keep WebRTC NS and no command recogniser. Models are packed into
-# srmodels.bin and flashed to the `model` partition. The AFE input layout
-# is in mpx_voice_wake.c (WAKE_FORMAT_4CH).
+# local-claw: voice (main/voice). IO21_WAKE and the PWA start conversations;
+# WakeNet is disabled in AFE and no wake-word model is packed. Keep ESP-SR
+# for AEC/VAD and echo-cancelled server-VAD barge-in. The gateway's Silero
+# VAD owns conversation endpointing/barge-in, so VADNet would duplicate work.
+# Keep WebRTC VAD/NS and no command recogniser. Selected models are packed
+# into srmodels.bin; the model partition layout is unchanged. The AFE input
+# layout is in mpx_voice_wake.c (WAKE_FORMAT_4CH).
 CONFIG_MODEL_IN_FLASH=y
 CONFIG_AFE_INTERFACE_V1=y
-CONFIG_SR_WN_WN9S_HIESP=y
+# CONFIG_SR_WN_WN9S_HIESP is not set
 CONFIG_SR_VADN_WEBRTC=y
 CONFIG_SR_NSN_WEBRTC=y
 CONFIG_SR_MN_CN_NONE=y
@@ -280,7 +279,7 @@ CONFIG_SR_MN_EN_NONE=y
 
 # local-claw: music (voice/cap_music.c). The player's own converters turn
 # whatever the station sends into 16 kHz mono 16-bit, the voice rate -- the
-# microphone shares the I2S clock and the wake word listens at 16 kHz, so
+# microphone shares the I2S clock and voice capture runs at 16 kHz, so
 # the speaker cannot run at anything else. cap_music.c refuses to compile
 # with a different RESAMPLE_DEST_RATE.
 CONFIG_ESP_AUDIO_SIMPLE_PLAYER_HTTP_EN=y
@@ -295,7 +294,7 @@ CONFIG_AUDIO_SIMPLE_PLAYER_BIT_CVT_DEST_16BIT=y
 #
 # With the agent, Wi-Fi, LVGL and esp-sr all in one image, internal RAM runs
 # out before voice starts: the I2S driver could not allocate its DMA buffers
-# when the wake word opened the microphone ("i2s_alloc_dma_desc: allocate DMA
+# when the voice front end opened the microphone ("i2s_alloc_dma_desc: allocate DMA
 # buffer failed"), and esp_codec_dev then enabled the half-configured channel
 # and the robot rebooted in i2s_tx_channel_start. These are mpv2-claw's
 # settings for the same board and the same feature set (its

@@ -11,10 +11,10 @@
  * that path cannot work, for two reasons in the hardware:
  *
  *   - The speaker (TX) and the microphones (RX) are the two halves of ONE
- *     I2S peripheral and share its clock. The wake word listens at 16 kHz
- *     all the time; the Lua player opens the output at its own rate
+ *     I2S peripheral and share its clock. The AFE captures at 16 kHz
+ *     during replies; the Lua player opens the output at its own rate
  *     (48 kHz by default) through esp_codec_dev, underneath mpx_audio,
- *     which reclocks the microphone and either kills the wake word or plays
+ *     which reclocks the microphone and either kills the AFE capture or plays
  *     at the wrong speed -- or fails to open at all.
  *   - The amplifier (MAX98357A) has no volume control; esp_codec_dev's
  *     volume is a no-op here. A full-scale mastered song straight into the
@@ -29,11 +29,11 @@
  *
  * ── Sharing with the conversation ──────────────────────────────────────────
  *
- *   - Music waits while a conversation turn is going (after the wake word,
+ *   - Music waits while a conversation turn is going (after an IO21/PWA trigger,
  *     while you speak, while the reply plays), then starts. Asking for music
  *     by voice ends that conversation after the reply (no follow-up turn;
  *     mpx_voice_wake's follow-up gate), so the song starts straight away.
- *   - "Hi ESP" during a song: the song holds (a live station stops and
+ *   - IO21_WAKE/PWA during a song: the song holds (a live station stops and
  *     reconnects; a file pauses and resumes) while you talk, then comes back.
  *   - "Stop the music" goes through music_stop. "Be quiet" / "stop talking"
  *     (the gateway's stop phrases, answered with goodbye reason "stop")

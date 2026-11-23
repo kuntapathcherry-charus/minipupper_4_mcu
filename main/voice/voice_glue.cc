@@ -276,7 +276,7 @@ void prepare()
     if (s_wake_ready || !available()) return;
 
     /* Reserve the large ESP-SR allocations before ESP-Claw. In this esp-sr
-     * version an OOM inside WakeNet model creation dereferences a null
+     * version an OOM inside AFE/model creation dereferences a null
      * buffer, so merely checking create_from_config's return is too late. */
     mpx_voice_wake_set_task_priority(s_task_priority);
     if (mpx_voice_wake_init() != ESP_OK) {
@@ -340,18 +340,18 @@ void start()
     /* prepare() normally reserved the AFE before the agent. This call also
      * keeps direct/retry users working; s_afe_ready prevents a second AFE. */
     if (mpx_voice_wake_init() != ESP_OK) {
-        ESP_LOGW(TAG, "wake word init did not complete -- voice unavailable this boot");
+        ESP_LOGW(TAG, "voice front-end init did not complete -- voice unavailable this boot");
         return;
     }
     s_wake_ready = true;
-    ESP_LOGI(TAG, "after wake init: internal RAM %u free, %u largest; PSRAM %u free, %u largest",
+    ESP_LOGI(TAG, "after voice front-end init: internal RAM %u free, %u largest; PSRAM %u free, %u largest",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
 
 #if CONFIG_APP_VOICE_AUTO_LISTEN
-    /* Hands-free from here on. The socket opens on the first wake word, by
+    /* Hands-free from here on. The socket opens on the first IO21/PWA trigger, by
      * which time Wi-Fi has had every chance to come up. */
     esp_err_t listen_err = hands_free_start_locked();
     if (listen_err != ESP_OK) {
@@ -423,7 +423,7 @@ esp_err_t hold(const char *why)
      * skill is not sharing the CPU with whatever model is on the other end
      * of it, and so the server is not left streaming into a device that has
      * stopped listening. */
-    if (mpx_voice_stream_is_playing()) {
+    if (mpx_voice_stream_reply_active() || mpx_voice_stream_is_playing()) {
         mpx_voice_stream_abort_playback();
     }
     /* A skill must leave the control socket up in either brain mode: the
@@ -518,7 +518,7 @@ void release(const char *why)
     } else if (restore_wake && !mpx_voice_wake_active()) {
         const esp_err_t err = mpx_voice_wake_start();
         if (err != ESP_OK) {
-            ESP_LOGW(TAG, "wake word listening did not restart after %s (%s)",
+            ESP_LOGW(TAG, "voice trigger loop did not restart after %s (%s)",
                      reason, esp_err_to_name(err));
         }
     }
@@ -568,7 +568,7 @@ std::string status_json()
     cJSON_AddStringToObject(o, "link", mpx_voice_state_name());
     cJSON_AddStringToObject(o, "hands_free", mpx_voice_wake_state_name());
     /* A skill (or the app) is holding voice back: this is why hands_free can
-     * read "off" while the owner expects it to be listening. */
+     * read "off" while the owner expects voice triggers to be armed. */
     cJSON_AddBoolToObject(o, "held", s_hold_depth.load() > 0);
     cJSON_AddNumberToObject(o, "hold_depth", s_hold_depth.load());
     cJSON_AddNumberToObject(o, "task_priority", mpx_voice_wake_task_priority());

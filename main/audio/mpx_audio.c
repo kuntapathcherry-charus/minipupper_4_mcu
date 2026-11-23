@@ -97,7 +97,7 @@ static int s_volume = MPX_AUDIO_VOLUME_DEFAULT;
  * 24 dB now, not 30: on the MP4 ESP32 CORE board, 30 dB clipped a normal
  * speaking voice at half a metre (`audio rec` reported peak 32767 with an
  * RMS of 4767, i.e. -17 dBFS with the tops sheared off). Clipped speech
- * plays back fine to a human ear and is poison to a wake-word model.
+ * plays back fine to a human ear and is poison to an AFE.
  * 24 dB keeps the same voice a few dB under full scale; `audio gain` moves
  * it at runtime. */
 static float s_mic_gain_db = 24.0f;
@@ -132,7 +132,7 @@ static float s_mic_gain_db = 24.0f;
  *
  * Stopping it silently stops the microphone's clock: the next
  * esp_codec_dev_read() times out with rc=-1 and whatever was reading --
- * the wake-word feed -- dies. First seen as `audio tone` killing the
+ * the AFE feed -- dies. First seen as `audio tone` killing the
  * hands-free listener; it would have hit at the end of every reply.
  *
  * Two pieces of state make that possible. s_out_cfg_rate is the clock/slot
@@ -163,7 +163,7 @@ static uint8_t  s_out_slot_bits = 16;
  * buffers allocated across disable/close and only reallocates them
  * (free first, then allocate) when the slot width changes. The microphone's
  * RAM guard (mpx_audio_capture_start) needs to know what is already held:
- * after a 4-channel wake-word capture both rings stay at 32-bit size
+ * after a 4-channel AFE capture both rings stay at 32-bit size
  * (~11.5 KB each), so a following 16-bit capture SHRINKS them and needs no
  * new DMA memory at all -- while a guard that only looks at the free heap
  * sees the 23 KB those rings hold as "missing" and refuses. */
@@ -286,7 +286,7 @@ static void audio_out_close(void)
      * the channel runs, and the channel is run behind this file's back:
      * esp_codec_dev enables TX whenever the microphone opens, at whatever
      * slot width the capture needs. A 16-bit beep tail looping through
-     * 32-bit slots while the wake-word front end listens is the burst of
+     * 32-bit slots while the AFE front end captures is the burst of
      * hash heard at the start of every hands-free reply. */
     static const uint8_t zeros[1024] = {0};
     for (size_t left = AUDIO_OUT_FLUSH_BYTES; left > 0;) {
@@ -308,7 +308,7 @@ static void audio_out_close(void)
     /* Keep the 32-bit slot configuration a four-channel capture installed.
      * audio_out_write_stereo16() already widens samples for it, and the next
      * voice/music stream uses the same 16 kHz clock. Forcing a 16-bit
-     * reconfigure here would shrink the DMA rings and make the next wake-word
+     * reconfigure here would shrink the DMA rings and make the next AFE
      * open allocate them again in a fragmented heap. */
 }
 
@@ -539,7 +539,7 @@ esp_err_t mpx_audio_init(void)
              mpx_audio_have_speaker() ? "ready" : "absent", s_volume);
 
     /* Configure TX for the voice rate now, while nothing is capturing, so
-     * the first reply that arrives while the wake-word front end holds the
+     * the first reply that arrives while the AFE front end holds the
      * microphone finds the clock already right and never has to stop it
      * (see the comment above audio_out_configure()). Left running:
      * esp_codec_dev bounces it when the microphone opens either way, and a
@@ -652,7 +652,7 @@ esp_err_t mpx_audio_capture_start(uint32_t sample_rate, uint8_t channels, uint8_
      * instead of rebooting.
      *
      * Only GROWTH needs checking. The rings stay allocated between captures,
-     * so a 16-bit capture right after the 32-bit wake-word one (the
+     * so a 16-bit capture right after the 32-bit AFE one (the
      * hands-free follow-up turn) gives memory back rather than taking any.
      * Checking a flat 20 KB here instead refused exactly that turn: the
      * free heap was low precisely because the 32-bit rings were holding
@@ -949,7 +949,7 @@ esp_err_t mpx_audio_record_wav(const char *rel_path, uint32_t seconds,
 
     ESP_RETURN_ON_FALSE(mpx_audio_have_mic(), ESP_ERR_NOT_SUPPORTED, TAG,
                         "no microphone on this board");
-    /* The streaming capture (wake word, `voice talk`) is the same hardware
+    /* The streaming capture (AFE, `voice talk`) is the same hardware
      * stream; opening the codec a second time underneath it interleaves two
      * readers, which is not an error anyone gets told about. */
     ESP_RETURN_ON_FALSE(!s_cap_open, ESP_ERR_INVALID_STATE, TAG,

@@ -507,7 +507,7 @@ Reply mpx_run_skill(const cJSON *args)
     } else {
         cJSON_AddStringToObject(o, "started", resolved.c_str());
         /* Stay inside the run. The skill has the robot to itself (voice is
-         * held, so no wake word and no voice turn), and letting the tool
+         * held, so no voice trigger and no voice turn), and letting the tool
          * return at once would send the model a result while the skill is
          * still moving, inviting a second tool call into a robot that is
          * busy -- and another LLM request behind it. Blocking here means the

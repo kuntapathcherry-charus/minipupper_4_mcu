@@ -204,10 +204,9 @@
 #define PI_SPARE_4_PIN            PI_SLAVE_OUT_PIN
 
 /* ─────────────────────── Buttons ───────────────────────
- * SW2/SW3 on the board. Nothing reads them today — the Mini Pupper 2 build
- * had no buttons either — but they are named here so a future bring-up mode
- * (hold WAKE at reset) has a pin to use. Note IO0 is a strapping pin: it must
- * read high at boot, which the button's pull-up provides.
+ * SW2/SW3 on the board. Voice polls SW3/IO21_WAKE as the physical
+ * conversation toggle. Note IO0 is a strapping pin: it must read high at
+ * boot, which the button's pull-up provides.
  */
 /* ── Display: ST7789 2.0" 240x320 on J4 (mp4-claw boards/mp4_esp32_core) ──
  * SPI3, not SPI2: SPI2 carries the servo boards and needs its six CS lines. */

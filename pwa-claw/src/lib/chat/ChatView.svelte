@@ -953,7 +953,7 @@
           class="send-btn"
           class:wake-mode={voiceWakeMode}
           aria-label={voiceWakeMode ? "Start voice chat" : "Send message"}
-          title={voiceWakeMode ? "Start voice chat without the wake word" : "Send message"}
+          title={voiceWakeMode ? "Start voice chat" : "Send message"}
           onclick={submitChat}
           disabled={voiceWakeBusy || conversationArchived || sending || !connected || (!voiceWakeMode && !inputText.trim())}
         >

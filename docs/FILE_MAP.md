@@ -16,7 +16,7 @@ Phone / browser  ──  HTTP /v1 + WS /v1/chat/ui  ──►  ESP32-S3
   (pwa-claw/)                                         ├─ network/   HTTP, Wi-Fi, chat, marketplace
                                                       ├─ robot/     servos, gait, IK, moves
 Cloud gateway (optional)                              ├─ display/   ST7789 face + GIFs
-  ▲ encrypted WS                                      ├─ voice/     wake word, gateway, music
+  ▲ encrypted WS                                      ├─ voice/     IO21/PWA triggers, gateway, music
   │                                                   ├─ agent/     on-device agent (ESP-Claw)
 main/network/chat_ws.cc                               ├─ lua/, wasm/, sdk/   scripting
                                                       └─ pi/        Raspberry Pi / ROS 2 link
@@ -65,7 +65,7 @@ explicitly, gates the agent and voice sources on `CONFIG_APP_AGENT_ENABLE` /
 
 | File | What it does |
 |---|---|
-| [main.cc](../main/main.cc) | `app_main()` — the boot sequence, in order: NVS, robot HAL, screen, audio, Pi link, LittleFS, Wi-Fi AP/STA, deploy PWA assets, rescan skills, HTTP server, chat, WASM sandbox, Lua, voice AFE reservation, agent, voice runtime. The AFE is reserved before the agent to avoid the observed agent-first MMNR/WakeNet heap exhaustion (ESP-SR's allocation-failure path is unsafe). Also wires the robot's skill hooks and the Pi master observer. |
+| [main.cc](../main/main.cc) | `app_main()` — the boot sequence, in order: NVS, robot HAL, screen, audio, Pi link, LittleFS, Wi-Fi AP/STA, deploy PWA assets, rescan skills, HTTP server, chat, WASM sandbox, Lua, voice AFE reservation, agent, voice runtime. The AFE is reserved before the agent to avoid the observed agent-first AFE heap exhaustion (ESP-SR's allocation-failure path is unsafe). Also wires the robot's skill hooks and the Pi master observer. |
 | [CMakeLists.txt](../main/CMakeLists.txt) | Source list, conditional sources, embedded assets, `REQUIRES`, the Lua 32-bit def, and the `--wrap` of ESP-Claw's event-router init. |
 | [idf_component.yml](../main/idf_component.yml) | Component-manager manifest: every managed dependency and the vendored ESP-Claw components as `path:` entries. Pins the IDF range. |
 | [Kconfig.projbuild](../main/Kconfig.projbuild) | The "MPX Dog App Configuration" menu: AP/STA defaults, cloud gateway, robot UUID and AES key, and the `APP_AUDIO_ENABLE`, `APP_PI_LINK_ENABLE`, `APP_RL_*`, `APP_DISPLAY_ENABLE`, `APP_VOICE_ENABLE`, `APP_AGENT_ENABLE` switches. |
@@ -204,7 +204,7 @@ that unlock its tools.
 |---|---|
 | [trace_ring.{h,cc}](../main/util/trace_ring.cc) | `mpx_trace()`'s named-float ring (256 entries, internal RAM), read by `/v1/trace` and `mpx-cli trace` to plot what a running skill is doing. |
 
-### main/voice/ — wake word, gateway, music
+### main/voice/ — IO21/PWA triggers, gateway, music
 
 | File | What it does |
 |---|---|
@@ -214,11 +214,11 @@ that unlock its tools.
 | [mpx_voice_ws.c](../main/voice/mpx_voice_ws.c) | The WebSocket link to the voice gateway. |
 | [mpx_voice_stream.c](../main/voice/mpx_voice_stream.c) | Mic → Opus → socket, and socket → speaker streaming. |
 | [mpx_voice_codec.cc](../main/voice/mpx_voice_codec.cc) | Opus encode/decode wrappers. |
-| [mpx_voice_wake.{h,c}](../main/voice/mpx_voice_wake.c) | esp-sr wake word (AFE setup, wake detection, accessors for status). |
+| [mpx_voice_wake.{h,c}](../main/voice/mpx_voice_wake.c) | esp-sr AFE AEC/VAD and IO21 toggle/PWA conversation orchestration (WakeNet disabled). |
 | [voice_brain.{h,cc}](../main/voice/voice_brain.cc) | The on-device agent as the voice brain: one outstanding turn, STT → `agent::submit_voice()`, full reply → speech sanitiser, session ids/end/clear, and an 80 s turn timeout. |
 | [voice_history.{h,cc}](../main/voice/voice_history.cc) | JSONL voice transcripts under `/fs/voice/`, tail-only listing for `/v1/voice/history`, and per-session clear. |
 | [voice_phone_audio.{h,cc}](../main/voice/voice_phone_audio.cc) | Optional phone mic/speaker endpoints: a PSRAM PCM ring for browser capture and PCM broadcast for TTS, selected per turn by `mpx_phone_audio_mic_enabled()`. |
-| [mpx_voice_ota.c](../main/voice/mpx_voice_ota.c) | First-wake-word provisioning of the gateway URL/token (OTA identification). |
+| [mpx_voice_ota.c](../main/voice/mpx_voice_ota.c) | First-voice-turn provisioning of the gateway URL/token (OTA identification). |
 | [cap_music.{h,c}](../main/voice/cap_music.c) | Music playback (internet radio by genre, or a URL) sharing the speaker with voice. |
 
 ### main/wasm/ — the skill sandbox
