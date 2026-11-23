@@ -8,6 +8,7 @@
   import ActionAssignment from "./ActionAssignment.svelte";
   import AddActionView from "./AddActionView.svelte";
   import AllActions from "./AllActions.svelte";
+  import RLWalkPage from "./RLWalkPage.svelte";
   import ChatView from "./chat/ChatView.svelte";
   import SkillsMarketplace from "./SkillsMarketplace.svelte";
   import SkillsManagement from "./SkillsManagement.svelte";
@@ -19,6 +20,7 @@
 
   let activeTab = $state("home");
   let showAllActions = $state(false);
+  let rlStart = $state(null);       // "balance" | "stairs": the RL walk page, starting that run
   let showAddAction = $state(false);
   let showActionAssignment = $state(false);
   let showWifi = $state(false);
@@ -69,8 +71,11 @@
     { id: "jump", label: "Jump", emoji: "🤸", color: "#D97A29", category: "gait" },
     { id: "dig", label: "Dig", emoji: "⛏️", color: "#E08A2E", category: "gait" },
     { id: "backflip_k7_405_l2", label: "Backflip without screen", emoji: "🤸", color: "#117a65", category: "gait" },
-    { id: "backflip_k7_405_l2d3", label: "Backflip safe with screen", emoji: "🤸", color: "#D14949", category: "gait" },
+    { id: "backflip_k7_405_l2d3", label: "Backflip safe with screen", short: "Backflip", emoji: "🤸", color: "#D14949", category: "gait" },
   ];
+  // Home's Quick actions: this one row (2026-11-23); the rest are under See all.
+  const HOME_QUICK = ["scratch", "look", "cower", "backflip_k7_405_l2d3"];
+  const homeQuick = HOME_QUICK.map((id) => actions.find((a) => a.id === id)).filter(Boolean);
   const DEFAULT_PINNED = ["scratch", "look", "cower", "paw", "surrender", "pushup", "spin90", "jump", "dig", "backflip_k7_405_l2", "backflip_k7_405_l2d3"];
 
   // ── Saved in the browser ────────────────────────────────────
@@ -276,6 +281,8 @@
           onSave={(updated) => (actionAssignments = updated)}
           onBack={() => (showActionAssignment = false)}
         />
+      {:else if rlStart}
+        <RLWalkPage autostart={rlStart} onBack={() => (rlStart = null)} />
       {:else if showAllActions}
         <AllActions
           actions={actions.filter((a) => a.id !== "none")}
@@ -346,18 +353,33 @@
                 <button type="button" class="see-all" onclick={() => (showAllActions = true)}>See all</button>
               </div>
               <ul class="quick-grid">
-                {#each pinnedObjects as a (a.id)}
+                {#each homeQuick as a (a.id)}
                   <li>
                     <button type="button" class="qa" class:hit={flash === a.id} onclick={() => runAction(a)} aria-label="Run {a.label}">
                       <span class="qa-ico"><ActionIcon id={a.id} emoji={a.emoji} /></span>
-                      <span class="qa-lbl">{a.label}</span>
+                      <span class="qa-lbl">{a.short || a.label}</span>
                     </button>
                   </li>
                 {/each}
+              </ul>
+            </section>
+
+            <!-- RL actions: each opens the RL walk page and starts that run there (its Stop, status and log) -->
+            <section class="quick rl" aria-labelledby="rl-title">
+              <div class="quick-head">
+                <h2 id="rl-title">RL actions</h2>
+              </div>
+              <ul class="quick-grid rl-grid">
                 <li>
-                  <button type="button" class="qa add" onclick={() => (showAllActions = true)} aria-label="Pin more moves">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-                    <span class="qa-lbl">Pin</span>
+                  <button type="button" class="qa" disabled={!online} onclick={() => (rlStart = "balance")} aria-label="Balance and get up">
+                    <span class="qa-ico">🧍</span>
+                    <span class="qa-lbl">Balance + get up</span>
+                  </button>
+                </li>
+                <li>
+                  <button type="button" class="qa" disabled={!online} onclick={() => (rlStart = "stairs")} aria-label="Stairs">
+                    <span class="qa-ico">🪜</span>
+                    <span class="qa-lbl">Stairs</span>
                   </button>
                 </li>
               </ul>
@@ -490,7 +512,7 @@
   .pad-wrap { flex-shrink: 0; padding: 8px 14px 0; width: 100%; max-width: 460px; margin: 0 auto; }
 
   .quick {
-    flex: 1;
+    flex: 0 0 auto;
     margin: 12px 14px 12px;
     width: calc(100% - 28px);
     max-width: 432px;
@@ -500,8 +522,10 @@
     border-radius: 26px;
     padding: 12px 14px 14px;
     display: flex; flex-direction: column; gap: 10px;
-    min-height: 120px;
   }
+  .quick.rl { margin-top: 0; }
+  .rl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .qa:disabled { opacity: 0.5; cursor: default; }
   .quick-head { display: flex; align-items: center; justify-content: space-between; }
   .quick-head h2 { margin-left: 4px; font-size: 16px; font-weight: 800; }
   .see-all { height: 32px; border-radius: 16px; border: none; background: var(--ground); padding: 0 12px; font-size: 13px; font-weight: 700; cursor: pointer; color: var(--ink); }
@@ -513,7 +537,6 @@
   }
   .qa:active { transform: scale(0.97); }
   .qa.hit { background: var(--mpx-yellow); }
-  .qa.add { background: #fff; border: 1.5px dashed #CFC9BB; }
   .qa-ico { font-size: 20px; line-height: 1; }
   .qa-lbl { font-size: 12px; font-weight: 700; max-width: 100%; padding: 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -523,6 +546,7 @@
   .home.desk .pad-wrap { max-width: 1080px; padding: 12px 24px 0; height: clamp(420px, 58vh, 560px); }
   .home.desk .quick { flex: 0 0 auto; max-width: 1032px; margin-top: 18px; }
   .home.desk .quick-grid { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); }
+  .home.desk .quick.rl { margin-top: 0; }
   .home.desk .qa { height: 72px; }
 
   .action-error {

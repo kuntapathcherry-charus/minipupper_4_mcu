@@ -176,13 +176,20 @@
  * ESD-clamped (D6/D7/D9/D10) but NOT level-shifted — the Pi 5 GPIO bank is
  * 3V3, same as the ESP32-S3.
  *
+ * ESP32_CORE_V1.1 (2026.09.28, CN7 GH 1.25 6-pin): the header is flipped
+ * against the first board, the four signal pins in the reverse order:
+ *
  *   pin  net        wire    ESP role                 Pi 5 header
  *   1    GND        black   ground                   pin 6 / 9 (GND)
- *   2    IO18_PI_1  blue    UART1 TX  (ESP -> Pi)    pin 10, GPIO15 RXD
- *   3    IO8_PI_2   green   UART1 RX  (Pi -> ESP)    pin 8,  GPIO14 TXD
- *   4    IO3_PI_3   yellow  HOST_PRESENT input       pin 11, GPIO17 (Pi drives)
- *   5    IO11_PI_4  white   ESP_SLAVE output         pin 13, GPIO27 (Pi reads)
+ *   2    IO11_PI_4  blue    ESP_SLAVE output         pin 13, GPIO27 (Pi reads)
+ *   3    IO3_PI_3   green   HOST_PRESENT input       pin 11, GPIO17 (Pi drives)
+ *   4    IO8_PI_2   yellow  UART1 RX  (Pi -> ESP)    pin 8,  GPIO14 TXD
+ *   5    IO18_PI_1  white   UART1 TX  (ESP -> Pi)    pin 10, GPIO15 RXD
  *   6    VBUS (5 V) red     5 V through C19 filter   pin 2 / 4 (5V)
+ *
+ * The first board (MP4-ESP32 CORE, 2026.08.27): 2 = IO18_PI_1, 3 = IO8_PI_2,
+ * 4 = IO3_PI_3, 5 = IO11_PI_4 (1 and 6 the same). The GPIOs below are the same
+ * on both, so is the firmware.
  *
  * The link layer is pi/pi_link.cc, the wire format pi/pi_protocol.h.
  *

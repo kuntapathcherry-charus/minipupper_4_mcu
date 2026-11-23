@@ -6,11 +6,13 @@
  * PI_PROTO_VERSION so a mismatched pair says so instead of misreading floats.
  *
  * ── Physical link ───────────────────────────────────────────────────────
- *   J-PI pin 2  IO18  ESP TX  -> Pi GPIO15 RXD (header pin 10)   blue
- *   J-PI pin 3  IO8   ESP RX  <- Pi GPIO14 TXD (header pin 8)    green
- *   J-PI pin 4  IO3   HOST_PRESENT, Pi -> ESP (Pi GPIO17, pin 11) yellow
- *   J-PI pin 5  IO11  ESP_SLAVE,    ESP -> Pi (Pi GPIO27, pin 13) white
+ *   ESP32_CORE_V1.1 (2026.09.28; the header is flipped against the first board):
+ *   J-PI pin 2  IO11  ESP_SLAVE,    ESP -> Pi (Pi GPIO27, pin 13) blue
+ *   J-PI pin 3  IO3   HOST_PRESENT, Pi -> ESP (Pi GPIO17, pin 11) green
+ *   J-PI pin 4  IO8   ESP RX  <- Pi GPIO14 TXD (header pin 8)    yellow
+ *   J-PI pin 5  IO18  ESP TX  -> Pi GPIO15 RXD (header pin 10)   white
  *   J-PI pin 1  GND (black)          J-PI pin 6  VBUS 5 V (red)
+ *   (first board, 2026.08.27: pin 2 IO18, 3 IO8, 4 IO3, 5 IO11)
  *   8N1, CONFIG_APP_PI_LINK_BAUD (default 921600), no flow control.
  *
  * ── Frame ───────────────────────────────────────────────────────────────

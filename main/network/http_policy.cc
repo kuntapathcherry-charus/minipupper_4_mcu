@@ -232,6 +232,7 @@ esp_err_t status_reply(httpd_req_t *req, const char *status, const char *error)
     cJSON_AddStringToObject(o, "getup_error", st.getup_error);
     cJSON_AddBoolToObject(o, "getup_auto", st.auto_getup);
     cJSON_AddBoolToObject(o, "auto_right", st.auto_right);
+    cJSON_AddBoolToObject(o, "keep_up", st.keep_up);
     cJSON_AddNumberToObject(o, "getups", st.getups);
     cJSON_AddNumberToObject(o, "getups_ok", st.getups_ok);
     cJSON_AddBoolToObject(o, "climb_ready", st.climb_ready);
@@ -447,6 +448,8 @@ esp_err_t policy_post_handler(httpd_req_t *req)
     const cJSON *gauto = cJSON_GetObjectItem(body, "getup_auto");
     const bool set_gauto = cJSON_IsBool(gauto);
     const bool getup_auto = cJSON_IsTrue(gauto);
+    /* Balance + get up: gets up after every fall, ends only on Stop or a get-up that fails 3 tries */
+    const bool keep_up = cJSON_IsTrue(cJSON_GetObjectItem(body, "keep_up"));
     const cJSON *aright = cJSON_GetObjectItem(body, "auto_right");
     const bool set_aright = cJSON_IsBool(aright);
     const bool auto_right = cJSON_IsTrue(aright);
@@ -509,6 +512,7 @@ esp_err_t policy_post_handler(httpd_req_t *req)
             return status_reply(req, "409 Conflict", why);
         }
         if (set_gauto && !mpx_policy_active()) (void)mpx_policy_set_auto_getup(getup_auto);
+        if (!mpx_policy_active()) mpx_policy_set_keep_up(keep_up);
         mpx_policy_set_deadman_ms(offline ? 0 : DEADMAN_MS);
         if (mpx_policy_start(seconds, hold, force, dry, why, sizeof(why)) != ESP_OK) {
             ESP_LOGW(TAG, "run refused: %s", why);

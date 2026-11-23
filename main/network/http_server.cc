@@ -1533,7 +1533,7 @@ static esp_err_t api_robot_status(httpd_req_t *req)
 }
 
 /* GET /v1/pi/status — the Raspberry Pi link, for the app and for debugging
- * the wiring: host_pin shows the yellow wire (IO3), heartbeat the UART. Same
+ * the wiring: host_pin shows the HOST_PRESENT wire (IO3, J-PI pin 3), heartbeat the UART. Same
  * fields as mpv2 / mpv2-claw. */
 static esp_err_t api_pi_status(httpd_req_t *req)
 {

@@ -13,17 +13,27 @@ music…) drives this firmware unchanged.
 
 ## 1. Wires: six of them
 
+On the latest ESP32 board (**ESP32_CORE_V1.1, 2026.09.28**) the 6-pin J-PI
+header is flipped compared with the first board: the four signal pins are in
+the reverse order. The ESP GPIOs (`main/robot/board_config.h`) and the Pi pins
+did not change, so the firmware is the same.
+
 | J-PI pin | Net | Wire | ESP role | Raspberry Pi 40-pin header |
 |---|---|---|---|---|
 | 1 | GND | black | ground | GND, pin 6 (or 9, 14, 20…) |
-| 2 | IO18_PI_1 | blue | UART1 TX (ESP → Pi) | GPIO15 RXD, **pin 10** |
-| 3 | IO8_PI_2 | green | UART1 RX (Pi → ESP) | GPIO14 TXD, **pin 8** |
-| 4 | IO3_PI_3 | yellow | HOST_PRESENT input | GPIO17, **pin 11** (the Pi drives it) |
-| 5 | IO11_PI_4 | white | ESP_SLAVE output | GPIO27, **pin 13** (the Pi reads it) |
+| 2 | IO11_PI_4 | blue | ESP_SLAVE output | GPIO27, **pin 13** (the Pi reads it) |
+| 3 | IO3_PI_3 | green | HOST_PRESENT input | GPIO17, **pin 11** (the Pi drives it) |
+| 4 | IO8_PI_2 | yellow | UART1 RX (Pi → ESP) | GPIO14 TXD, **pin 8** |
+| 5 | IO18_PI_1 | white | UART1 TX (ESP → Pi) | GPIO15 RXD, **pin 10** |
 | 6 | VBUS 5 V | red | 5 V | pin 2 / 4 (only if the Pi is powered from the robot) |
 
+The first board (MP4-ESP32 CORE, 2026.08.27) has pins 2-5 the other way round:
+2 = IO18_PI_1 (TX), 3 = IO8_PI_2 (RX), 4 = IO3_PI_3 (HOST_PRESENT),
+5 = IO11_PI_4 (ESP_SLAVE); pins 1 and 6 are the same.
+
 Both boards use 3.3 V logic: no level shifter. If the link stays silent,
-swapping the two data wires is the first thing to try.
+swapping the two data wires (yellow and white, pins 4 and 5) is the first thing
+to try.
 
 ## 2. Prepare the Pi
 
@@ -62,7 +72,7 @@ hostname, music and camera stats, and the RL link (`rl`).
 |---|---|
 | `standalone`, rx 0 frames | nothing heard: bridge not running, wrong baud, or TX/RX swapped |
 | mostly CRC errors | the two sides use different baud rates |
-| `monitor`, wants control, IO3 low | the yellow wire / GPIO17 is not set high |
+| `monitor`, wants control, IO3 low | the HOST_PRESENT wire (green, J-PI pin 3) / GPIO17 is not set high |
 | `slave` | the Pi drives the robot |
 
 ## 5. What happens in slave mode

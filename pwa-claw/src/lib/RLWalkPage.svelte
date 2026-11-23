@@ -13,7 +13,8 @@
    */
   import { onDestroy } from "svelte";
 
-  let { onBack } = $props();
+  // autostart: "balance" or "stairs" when opened from Home's RL actions: that run starts once the status is in.
+  let { onBack, autostart = null } = $props();
 
   let st = $state(null);            // GET /v1/policy
   let busy = $state(false);
@@ -180,8 +181,11 @@
     return () => clearInterval(t);
   });
 
+  let keepUpReq = false;            // the next start is Balance + get up's "keep up" (only Stop or 3 failed tries end it)
   async function start() {
     if (busy) return;
+    const keepUp = keepUpReq;
+    keepUpReq = false;
     busy = true;
     test = null;
     logged = null;
@@ -194,6 +198,7 @@
         action: "run", seconds, vx: offline ? cmd[0] : 0, vy: 0, wz: 0, hold: 2, dry, force,
         log: wantLog || offline, offline,
       };
+      if (keepUp) body.keep_up = true;
       // Before initialization these are unknown, not false: let firmware
       // choose the calibration and recovery defaults of the selected model.
       if (ownCal !== null) body.own_calibration = ownCal;
@@ -245,6 +250,7 @@
     seconds = 0;
     getupAuto = true;
     noWifi = false;
+    keepUpReq = true;
     await start();
   }
 
@@ -264,6 +270,17 @@
     fwdSpeed = PRESET_SPEED;
     await start();
   }
+
+  // Opened from Home's RL actions: start that run once, when the first status is in (nothing started if a run is
+  // already on: the page then just shows it, with its Stop).
+  let autoStarted = false;
+  $effect(() => {
+    if (autoStarted || !autostart || !st || busy) return;
+    autoStarted = true;
+    if (st.active) return;
+    if (autostart === "balance") balance();
+    else if (autostart === "stairs") runPreset(STAIRS);
+  });
 
   // "Always gets back up": the robot's own watcher (outside any run), on or off until the robot restarts.
   async function toggleAutoRight() {
@@ -556,7 +573,8 @@
   // Leaving the page stops the run (the dead-man would anyway).
   onDestroy(() => {
     if (benchTimer) clearTimeout(benchTimer);
-    if (active) fetch("/v1/policy", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "stop" }) }).catch(() => {});
+    // Balance + get up keeps going without this page (it stands still): only its Stop ends it
+    if (active && !st?.keep_up) fetch("/v1/policy", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "stop" }) }).catch(() => {});
   });
 
   // ── The stick ──
@@ -788,7 +806,7 @@
           <section>
             <h2>Balance and get up</h2>
             <button type="button" class="go" disabled={busy} onclick={balance}>Start · stand, get up when it falls</button>
-            <p class="note">Until you press Stop. Push it from the front or the side: it rides out what it can, and when it falls it gets up by itself (up to 10 times) and stands again. Clear space around it, and a soft floor for the first tries.</p>
+            <p class="note">Until you press Stop. Push it from the front or the side: it rides out what it can, and when it falls it gets up by itself every time and stands again. It ends only when you press Stop, or when a get-up fails 3 tries in a row (then it goes limp). You can leave this page: it keeps standing; come back here to Stop it. Clear space around it, and a soft floor for the first tries.</p>
           </section>
         {/if}
 

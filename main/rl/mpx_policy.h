@@ -63,6 +63,7 @@ typedef struct {
     char     getup_error[64];   /* why the built-in get-up could not be loaded ("" = loaded, or not tried yet) */
     bool     auto_getup;        /* runs started now get up after a fall instead of going limp */
     bool     auto_right;        /* "always gets back up": lying still with nothing running starts the get-up */
+    bool     keep_up;           /* this run is Balance + get up's "keep up" (mpx_policy_set_keep_up) */
     uint32_t getups;            /* get-ups in this (or the last) run */
     uint32_t getups_ok;         /* ... that reached the stand */
     /* The climb policy (policies/climb.mpxp, built in when present: omniRL climb_track.py --residual-deg,
@@ -109,6 +110,16 @@ esp_err_t mpx_policy_start(float seconds, float hold_s, bool force, bool dry, ch
  */
 #define MPX_POLICY_MAX_GETUPS 3
 bool mpx_policy_set_auto_getup(bool on);
+
+/**
+ * "Keep up" (Balance + get up): for the next run started, a recovery walk with its get-up only. It gets up after
+ * every fall (no limit on falls), and it ends only on Stop or when one get-up fails MPX_POLICY_KEEP_UP_TRIES times
+ * in a row (or its time limit passes): late network steps, a short IMU dropout and the app going quiet (the command
+ * drops to zero, it keeps balancing) no longer end it. The servo protections (current, temperature, a board that
+ * stops answering, a target at a track end) still stop it.
+ */
+#define MPX_POLICY_KEEP_UP_TRIES 3
+void mpx_policy_set_keep_up(bool on);
 
 /**
  * Run the get-up policy alone: from wherever the robot lies (on its back, a

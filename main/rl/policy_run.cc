@@ -201,6 +201,8 @@ constexpr float   CLIMB_HOLD_IN_S = 1.0f;
 constexpr float   CLIMB_HOLD_TOP_S = 3.0f;
 // A recovery policy's clocks count policy steps of exactly this (the Pi runner's STATE ticks x 4).
 constexpr double  STEP_S = TICKS_PER_STEP * TICK_US * 1e-6;
+constexpr int     KEEP_UP_LATE_RUN = 25;       // keep up: late policy steps in a row that stop a run (0.5 s)
+constexpr int     KEEP_UP_IMU_BAD_TICKS = 50;  // keep up: ticks without a valid IMU sample that stop it (0.25 s)
 
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -232,6 +234,7 @@ pol_net_t s_cl_net;
 float    *s_cl_work = nullptr;
 bool      s_cl_ok = false;
 bool      s_auto_getup = false;
+bool      s_keep_up = false;      // the next run is a "keep up" one (mpx_policy_set_keep_up)
 
 // Requests from other tasks (under s_mux).
 bool  s_req_start = false, s_req_stop = false, s_req_dry = false, s_req_getup = false, s_req_climb = false;
@@ -392,6 +395,10 @@ struct Run {
     float    *work;
     bool      getup_only;             // Get up alone: GETUP, then give the robot back
     bool      auto_up;                // never stays down: a fall starts GETUP
+    bool      keep_up;                // Balance + get up: only Stop or MPX_POLICY_KEEP_UP_TRIES failed tries end it
+    int       gu_tries;               //   the current get-up's failed tries (phase restarts)
+    int       imu_bad;                //   consecutive ticks without a valid IMU sample
+    bool      deadman_noted;          //   the app went quiet: the command was zeroed (said once)
     uint32_t  getups;
     int       gu_steps, gu_ok;        // GETUP: steps so far, consecutive steps standing
     int       gu_pstep, gu_back;      // GETUP_PHASE: steps since the motion (re)started, steps still on the back
@@ -684,6 +691,14 @@ void start_run()
     R.auto_up = s_auto_getup && s_gu_ok && !getup_only && !R.climb_only &&
                 std::strcmp(s_gu_net.h->robot, s_net.h->robot) == 0 &&
                 std::memcmp(s_gu_net.h->signs, s_net.h->signs, sizeof(s_net.h->signs)) == 0;
+    // keep up (Balance + get up): a recovery walk that gets up by itself, only
+    R.keep_up = s_keep_up && R.auto_up && s_net.dec != nullptr;
+    s_keep_up = false;
+    portENTER_CRITICAL(&s_mux);
+    s_st.keep_up = R.keep_up;
+    portEXIT_CRITICAL(&s_mux);
+    if (R.keep_up) ESP_LOGW(TAG, "keep up: gets up after every fall; ends on Stop or %d failed get-up tries",
+                            MPX_POLICY_KEEP_UP_TRIES);
     R.seconds = seconds;
     R.hold_s = hold;
     R.dry = dry;
@@ -815,6 +830,7 @@ void enter_getup()
     R.gu_pstep = 0;
     R.gu_back = 0;
     R.gu_phase0 = 0.0;
+    R.gu_tries = 0;
     ++R.getups;
     portENTER_CRITICAL(&s_mux);
     s_st.getups = R.getups;
@@ -1034,7 +1050,9 @@ void policy_step()
     if (R.late_in_step) s_st.late_steps++;
     portEXIT_CRITICAL(&s_mux);
     R.late_in_step = false;
-    if (R.late_run >= 2) graceful_stop("two late steps in a row");
+    // keep up: a late step only holds the last targets 20 ms longer; give up on the timing only after half a second
+    if (R.late_run >= (R.keep_up ? KEEP_UP_LATE_RUN : 2))
+        graceful_stop(R.keep_up ? "late policy steps for 0.5 s" : "two late steps in a row");
 }
 
 /* The network's answer, at the start of the first tick after it is done (so
@@ -1150,6 +1168,14 @@ void getup_step_rec()
             R.tilt_cf > static_cast<double>(g->phase_restart_tilt_deg)) {
             ESP_LOGW(TAG, "GETUP %u: phase restarted after %.2f s (tilt %.0f deg)", static_cast<unsigned>(R.getups),
                      t_in, R.tilt_cf);
+            // keep up: this try failed; after MPX_POLICY_KEEP_UP_TRIES of them, give up (limp)
+            if (R.keep_up && ++R.gu_tries >= MPX_POLICY_KEEP_UP_TRIES) {
+                char why[64];
+                std::snprintf(why, sizeof(why), "get-up: %d tries, not up (limp)", R.gu_tries);
+                if (R.dry) graceful_stop(why);
+                else immediate_stop(why);
+                return;
+            }
             R.gu_pstep = 0;
         }
     }
@@ -1329,7 +1355,7 @@ void rec_imu_tick(uint32_t missed, mpx_policy_state_t st)
 bool rec_fall_step()
 {
     if (!R.fall_pending) return false;
-    if (R.auto_up && R.getups < max_getups()) {
+    if (R.auto_up && (R.keep_up || R.getups < max_getups())) {   // keep up: no limit on falls
         enter_getup();
         getup_step(R.tilt_cf);
         return true;
@@ -1523,7 +1549,9 @@ void tick_armed(int64_t now)
     }
     const mpx_policy_state_t st = s_state;
     const bool stopping = st == MPX_POLICY_RAMP_OUT || st == MPX_POLICY_HOLD_OUT;
-    if (!R.imu_ok && !stopping) {
+    // keep up: ride out a short IMU dropout on the last good sample
+    R.imu_bad = R.imu_ok ? 0 : R.imu_bad + 1;
+    if (!R.imu_ok && !stopping && !(R.keep_up && R.imu_bad <= KEEP_UP_IMU_BAD_TICKS)) {
         graceful_stop("IMU sample invalid");
         return;
     }
@@ -1747,8 +1775,19 @@ void tick_task(void *)
         }
         // (a get-up "always gets back up" started has no app behind it to answer)
         if (deadman && !s_ar_run && s_state != MPX_POLICY_RAMP_OUT && s_state != MPX_POLICY_HOLD_OUT) {
-            graceful_stop("the app stopped answering");
-            if (s_state == MPX_POLICY_IDLE) continue;
+            if (R.keep_up && s_state != MPX_POLICY_IDLE) {
+                // keep up: without the app it stands still and keeps balancing (and getting up) until Stop
+                portENTER_CRITICAL(&s_mux);
+                for (int i = 0; i < 3; ++i) s_cmd[i] = s_st.cmd[i] = 0.0f;
+                portEXIT_CRITICAL(&s_mux);
+                if (!R.deadman_noted) ESP_LOGW(TAG, "keep up: the app stopped answering: standing, until Stop");
+                R.deadman_noted = true;
+            } else {
+                graceful_stop("the app stopped answering");
+                if (s_state == MPX_POLICY_IDLE) continue;
+            }
+        } else if (!deadman) {
+            R.deadman_noted = false;
         }
         if (s_state == MPX_POLICY_PREP) {
             tick_prep();
@@ -3019,6 +3058,11 @@ extern "C" esp_err_t mpx_policy_start(float seconds, float hold_s, bool force, b
     const esp_err_t e = policy_start_locked(seconds, hold_s, force, dry, why, why_len);
     policy_unlock();
     return e;
+}
+
+extern "C" void mpx_policy_set_keep_up(bool on)
+{
+    s_keep_up = on;
 }
 
 extern "C" bool mpx_policy_set_auto_getup(bool on)

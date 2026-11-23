@@ -12,10 +12,12 @@
  * it. Losing either signal for CONFIG_APP_PI_LINK_TIMEOUT_MS hands the robot
  * back (robot::master::end(): stop, stand, standalone).
  *
- *   J-PI pin 2  IO18  ESP TX  -> Pi GPIO15 RXD (header pin 10)
- *   J-PI pin 3  IO8   ESP RX  <- Pi GPIO14 TXD (header pin 8)
- *   J-PI pin 4  IO3   HOST_PRESENT, Pi -> ESP (Pi GPIO17, pin 11)
- *   J-PI pin 5  IO11  ESP_SLAVE,    ESP -> Pi (Pi GPIO27, pin 13)
+ *   ESP32_CORE_V1.1 (2026.09.28; the header is flipped against the first board):
+ *   J-PI pin 2  IO11  ESP_SLAVE,    ESP -> Pi (Pi GPIO27, pin 13)
+ *   J-PI pin 3  IO3   HOST_PRESENT, Pi -> ESP (Pi GPIO17, pin 11)
+ *   J-PI pin 4  IO8   ESP RX  <- Pi GPIO14 TXD (header pin 8)
+ *   J-PI pin 5  IO18  ESP TX  -> Pi GPIO15 RXD (header pin 10)
+ *   (first board, 2026.08.27: pin 2 IO18, 3 IO8, 4 IO3, 5 IO11)
  *   8N1, CONFIG_APP_PI_LINK_UART_BAUD (default 921600).
  *
  * What the Pi gets: STATE (servo angles, IMU, velocity; 50 Hz default),
