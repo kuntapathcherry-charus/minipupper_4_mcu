@@ -618,7 +618,7 @@ const Tool kTools[] = {
       nullptr,
       "{\"type\":\"object\",\"properties\":{"
       "\"movement\":{\"type\":\"string\",\"description\":"
-      "\"A movement name, e.g. advance, stanford, lookup, twerk, backflip.\"},"
+      "\"A movement name, e.g. advance, stanford, lookup, twerk, backflip (the safe one with the screen).\"},"
       "\"forward\":{\"type\":\"number\",\"minimum\":-1,\"maximum\":1},"
       "\"strafe\":{\"type\":\"number\",\"minimum\":-1,\"maximum\":1,"
       "\"description\":\"Positive is left.\"},"

@@ -1778,6 +1778,24 @@ bool selftest_ok(int bits, float raw, float worst_deg)
     return worst_deg < 5.0f;
 }
 
+/* EMBED_FILES lays the built-in files one after another without padding, so one can start off a 4-byte boundary
+ * (pol_parse: "not 4-byte aligned"; it reads the file's floats in place). Such a file is copied into its own
+ * aligned block, in PSRAM if it fits there; *owned says whether the caller now owns (and frees) it. NULL: out of
+ * memory. An aligned file is used where it is, as before. */
+const uint8_t *aligned_builtin(const uint8_t *start, size_t len, bool *owned)
+{
+    *owned = false;
+    if ((reinterpret_cast<uintptr_t>(start) & 3u) == 0) return start;
+    void *p = heap_caps_aligned_alloc(4, len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!p) p = heap_caps_aligned_alloc(4, len, MALLOC_CAP_8BIT);
+    if (!p) return nullptr;
+    std::memcpy(p, start, len);
+    *owned = true;
+    ESP_LOGI(TAG, "built-in policy file at %p is not 4-byte aligned: using a copy (%u bytes)",
+             static_cast<const void *>(start), static_cast<unsigned>(len));
+    return static_cast<const uint8_t *>(p);
+}
+
 esp_err_t install(const uint8_t *file, size_t len, bool builtin, bool file_owned,
                   int bits, char *why, int why_len)
 {
@@ -1913,9 +1931,10 @@ void install_getup()
         }
     }
     const size_t len = static_cast<size_t>(cand[pick].end - cand[pick].start);
-    const uint8_t *f = cand[pick].start;
+    bool owned = false;
+    const uint8_t *f = aligned_builtin(cand[pick].start, len, &owned);
     pol_net_t net;
-    const char *err = pol_parse(f, len, &net);
+    const char *err = f ? pol_parse(f, len, &net) : "out of memory for an aligned copy";
     const mpxp_header_t *h = err ? nullptr : net.h;
     if (!err && !(h->flags & MPXP_FLAG_GETUP)) err = "not a get-up policy";
     if (!err && (std::fabs(h->ctrl_dt - 0.020f) > 1e-6f || std::fabs(h->state_dt - 0.005f) > 1e-7f))
@@ -1966,7 +1985,11 @@ void install_getup()
     }
     if (err) {
         ESP_LOGE(TAG, "built-in get-up policy refused: %s", err);
+        portENTER_CRITICAL(&s_mux);
+        std::snprintf(s_st.getup_error, sizeof(s_st.getup_error), "%s", err);
+        portEXIT_CRITICAL(&s_mux);
         if (work) heap_caps_free(work);
+        if (owned && f) heap_caps_free(const_cast<uint8_t *>(f));
         return;
     }
     if (gbits != 32)
@@ -1974,12 +1997,14 @@ void install_getup()
                  static_cast<double>(gworst));
     s_gu_net = net;
     s_gu_work = work;
+    s_gu_file_owned = owned;   // s_gu_net.h is the file: freed at deinit when it is our aligned copy
     s_gu_ok = true;
     // The recovery get-up is what its walker is for: "never stays down" starts on (the page can turn it off). It
     // only acts on a walk for the same robot and servo directions (start_run).
     if (net.dec) s_auto_getup = true;
     portENTER_CRITICAL(&s_mux);
     s_st.getup_ready = true;
+    s_st.getup_error[0] = '\0';
     s_st.auto_getup = s_auto_getup;
     std::snprintf(s_st.getup_name, sizeof(s_st.getup_name), "%s", h->name);
     portEXIT_CRITICAL(&s_mux);
@@ -1995,9 +2020,10 @@ void install_climb()
 {
 #ifdef MPX_POLICY_HAVE_CLIMB
     const size_t len = static_cast<size_t>(climb_mpxp_end - climb_mpxp_start);
-    const uint8_t *f = climb_mpxp_start;
+    bool owned = false;
+    const uint8_t *f = aligned_builtin(climb_mpxp_start, len, &owned);
     pol_net_t net;
-    const char *err = pol_parse(f, len, &net);
+    const char *err = f ? pol_parse(f, len, &net) : "out of memory for an aligned copy";
     const mpxp_header_t *h = err ? nullptr : net.h;
     if (!err && !(h->flags & MPXP_FLAG_CLIMB)) err = "not a climb policy";
     if (!err && (std::fabs(h->ctrl_dt - 0.020f) > 1e-6f || std::fabs(h->state_dt - 0.005f) > 1e-7f))
@@ -2021,10 +2047,12 @@ void install_climb()
     if (err) {
         ESP_LOGE(TAG, "built-in climb policy refused: %s", err);
         if (work) heap_caps_free(work);
+        if (owned && f) heap_caps_free(const_cast<uint8_t *>(f));
         return;
     }
     s_cl_net = net;
     s_cl_work = work;
+    s_cl_file_owned = owned;
     s_cl_ok = true;
     portENTER_CRITICAL(&s_mux);
     s_st.climb_ready = true;
@@ -2178,11 +2206,20 @@ esp_err_t policy_load_builtin(int bits, char *why, int why_len)
     }
     const Builtin &bi = BUILTINS[s_builtin_sel];
     const size_t len = static_cast<size_t>(bi.end - bi.start);
+    bool owned = false;
+    const uint8_t *f = aligned_builtin(bi.start, len, &owned);
+    if (!f) {
+        std::snprintf(why, why_len, "out of memory for an aligned copy of the policy (%u bytes)",
+                      static_cast<unsigned>(len));
+        return ESP_ERR_NO_MEM;
+    }
     /* Embedded MPXP is already readable const data. Copying 393 KiB into one
      * PSRAM block made loading depend on heap fragmentation even when total
      * free memory was ample; quantized runtime weights still get their own
      * smaller blocks in place_layers(). */
-    return install(bi.start, len, true, false, bits, why, why_len);
+    const esp_err_t e = install(f, len, true, owned, bits, why, why_len);
+    if (e != ESP_OK && owned) heap_caps_free(const_cast<uint8_t *>(f));   // install() keeps it only on success
+    return e;
 }
 
 /* The built-in policy in `bits`, or in floats when that fails (memory, or an
@@ -2784,7 +2821,23 @@ extern "C" bool mpx_policy_log_saving(void)
 
 extern "C" esp_err_t mpx_policy_init(void)
 {
-    if (s_ready.load(std::memory_order_acquire)) return ESP_OK;
+    if (s_ready.load(std::memory_order_acquire)) {
+        // Already up, but an optional model may have failed to load before (memory, say): try it again now, while
+        // nothing runs, instead of only at the next full initialization ("Balance needs the get-up policy").
+        // At most once a minute: a load that failed for lack of memory should not cost every start a retry.
+        static int64_t s_retry_us = 0;
+        const int64_t now_us = esp_timer_get_time();
+        if ((!s_gu_ok || !s_cl_ok) && (s_retry_us == 0 || now_us - s_retry_us > 60LL * 1000000)) {
+            s_retry_us = now_us;
+            policy_lock();
+            if (s_ready.load(std::memory_order_acquire) && s_state == MPX_POLICY_IDLE) {
+                if (!s_gu_ok) install_getup();
+                if (!s_cl_ok) install_climb();
+            }
+            policy_unlock();
+        }
+        return ESP_OK;
+    }
     policy_lock();
     if (s_ready.load(std::memory_order_acquire)) {
         policy_unlock();

@@ -94,7 +94,11 @@ constexpr float SG_SPEED_MAX_MM_S = 200.0f;   // full joystick stick
 // the pads are released (zeros / timeout) the robot steps in place.
 constexpr float JOY_VY_MAX     = 200.0f;   // mm/s strafe at full stick
 constexpr float JOY_WZ_MAX     = 2.0f;     // rad/s yaw at full stick
-constexpr uint32_t JOY_TIMEOUT_MS = 600;
+// No joystick packet for this long = the app is gone: step in place. 600 ms
+// was shorter than a Wi-Fi hiccup on a phone, and a held stick then stepped in
+// place ("trot") for a moment and walked on. Releasing the stick still stops at
+// once (the app sends zeros and "none"); this only matters on a real loss.
+constexpr uint32_t JOY_TIMEOUT_MS = 1500;
 
 // ── Raspberry Pi (ROS) velocity input ────────────────────────
 // A cmd_vel from the Pi is good for this long. After it the walk steps in

@@ -324,10 +324,11 @@ const GaitName GAIT_NAMES[] = {
     { "charshow",     GaitCmd::CharShow },
     { "alive",        GaitCmd::Alive },
     { "hiptest",      GaitCmd::HipTest },
-    // "backflip" = the "Backflip stable" preset (BF_PRESETS[1] in
-    // moves_mpe.inc): minipupperesp calls it the more repeatable one. The
-    // other presets and every trajopt table are found by their own names -
-    // see gait_from_name().
+    // "backflip" (voice: "do a backflip") is an alias, resolved by name in
+    // gait_from_name() to BACKFLIP_DEFAULT below: the 405 g flip that keeps the
+    // screen off the floor. Listed here so robot_get_state offers the plain
+    // name; gait_to_name() never answers it. The other presets and every
+    // trajopt table are found by their own names.
     { "backflip",     static_cast<GaitCmd>(GAIT_BF_BASE + 1) },
 };
 constexpr int GAIT_NAME_COUNT = sizeof(GAIT_NAMES) / sizeof(GAIT_NAMES[0]);
@@ -1052,9 +1053,13 @@ GaitCmd current_gait_cmd()
 
 // ── The gait name table ──────────────────────────────────────
 
+// What plain "backflip" runs (the app's "Backflip safe with screen", moves_mpe.inc BF_PRESETS).
+constexpr const char *BACKFLIP_DEFAULT = "backflip_k7_405_l2d3";
+
 bool gait_from_name(const char *name, GaitCmd &out)
 {
     if (!name) return false;
+    if (std::strcmp(name, "backflip") == 0) name = BACKFLIP_DEFAULT;   // the alias in GAIT_NAMES
     for (int i = 0; i < GAIT_NAME_COUNT; ++i) {
         if (std::strcmp(name, GAIT_NAMES[i].name) == 0) {
             out = GAIT_NAMES[i].cmd;
@@ -1079,7 +1084,8 @@ bool gait_from_name(const char *name, GaitCmd &out)
 const char *gait_to_name(GaitCmd cmd)
 {
     for (int i = 0; i < GAIT_NAME_COUNT; ++i) {
-        if (GAIT_NAMES[i].cmd == cmd) return GAIT_NAMES[i].name;
+        // "backflip" is only an alias (gait_from_name): a preset answers with its own name
+        if (GAIT_NAMES[i].cmd == cmd && std::strcmp(GAIT_NAMES[i].name, "backflip") != 0) return GAIT_NAMES[i].name;
     }
     const int v = static_cast<int>(cmd);
     if (v >= GAIT_BF_BASE && v < GAIT_BF_BASE + BF_NPRESETS) return BF_PRESETS[v - GAIT_BF_BASE].name;

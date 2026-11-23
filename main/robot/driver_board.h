@@ -347,6 +347,9 @@ enum {
 #define DB_LIVE_SUPPLY_VOLTAGE_V   14
 
 bool driver_board_get_live(int servo /*1..12*/, int live_id, float *out);
+/* The same, for a value the board may not have (older AT32 firmware): a failure is not logged and does not count
+ * toward muting the board (driver_board.c, "A board that is not there ..."). */
+bool driver_board_get_live_quiet(int servo /*1..12*/, int live_id, float *out);
 
 /* ---- raw host link: the Pi's RL policy (mp4-link's mp3-link protocol) ----
  * The policy commands every joint itself at 200 Hz in RAW AT32 deci-degrees

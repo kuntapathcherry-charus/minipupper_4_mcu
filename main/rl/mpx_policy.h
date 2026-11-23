@@ -60,6 +60,7 @@ typedef struct {
     /* The get-up policy (policies/getup.mpxp, built in when present). */
     bool     getup_ready;       /* loaded and self-tested */
     char     getup_name[48];
+    char     getup_error[64];   /* why the built-in get-up could not be loaded ("" = loaded, or not tried yet) */
     bool     auto_getup;        /* runs started now get up after a fall instead of going limp */
     bool     auto_right;        /* "always gets back up": lying still with nothing running starts the get-up */
     uint32_t getups;            /* get-ups in this (or the last) run */

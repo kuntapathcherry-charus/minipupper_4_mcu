@@ -235,7 +235,7 @@
     if (st?.builtin !== recoveryWalk) await selectPolicy(recoveryWalk);
     if (st?.builtin !== recoveryWalk) return;   // could not load it (selectPolicy said why)
     if (!st?.getup_ready) {
-      say("Balance needs the get-up policy, but it could not be loaded.", true);
+      say(`Balance needs the get-up policy, but it could not be loaded${st?.getup_error ? ": " + st.getup_error : ""}.`, true);
       return;
     }
     mode = "forward";
@@ -243,6 +243,21 @@
     seconds = 0;
     getupAuto = true;
     noWifi = false;
+    await start();
+  }
+
+  // The page's three runs: Omni walk and Stairs walk forward at PRESET_SPEED with that policy (the options below
+  // apply: run time, calibration, log ...); Balance and get up is balance() above, standing.
+  const PRESET_SPEED = 0.10;
+  const OMNI_WALK = "walk";            // default.mpxp: sku1v2_405_walk_s2
+  const STAIRS = "sku2_stairs";
+  async function runPreset(name) {
+    if (busy) return;
+    if (st?.builtin !== name || !st?.loaded) await selectPolicy(name);
+    if (st?.builtin !== name) return;   // could not load it (selectPolicy said why)
+    if (otherRobot) force = true;       // a policy for the other model runs without asking (SKU1 walk on an SKU2 build)
+    mode = "forward";
+    fwdSpeed = PRESET_SPEED;
     await start();
   }
 
@@ -749,27 +764,27 @@
         </section>
         <button type="button" class="stop" onclick={stop}>Stop</button>
       {:else}
-        {#if st.builtins?.length > 1}
+        {#if st.builtins?.includes(OMNI_WALK)}
           <section>
-            <h2>Policy</h2>
-            <div class="seg" style="grid-template-columns: repeat({st.builtins.length}, minmax(0, 1fr))" role="radiogroup" aria-label="Policy">
-              {#each st.builtins as b}
-                <button type="button" role="radio" aria-checked={st.builtin === b} class:on={st.builtin === b} disabled={busy} onclick={() => selectPolicy(b)}>{POLICY_LABEL[b] || b}</button>
-              {/each}
-            </div>
+            <h2>Omni walk</h2>
+            <button type="button" class="go" disabled={busy} onclick={() => runPreset(OMNI_WALK)}>Start · walk forward {PRESET_SPEED.toFixed(2)} m/s</button>
+            <p class="note">{POLICY_LABEL[OMNI_WALK]}, {seconds ? `for ${seconds} s` : "until you press Stop"} (Options below).</p>
+          </section>
+        {/if}
+
+        {#if st.builtins?.includes(STAIRS)}
+          <section>
+            <h2>Stairs</h2>
+            <button type="button" class="go" disabled={busy} onclick={() => runPreset(STAIRS)}>Start · walk forward {PRESET_SPEED.toFixed(2)} m/s</button>
+            <p class="note">{POLICY_LABEL[STAIRS]}: walks up steps in front of it, {seconds ? `for ${seconds} s` : "until you press Stop"}. Face it square to the stairs.</p>
           </section>
         {/if}
 
         {#if canBalance}
           <section>
             <h2>Balance and get up</h2>
-            <div class="seg two" role="radiogroup" aria-label="Balance speed">
-              {#each BAL_SPEEDS as b}
-                <button type="button" role="radio" aria-checked={balSpeed === b.v} class:on={balSpeed === b.v} onclick={() => (balSpeed = b.v)}>{b.label}</button>
-              {/each}
-            </div>
-            <button type="button" class="go" disabled={busy} onclick={balance}>Start · {balSpeed === 0 ? "stand" : "walk 0.10 m/s"}, get up when it falls</button>
-            <p class="note">{POLICY_LABEL[recoveryWalk] || recoveryWalk}, until you press Stop. Push it from the front or the side: it rides out what it can, and when it falls it gets up by itself (up to 10 times) and goes back to {balSpeed === 0 ? "standing" : "walking"}. Clear space around it, and a soft floor for the first tries.</p>
+            <button type="button" class="go" disabled={busy} onclick={balance}>Start · stand, get up when it falls</button>
+            <p class="note">Until you press Stop. Push it from the front or the side: it rides out what it can, and when it falls it gets up by itself (up to 10 times) and stands again. Clear space around it, and a soft floor for the first tries.</p>
           </section>
         {/if}
 
@@ -788,22 +803,8 @@
         {/if}
 
         <section>
-          <h2>Mode</h2>
-          <div class="seg two" role="radiogroup" aria-label="Mode">
-            <button type="button" role="radio" aria-checked={mode === "forward"} class:on={mode === "forward"} onclick={() => (mode = "forward")}>Walk forward</button>
-            <button type="button" role="radio" aria-checked={mode === "omni"} class:on={mode === "omni"} onclick={() => (mode = "omni")}>Omni (stick)</button>
-          </div>
-          {#if mode === "forward"}
-            <div class="seg" role="radiogroup" aria-label="Forward speed" style="grid-template-columns: repeat(5, minmax(0, 1fr))">
-              {#each FWD_SPEEDS as f}
-                <button type="button" role="radio" aria-checked={fwdSpeed === f.v} class:on={fwdSpeed === f.v} onclick={() => (fwdSpeed = f.v)}>{f.label} · {f.v}</button>
-              {/each}
-            </div>
-          {/if}
-        </section>
-
-        <section>
-          <h2>Run for</h2>
+          <h2>Options</h2>
+          <p class="note">Run for (Omni walk and Stairs)</p>
           <div class="seg" role="radiogroup" aria-label="Run for">
             {#each DURATIONS as d}
               <button type="button" role="radio" aria-checked={seconds === d.s} class:on={seconds === d.s} onclick={() => (seconds = d.s)}>{d.label}</button>
@@ -862,8 +863,7 @@
           </div>
         </section>
 
-        <button type="button" class="go" disabled={busy} onclick={start}>{mode === "forward" ? `Start · ${fwdSpeed === 0 ? "stand and take pushes" : "walk forward " + fwdSpeed + " m/s"}${noWifi && offlineOk ? " · no Wi-Fi" : ""}` : "Start"}</button>
-        <p class="note">First runs: robot on a stand, feet off the ground. It stands up first (about 3 s), then walks where you drag. It stops by itself on a big tilt, a hot servo, or if this page stops talking to it for 2 s.</p>
+        <p class="note">First runs: robot on a stand, feet off the ground. It stands up first (about 3 s), then walks. It stops by itself on a big tilt, a hot servo, or if this page stops talking to it for 2 s.</p>
 
         {#if canClimb}
           <section>

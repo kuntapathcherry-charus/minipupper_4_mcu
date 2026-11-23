@@ -13,6 +13,9 @@
 
 #include "robot/driver_board.h"
 #include "robot/robot.h"
+#if CONFIG_APP_POLICY_ENABLE
+#include "rl/mpx_policy.h"
+#endif
 
 #ifndef CONFIG_APP_BACKFLIP_MAX_MV
 #define CONFIG_APP_BACKFLIP_MAX_MV 12000
@@ -29,6 +32,14 @@ constexpr float VIN_MIN = 5.0f;     // below: not a voltage (old AT32 firmware a
 constexpr float VIN_MAX = 17.0f;    // the divider's full scale is 16.2 V
 constexpr int   SAMPLE_MS = 10000;
 constexpr int   STALE_MS = 15000;   // a backflip check reads again past this
+constexpr int64_t REPROBE_US = 300LL * 1000000;   // a board without the voltage is asked again every 5 min
+
+// Per board: does its AT32 firmware report the voltage? Older firmware does not (it answers the pot reading for
+// an unknown id, or no echo). Such a board is asked once, quietly (driver_board_get_live_quiet: a failure does not
+// mute the board for the real configuration requests), and then only every REPROBE_US.
+enum class Vin : uint8_t { UNKNOWN, YES, NO };
+Vin     s_vin[4] = { Vin::UNKNOWN, Vin::UNKNOWN, Vin::UNKNOWN, Vin::UNKNOWN };
+int64_t s_vin_probe_us[4] = {};
 
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 mpx_battery_t s_bat = { false, 0.0f, -1, 0, { NAN, NAN, NAN, NAN }, 0 };
@@ -64,6 +75,9 @@ int percent_of(float pack_v)
 bool bus_busy()
 {
     if (robot::host::active() || robot::master_active()) return true;   // an RL run / a host, the Pi
+#if CONFIG_APP_POLICY_ENABLE
+    if (mpx_policy_active()) return true;                                // an RL run, also while it gets ready
+#endif
     const robot::GaitCmd cmd = robot::current_gait_cmd();
     if (cmd == robot::GaitCmd::Jump) return true;
     return static_cast<int>(cmd) >= robot::GAIT_BF_BASE;               // backflips and table moves
@@ -85,15 +99,25 @@ extern "C" bool mpx_battery_refresh(void)
     mpx_battery_t b = { false, 0.0f, -1, 0, { NAN, NAN, NAN, NAN }, 0 };
     float sum = 0.0f;
     int n = 0;
+    const int64_t now = esp_timer_get_time();
     for (int board = 0; board < 4; ++board) {
+        if (s_vin[board] == Vin::NO && now - s_vin_probe_us[board] < REPROBE_US) continue;
         float v = NAN;
         // One servo per board (logical 1, 4, 7, 10): VIN is the same for its three.
-        if (driver_board_get_live(board * 3 + 1, DB_LIVE_SUPPLY_VOLTAGE_V, &v) &&
-            std::isfinite(v) && v >= VIN_MIN && v <= VIN_MAX) {
+        const bool ok = driver_board_get_live_quiet(board * 3 + 1, DB_LIVE_SUPPLY_VOLTAGE_V, &v) &&
+                        std::isfinite(v) && v >= VIN_MIN && v <= VIN_MAX;
+        if (ok) {
+            s_vin[board] = Vin::YES;
             b.board_v[board] = v;
             b.boards |= static_cast<uint8_t>(1u << board);
             sum += v;
             ++n;
+        } else if (s_vin[board] != Vin::YES) {
+            // Never answered with a voltage: older AT32 firmware. Ask again only in 5 min.
+            if (s_vin[board] == Vin::UNKNOWN)
+                ESP_LOGI(TAG, "servo board %d does not report its supply voltage (older AT32 firmware)", board);
+            s_vin[board] = Vin::NO;
+            s_vin_probe_us[board] = now;
         }
     }
     if (n > 0) {

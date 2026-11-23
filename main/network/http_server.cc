@@ -2097,7 +2097,7 @@ static esp_err_t studio_live_handler(httpd_req_t *req)
         // The board's supply voltage (AT32 live value 14, newer AT32 firmware only). Older firmware answers the
         // pot reading for an unknown id, so only a plausible voltage is sent; otherwise the row shows "-".
         float vin;
-        if (driver_board_get_live(id, DB_LIVE_SUPPLY_VOLTAGE_V, &vin) && vin >= 5.0f && vin <= 17.0f)
+        if (driver_board_get_live_quiet(id, DB_LIVE_SUPPLY_VOLTAGE_V, &vin) && vin >= 5.0f && vin <= 17.0f)
             n += std::snprintf(b + n, sizeof b - n, R"(,"vin_v":%.2f)", vin);
         std::snprintf(b + n, sizeof b - n, "}");
     } else if (driver_board_poll(id)) {

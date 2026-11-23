@@ -229,6 +229,7 @@ esp_err_t status_reply(httpd_req_t *req, const char *status, const char *error)
     cJSON_AddStringToObject(o, "last_stop", st.last_stop);
     cJSON_AddBoolToObject(o, "getup_ready", st.getup_ready);
     cJSON_AddStringToObject(o, "getup_name", st.getup_name);
+    cJSON_AddStringToObject(o, "getup_error", st.getup_error);
     cJSON_AddBoolToObject(o, "getup_auto", st.auto_getup);
     cJSON_AddBoolToObject(o, "auto_right", st.auto_right);
     cJSON_AddNumberToObject(o, "getups", st.getups);

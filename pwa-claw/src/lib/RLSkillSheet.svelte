@@ -42,7 +42,6 @@
     { b: 8, label: "8-bit", note: "Smallest" },
   ];
   let ownCal = $state(true);
-  let allowOther = $state(false);
 
   // The stick (omni): x, y, turn in -1..1; y up = forward, x / turn right = +
   let sx = $state(0), sy = $state(0), turn = $state(0);
@@ -171,16 +170,13 @@
   async function start() {
     if (busy || active) return;
     if (!mine) { await selectPolicy(); if (!mine) return; }
-    if (otherRobot && !allowOther) {
-      say(`This policy was trained for ${ROBOT_NAME[st.robot] || st.robot}. Turn on “Run it on this robot” first.`, true);
-      return;
-    }
     busy = true;
     sx = sy = turn = 0;
     try {
       const { r, j } = await call({
         action: "run", seconds, vx: 0, vy: 0, wz: 0, hold: 2, dry: false,
-        force: otherRobot && allowOther, log: false, own_calibration: ownCal,
+        // A skill runs on any robot: one trained for another model (SKU1 on an SKU2 build) is let through.
+        force: otherRobot, log: false, own_calibration: ownCal,
       });
       if (r.ok) say("Starting. Keep the robot still for 1 s.");
       else say(j?.error ? `The robot said no: ${j.error}` : `The robot said no (HTTP ${r.status}).`, true);
@@ -330,15 +326,6 @@
             </span>
             <button type="button" class="switch" class:on={ownCal} role="switch" aria-checked={ownCal} aria-label="Use my calibration" onclick={() => (ownCal = !ownCal)}><span class="knob"></span></button>
           </div>
-          {#if otherRobot}
-            <div class="row">
-              <span class="row-txt">
-                <b>Run it on this robot</b>
-                <span>Trained for {ROBOT_NAME[st.robot] || st.robot}, this robot is {ROBOT_NAME[st.this_robot] || st.this_robot}. It may walk worse.</span>
-              </span>
-              <button type="button" class="switch" class:on={allowOther} role="switch" aria-checked={allowOther} aria-label="Run it on this robot" onclick={() => (allowOther = !allowOther)}><span class="knob"></span></button>
-            </div>
-          {/if}
         </section>
 
         <p class="safety">First runs: robot on a stand, feet off the ground. It stands up, holds, then walks.</p>
@@ -381,7 +368,7 @@
       {#if ours}
         <button type="button" class="go stop" onclick={stop}>Stop</button>
       {:else}
-        <button type="button" class="go" disabled={busy || active || (otherRobot && !allowOther)} onclick={start}>
+        <button type="button" class="go" disabled={busy || active} onclick={start}>
           {busy ? "…" : mode === "forward" ? `Start · walk forward ${Math.min(fwdSpeed, max[0]).toFixed(2)} m/s` : "Start · steer it"}
         </button>
       {/if}
@@ -454,7 +441,6 @@
 
   .group { background: var(--ground); border-radius: 16px; padding: 4px 14px; gap: 0; }
   .row { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
-  .row + .row { border-top: 1px solid #E4E1D9; }
   .row-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: #6F6A60; }
   .row-txt b { font-size: 14px; color: var(--ink); }
   .switch { width: 50px; height: 30px; flex-shrink: 0; border-radius: 15px; border: none; background: #CFCABD; position: relative; cursor: pointer; transition: background var(--dur-fast); }

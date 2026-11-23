@@ -61,10 +61,14 @@
         do {
           joyAgain = false;
           try {
+            // Give up on a packet stuck longer than 400 ms and send the latest axes instead: one slow
+            // request used to hold every packet behind it, the robot heard nothing for its timeout
+            // and stepped in place for a moment while the stick was held.
             await fetch("/v1/robot/joy", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ f: joyF, s: joyS, t: joyT }),
+              signal: typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(400) : undefined,
             });
           } catch { /* transient — keep trying while the stick is held */ }
           // One trailing packet carries the latest axes, including final zero.

@@ -576,6 +576,10 @@ static int64_t s_cfg_last_us[CFG_BOARDS];
 #define CFG_REPROBE_US   5000000   /* 5 s */
 
 static uint8_t s_cfg_fails[CFG_BOARDS];
+/* A quiet request (driver_board_get_live_quiet): a failure neither counts toward muting the board nor logs. For
+ * optional reads a board may simply not support (the supply voltage on older AT32 firmware), so asking cannot
+ * mute a healthy board and make the real configuration (an RL run's) fail. */
+static bool    s_cfg_quiet;
 static bool    s_cfg_muted[CFG_BOARDS];
 static int64_t s_cfg_probe_us[CFG_BOARDS];
 
@@ -593,6 +597,7 @@ static void cfg_note_result(uint8_t board, bool ok)
         return;
     }
 
+    if (s_cfg_quiet) return;                  /* an optional read: not a sign the board is gone */
     if (s_cfg_fails[board] < 255) s_cfg_fails[board]++;
     if (!s_cfg_muted[board] && s_cfg_fails[board] >= CFG_FAILS_TO_MUTE) {
         s_cfg_muted[board]   = true;
@@ -659,7 +664,7 @@ static bool cfg_request(uint8_t board, uint16_t op, uint16_t servo_index,
      * Only while the board is still believed to be there: once muted, the
      * summary above has said it, and repeating it per parameter per joint
      * buries everything else in the log. */
-    const bool first_time = (board >= CFG_BOARDS) || !s_cfg_muted[board];
+    const bool first_time = !s_cfg_quiet && ((board >= CFG_BOARDS) || !s_cfg_muted[board]);
     cfg_note_result(board, false);
     if (first_time) {
         ESP_LOGW(TAG, "cfg op %u param %u board %u: %s after %d tries",
@@ -712,6 +717,21 @@ bool driver_board_get_live(int servo, int live_id, float *out)
     bool ok = cfg_request((uint8_t)(p / 3), CFG_OP_GET_LIVE,
                           (uint16_t)(p % 3), (uint16_t)live_id,
                           0, out);
+    DB_UNLOCK();
+    return ok;
+}
+
+bool driver_board_get_live_quiet(int servo, int live_id, float *out)
+{
+    if (servo < 1 || servo > 12 || live_id < 0 || live_id > DB_LIVE_SUPPLY_VOLTAGE_V)
+        return false;
+    int p = db_phys(servo) - 1;                 /* logical -> physical */
+    DB_LOCK();
+    s_cfg_quiet = true;
+    bool ok = cfg_request((uint8_t)(p / 3), CFG_OP_GET_LIVE,
+                          (uint16_t)(p % 3), (uint16_t)live_id,
+                          0, out);
+    s_cfg_quiet = false;
     DB_UNLOCK();
     return ok;
 }
