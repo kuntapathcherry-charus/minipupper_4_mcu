@@ -47,15 +47,10 @@ The numbers match the picture.
 
 | # | Part | What it does |
 |:---:|---|---|
-| 1 | Body (ESP32-S3) | The brain. Runs the legs, the face, sound, Wi-Fi and the phone app. See [How it is put together](#how-it-is-put-together). |
+| 1 | Body (ESP32-S3) | The brain: runs the legs, the face, sound, Wi-Fi and the phone app ([more](#how-it-is-put-together)). Built in:<br>• **Microphone & speaker:** wake word, voice chat, music<br>• **Wi-Fi (2.4 GHz):** serves the phone app; joins your network for the Store and AI<br>• **USB-C port:** charging (red = charging, green = full)<br>• **USB port:** firmware flashing and serial logs<br>• **Raspberry Pi** (MP4+ only): ROS 2 / full reinforcement-learning link |
 | 2 | 320 × 240 screen | The face. Shows animated eyes, emotions, GIFs and drawings. |
 | 3 | 12 servos | Three per leg: abduction (sideways), hip (forward/back) and knee. |
 | 4 | Four legs | Walk, trot, pose and jump. |
-| | Microphone and speaker | Wake word, voice chat, music. |
-| | Wi-Fi (2.4 GHz) | Serves the phone app; joins your network for the Store and AI. |
-| | USB-C port | Charging: the light is red while charging and green when full. |
-| | USB port | Firmware flashing and serial logs. |
-| | Raspberry Pi (MP4+ only) | ROS 2 / full reinforcement-learning link. |
 
 ### How it is put together
 
@@ -92,6 +87,10 @@ and is the brain behind voice turns.
 ## 2. Quick start
 
 From the box to walking in four steps. Stuck? Each step links to the details.
+
+| [1. Charge & turn on](#1-charge-and-turn-on) | [2. Join the robot's Wi-Fi](#2-join-the-robots-wi-fi) | [3. Connect to your Wi-Fi](#3-connect-the-robot-to-your-wi-fi) | [4. Open & drive](#4-open-the-controller-and-drive) |
+|:---:|:---:|:---:|:---:|
+| <img src="docs/user-guide/img/quickstart/step1-charge-on.svg" width="64" alt="Lightning bolt"> | <img src="docs/user-guide/img/quickstart/step2-robot-wifi.svg" width="64" alt="Phone with Wi-Fi"> | <img src="docs/user-guide/img/quickstart/step3-home-wifi.svg" width="64" alt="Wi-Fi router"> | <img src="docs/user-guide/img/quickstart/step4-drive.svg" width="64" alt="Gamepad"> |
 
 ### 1. Charge and turn on
 
