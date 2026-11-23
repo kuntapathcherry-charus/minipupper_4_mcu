@@ -115,7 +115,7 @@ static bool s_socket_opened;
 /* Send timeouts. These are not "how long to wait before giving up on this
  * message": esp_websocket_client treats a write that times out as a dead
  * socket and ABORTS THE CONNECTION, whatever the caller then does with the
- * error. The first cut used 2 s for everything, and about one wake word in
+ * error. The first cut used 2 s for everything, and about one voice turn in
  * ten ended like this, right after the socket came up:
  *
  *   E transport_ws: Error transport_poll_write(0)
@@ -269,7 +269,7 @@ static void voice_handle_hello(const cJSON *root)
     s_state = MPX_VOICE_READY;
     ESP_LOGI(TAG, "session ready: id=%s, downlink %" PRIu32 " Hz, barge-in %s",
              s_session_id[0] ? s_session_id : "(none)", s_downlink_rate,
-             s_barge_in_supported ? "full-duplex" : "wake word only");
+             s_barge_in_supported ? "full-duplex" : "IO21/PWA only");
     ESP_LOGI(TAG, "internal RAM after connect: %u free, %u largest",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
@@ -345,6 +345,7 @@ static void voice_handle_text(const char *data, int len)
             }
         } else {
             notify_state_sink("speaking");
+            mpx_voice_stream_on_tts_start(strcmp(type->valuestring, "tts start") == 0);
             mpx_voice_stream_on_server_turn();
             if (s_ui.saying && strcmp(state_str, "sentence_start") == 0 && cJSON_IsString(text)) {
                 s_ui.saying(text->valuestring);
@@ -383,7 +384,7 @@ static void voice_handle_text(const char *data, int len)
          * DISCONNECTED event that follows is what moves the state. Logged
          * loudly because from the outside it looks like the robot stopped
          * listening for no reason. */
-        ESP_LOGW(TAG, "server ended the session (goodbye) -- the next turn needs the wake word");
+        ESP_LOGW(TAG, "server ended the session (goodbye) -- the next turn needs IO21_WAKE/PWA");
         {
             /* "reason":"stop": you told it to be quiet ("stop talking", "be
              * quiet") -- not an idle timeout. Quiet means the music too. */
@@ -420,7 +421,7 @@ static void voice_ws_event(void *arg, esp_event_base_t base,
              * its timeout now and then -- and a timed-out write is a dropped
              * session (see VOICE_WS_SEND_JSON_MS). xiaozhi's own firmware
              * does the same. Restored when the socket closes, so the idle
-             * robot still sleeps between wake words. */
+             * robot still idles between voice turns. */
             (void)esp_wifi_set_ps(WIFI_PS_NONE);
             if (voice_send_hello() != ESP_OK) {
                 ESP_LOGE(TAG, "could not send hello");

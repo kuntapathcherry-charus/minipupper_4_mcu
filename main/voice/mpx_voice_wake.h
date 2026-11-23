@@ -2,9 +2,10 @@
  * SPDX-FileCopyrightText: 2026 MangDang
  * SPDX-License-Identifier: Apache-2.0
  *
- * Phase 4 of docs/voice-plan.md: esp-sr's acoustic front end (AEC + VAD +
- * WakeNet) over the microphone, and the hands-free conversation loop built
- * on it.
+ * Voice input uses esp-sr's acoustic front end (AEC + VAD) for
+ * echo-cancelled barge-in. WakeNet is disabled: IO21_WAKE or the PWA starts
+ * each conversation, and no microphone task runs while idle. A second
+ * physical IO21_WAKE press stops the active conversation and re-arms idle.
  *
  * Speech barge-in is preferred when the gateway acknowledges
  * features.barge_in: AFE-cleaned microphone PCM streams throughout the
@@ -16,13 +17,14 @@
  * returns a capture-scoped listen/rearm event with its original listen_id;
  * delayed results cannot stop a newer capture or trigger transcript UI.
  *
- * Wake-word barge-in remains available with every gateway: hearing it
- * mid-reply sends {"type":"abort","reason":"wake_word_detected"} and
- * stops local playback immediately.
+ * PWA Interrupt remains available with every gateway: it sends
+ * {"type":"abort","reason":"user_requested"} and stops local playback
+ * immediately before starting the next turn. Physical IO21_WAKE instead
+ * toggles the whole conversation off when pressed during talk or reply.
  *
  * Hands-free (mpx_voice_wake_auto_start(), and the boot default under
- * CONFIG_APP_VOICE_AUTO_LISTEN) hears the wake word from idle, streams a
- * turn until server VAD ends it, plays the reply, and offers a follow-up.
+ * CONFIG_APP_VOICE_AUTO_LISTEN) waits for IO21_WAKE/PWA, streams a turn
+ * until server VAD ends it, plays the reply, and offers a follow-up.
  * The socket is opened, or reopened after the server's idle timeout, on
  * demand.
  *
@@ -53,13 +55,12 @@
 extern "C" {
 #endif
 
-/* Loads esp-sr's models from the "model" partition and builds the AFE
- * instance. Expensive (model load off flash) and done once; does NOT open
- * the microphone or start listening -- that is `wake start` (or
- * `mpx_voice_wake_start()`), so the mic stays free for `voice talk` until
- * a caller actually asks for wake-word detection. Idempotent. */
+/* Loads esp-sr's models from the "model" partition and builds the AFE with
+ * WakeNet disabled. Done once at boot; does NOT open the microphone. The
+ * mic stays free for `voice talk` until a reply needs echo-cancelled
+ * barge-in. Idempotent. */
 esp_err_t mpx_voice_wake_init(void);
-/* Release AFE, WakeNet and the barge ring after voice_glue has stopped and
+/* Release AFE and the barge ring after voice_glue has stopped and
  * joined their tasks. A later init recreates them for the next voice session. */
 esp_err_t mpx_voice_wake_deinit(void);
 
@@ -78,8 +79,8 @@ esp_err_t mpx_voice_wake_stop(void);
 bool mpx_voice_wake_active(void);
 
 /* Priority for the two front-end (DSP) tasks -- the ones that run esp-sr's
- * AEC/VAD/WakeNet on the audio path, and the real CPU cost of listening.
- * Applies at once to tasks that are up, and to the next mpx_voice_wake_start()
+ * AEC/VAD on the audio path during replies. Applies at once to tasks that
+ * are up, and to the next mpx_voice_wake_start()
  * otherwise; 1..24, anything else is ignored. The hands-free orchestrator
  * ("wake_auto") keeps its own priority: it only waits, and starving it would
  * make the loop late to hand the microphone over. */
@@ -90,29 +91,30 @@ int mpx_voice_wake_task_priority(void);
 
 /* Hands-free conversation loop, described in the file header. Runs
  * mpx_voice_wake_init() itself if needed. Idempotent. Needs `voice
- * provision` to have been run once on this device; it reports (and keeps
- * listening) rather than failing if it has not. */
+ * provision` to have been run once on this device; it reports and returns
+ * to idle rather than failing if it has not. */
 esp_err_t mpx_voice_wake_auto_start(void);
 
-/* Leave hands-free mode: cuts short any talk in progress, stops listening,
- * releases the microphone. Safe to call when not running. */
+/* Leave hands-free mode: cuts short any talk in progress, stops the auto
+ * task, and releases the microphone. Safe to call when not running. */
 esp_err_t mpx_voice_wake_auto_stop(void);
 
 bool mpx_voice_wake_auto_active(void);
 
-/* Software equivalent of the WAKE button / wake word. The auto loop owns the
- * microphone handoff, so this only posts a trigger; it also works as barge-in
- * while a reply is playing. ESP_ERR_INVALID_STATE when hands-free is off. */
+/* Software trigger for the PWA Start/Interrupt control. The auto loop owns
+ * the microphone handoff, so this only posts a trigger; it barges into a
+ * playing reply rather than ending the session. ESP_ERR_INVALID_STATE when
+ * hands-free is off. */
 esp_err_t mpx_voice_wake_trigger(void);
 
-/* True while the hands-free loop is in a conversation turn: after the wake
- * word, while the microphone streams to the server, and while the reply
- * arrives and plays. False while it just listens for the wake word. */
+/* True while the hands-free loop is in a conversation turn: after an
+ * IO21/PWA trigger, while the microphone streams to the server, and while
+ * the reply arrives and plays. False while idle. */
 bool mpx_voice_wake_conversing(void);
 
 /* Asked when a reply has finished: return true to skip the follow-up turn
- * and go straight back to the wake word (cap_music: a song is waiting for
- * the speaker). NULL = always offer the follow-up. */
+ * and go straight back to idle (cap_music: a song is waiting for the
+ * speaker). NULL = always offer the follow-up. */
 typedef bool (*mpx_voice_wake_gate_fn)(void);
 void mpx_voice_wake_set_followup_gate(mpx_voice_wake_gate_fn skip_followup);
 
@@ -121,7 +123,7 @@ void mpx_voice_wake_set_followup_gate(mpx_voice_wake_gate_fn skip_followup);
  * Zeros until the first fetch. */
 void mpx_voice_wake_last_seen(float *volume_dbfs, int *vad, float *ringbuf_free);
 
-/* The hands-free loop as a word for status replies: "off", "listening",
+/* The hands-free loop as a word for status replies: "off", "ready",
  * "talking", "replying". */
 const char *mpx_voice_wake_state_name(void);
 

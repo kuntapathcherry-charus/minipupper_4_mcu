@@ -4,7 +4,7 @@
  *
  * Phase 1 of docs/voice-plan.md: get sound in and out, and nothing else.
  *
- * No Opus, no WebSocket, no wake word, no AI. The point of this layer is to
+ * No Opus, no WebSocket, no voice orchestration, no AI. The point of this layer is to
  * answer one question on real hardware -- do the microphones and the speaker
  * work, and which channel is which -- because every later phase is miserable
  * to debug if that answer is uncertain.
@@ -125,7 +125,7 @@ void      mpx_audio_output_stop(void);
  * mpx_audio_output_start() and _stop() (a reply, the wake beep) music
  * writes are refused with ESP_ERR_INVALID_STATE, and the player waits.
  * Music is mono at MPX_AUDIO_MUSIC_RATE -- the voice rate, because the
- * microphone shares the I2S clock and the wake word listens at 16 kHz. The
+ * microphone shares the I2S clock and the AFE captures at 16 kHz. The
  * volume setting applies. Blocks while the samples go out (it paces the
  * player). mpx_audio_music_end() leaves silence and lets the channel go. */
 #define MPX_AUDIO_MUSIC_RATE  16000u

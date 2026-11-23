@@ -5,8 +5,10 @@
  * See include/mpx_voice_wake.h for what this is, its gate, and what is
  * deliberately not wired up yet.
  *
- * Shape of it: esp-sr's AFE (Audio Front End) does AEC + VAD + WakeNet in
- * one pipeline over a 2-channel [mic, reference] feed. Two tasks, the
+ * Shape of it: esp-sr's AFE (Audio Front End) does AEC + VAD in one
+ * pipeline over the mic/reference feed. WakeNet is deliberately disabled:
+ * IO21_WAKE or the PWA starts each conversation; another physical button
+ * press stops it. Two tasks, the
  * pattern esp-sr's own examples use and for the reason they use it: feed()
  * enqueues raw audio into the AFE's internal ring buffer and returns
  * quickly, fetch() blocks (its own documented 2000ms timeout) pulling
@@ -35,6 +37,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
+#include "board_config.h"
 #include "mpx_audio.h"
 #include "mpx_voice_link.h"
 #include "voice/voice_phone_audio.h"
@@ -75,7 +78,8 @@ static const char *TAG = "mpx_voice_wake";
  *
  * Two earlier layouts were wrong in instructive ways. 2 channels as "MR"
  * handed AEC the second microphone as the reference, and it subtracted the
- * voice from itself. 4 channels as "MNRN" (the yaml order) handed WakeNet
+ * voice from itself. 4 channels as "MNRN" (the yaml order) handed the old
+ * front end
  * the reference as the microphone: `wake debug` showed a flat -69 dBFS
  * while speaking, i.e. the ~200 RMS of an idle amplifier feed. Hence the
  * insistence on measuring: `wake levels` prints the table above and says
@@ -88,7 +92,7 @@ static const char *TAG = "mpx_voice_wake";
  * RMNN prefix AFE consumes; the unused fourth slot is ignored.
  *
  * If the codec will not open 4 channels, fall back to 2 channels as "MN":
- * the wake word still works, but with no reference there is no echo
+ * button/PWA triggering still works, but with no reference there is no echo
  * cancellation, so barge-in cannot hear you over the robot's own voice. */
 #define WAKE_FORMAT_4CH        "RMNN"
 #define WAKE_FORMAT_2CH        "MN"
@@ -114,7 +118,7 @@ static uint32_t s_barge_dropped;
 /* PSRAM-backed, generously sized on purpose -- see mpx_voice_stream.c's own
  * VOICE_STREAM_TASK_STACK comment for why this project no longer inches
  * stack sizes up after a guess turns out wrong. feed() and fetch() run
- * esp-sr's DSP (AEC, VAD, WakeNet inference) on whichever task calls them,
+ * esp-sr's DSP (AEC and VAD) on whichever task calls them,
  * not on a stack of the library's own choosing.
  *
  * Reserve both stacks statically in PSRAM. MMNR consumes considerably more
@@ -157,15 +161,10 @@ static int          s_task_priority = 5;   /* what the tasks have always run at 
 #define WAKE_AUTO_END_BEEP_START_HZ  660
 #define WAKE_AUTO_END_BEEP_END_HZ    440
 #define WAKE_AUTO_END_BEEP_MS        180
-#define WAKE_AUTO_CONNECT_RETRY_MS 2000
-
-/* The WAKE button (SW3, GPIO 21, momentary to ground -- see board_buttons
- * in boards/mp4_esp32_core/board_devices.yaml) is a second way to say the
- * wake word: a press does exactly what "Hi ESP" does, in every state. Polled
- * from the hands-free task's own waits rather than through an interrupt,
- * because those waits already wake every 250-500 ms and a button does not
- * need better than that. */
-#define WAKE_BUTTON_GPIO       21
+/* IO21_WAKE (SW3, momentary to ground) and the PWA are the only explicit
+ * conversation triggers. The button is polled from the hands-free task's
+ * waits rather than through an interrupt because those waits already run
+ * every 50-500 ms and a button does not need better than that. */
 #define WAKE_BUTTON_POLL_MS    50
 
 static volatile bool s_auto_run;
@@ -174,13 +173,13 @@ static volatile bool s_feed_failed;    /* capture read died under feed_task */
 
 /* `wake debug on`: one line a second from the fetch loop with what the AFE
  * is actually seeing -- input level in dBFS, VAD state, ring buffer load.
- * The first question when the wake word is not heard is whether the audio
- * reaches the model at all, and this answers it without a recording. */
+ * The first question when barge-in is not heard is whether audio reaches
+ * the AFE at all, and this answers it without a recording. */
 static volatile bool s_debug;
 static float s_last_volume_dbfs;
 static int   s_last_vad;
 static float s_last_ringbuf_free;
-static SemaphoreHandle_t s_detected;   /* fetch_task -> auto task: wake word heard */
+static SemaphoreHandle_t s_detected;   /* PWA trigger -> auto task */
 static SemaphoreHandle_t s_auto_done;
 
 /* ── init: load models, build the AFE instance once ─────────────────────── */
@@ -225,6 +224,9 @@ esp_err_t mpx_voice_wake_init(void)
         ESP_LOGE(TAG, "afe_config_init failed");
         goto fail;
     }
+    /* Keep the DSP needed for echo-cancelled barge-in, but do not create or
+     * run a wake-word engine. Conversations start only from IO21_WAKE/PWA. */
+    afe_config->wakenet_init = false;
 
     /* Internal RAM is the scarce resource on this board (see the
      * CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL comment in
@@ -264,7 +266,7 @@ esp_err_t mpx_voice_wake_init(void)
         s_barge_lock = xSemaphoreCreateMutex();
     }
     if (!s_barge_ring || !s_barge_lock) {
-        ESP_LOGW(TAG, "no memory for barge-in PCM ring; wake-word barge-in remains available");
+        ESP_LOGW(TAG, "no memory for barge-in PCM ring; PWA Interrupt and IO21 stop remain available");
     }
 #endif
 
@@ -313,7 +315,7 @@ esp_err_t mpx_voice_wake_deinit(void)
         s_barge_lock = NULL;
     }
     s_barge_streaming = false;
-    ESP_LOGI(TAG, "AFE/WakeNet released for policy use; PSRAM %u free, %u largest",
+    ESP_LOGI(TAG, "AFE released for policy use; PSRAM %u free, %u largest",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     return ESP_OK;
@@ -367,9 +369,9 @@ static void feed_task(void *arg)
     vTaskDelete(NULL);
 }
 
-/* ── fetch: afe->fetch() -> wake/VAD result -> barge-in ──────────────────── */
+/* ── fetch: afe->fetch() -> VAD result -> barge-in ─────────────────────── */
 
-static void send_abort_wake_word(void)
+static void send_abort_voice_trigger(void)
 {
     cJSON *root = cJSON_CreateObject();
     if (!root) {
@@ -380,7 +382,7 @@ static void send_abort_wake_word(void)
         cJSON_AddStringToObject(root, "session_id", sid);
     }
     cJSON_AddStringToObject(root, "type", "abort");
-    cJSON_AddStringToObject(root, "reason", "wake_word_detected");
+    cJSON_AddStringToObject(root, "reason", "user_requested");
 
     char *text = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
@@ -452,13 +454,8 @@ static esp_err_t wake_barge_talk_start(uint32_t max_seconds)
 
     esp_err_t err = mpx_voice_talk_start_barge_in(barge_pcm_read, NULL, max_seconds);
     if (err == ESP_OK) {
+        /* Server-side VAD owns interruption; WakeNet is never enabled. */
         s_barge_streaming = true;
-        /* Server-side VAD owns interruption in this mode. Running WakeNet as
-         * well wastes a second inference on every AFE chunk; with dual-mic
-         * BSS it kept CPU 1 busy until IDLE1 tripped the task watchdog. */
-        if (s_afe_handle->disable_wakenet) {
-            s_afe_handle->disable_wakenet(s_afe_data);
-        }
     }
     return err;
 }
@@ -469,9 +466,6 @@ static void wake_barge_talk_stop(void)
         xSemaphoreTake(s_barge_lock, portMAX_DELAY);
     }
     s_barge_streaming = false;
-    if (s_afe_handle && s_afe_data && s_afe_handle->enable_wakenet) {
-        s_afe_handle->enable_wakenet(s_afe_data);
-    }
     if (s_barge_lock) {
         xSemaphoreGive(s_barge_lock);
     }
@@ -504,10 +498,10 @@ static void fetch_task(void *arg)
             const TickType_t now = xTaskGetTickCount();
             if (now - last >= pdMS_TO_TICKS(1000)) {
                 last = now;
-                ESP_LOGI(TAG, "afe: level %.0f dBFS  vad %s  ringbuf free %.0f%%  wake %d",
+                ESP_LOGI(TAG, "afe: level %.0f dBFS  vad %s  ringbuf free %.0f%%",
                          (double)res->data_volume,
                          res->vad_state == VAD_SPEECH ? "SPEECH " : "silence",
-                         (double)res->ringbuff_free_pct * 100.0, (int)res->wakeup_state);
+                         (double)res->ringbuff_free_pct * 100.0);
             }
         }
 
@@ -526,26 +520,6 @@ static void fetch_task(void *arg)
             xSemaphoreGive(s_barge_lock);
         }
 
-        if (res->wakeup_state == WAKENET_DETECTED) {
-            ESP_LOGI(TAG, "wake word heard (word index %d)", res->wake_word_index);
-            if (mpx_voice_stream_is_playing()) {
-                ESP_LOGI(TAG, "barge-in: robot was talking -- stopping playback "
-                              "and telling the server");
-                mpx_voice_stream_abort_playback();
-                send_abort_wake_word();
-            }
-            if (s_auto_active) {
-                /* Hands-free: hand the microphone over. This task cannot call
-                 * mpx_voice_wake_stop() itself (it would be waiting for its
-                 * own exit), so it leaves the loop right here -- rather than
-                 * going back into fetch(), which would otherwise block for
-                 * its full 2 s timeout once the feed stops -- and lets the
-                 * auto task do the stop/talk/restart sequence. */
-                s_run = false;
-                xSemaphoreGive(s_detected);
-                break;
-            }
-        }
     }
 
     xSemaphoreGive(s_fetch_done);
@@ -569,9 +543,9 @@ esp_err_t mpx_voice_wake_start(void)
                         TAG, "capture start failed");
 
     /* Whatever the AFE still holds from before the microphone was handed
-     * away (the tail of the wake word, the beep, the start of a reply) is
-     * stale now; a second detection off old audio would loop straight back
-     * into another talk. Optional in the interface, hence the NULL check. */
+     * away (the start cue or the start of a reply) is
+     * stale now; old audio must not leak into the next barge-in capture.
+     * Optional in the interface, hence the NULL check. */
     if (s_afe_handle->reset_buffer) {
         s_afe_handle->reset_buffer(s_afe_data);
     }
@@ -621,7 +595,7 @@ esp_err_t mpx_voice_wake_start(void)
     }
 
     s_active = true;
-    ESP_LOGI(TAG, "listening (feed/fetch tasks up)");
+    ESP_LOGI(TAG, "AFE feed/fetch tasks up");
     return ESP_OK;
 }
 
@@ -681,7 +655,7 @@ int mpx_voice_wake_task_priority(void)
     return s_task_priority;
 }
 
-/* ── hands-free: wake word -> talk -> reply -> listen again ──────────────── */
+/* ── hands-free: IO21/PWA trigger -> talk -> reply -> ready ────────────── */
 
 /* Short cues generated here rather than through mpx_audio_play_tone(), whose
  * resolution is whole seconds. Played with the microphone closed, so no echo
@@ -738,9 +712,9 @@ static void wake_auto_end_beep(void)
                    WAKE_AUTO_END_BEEP_MS, 4200.0);
 }
 
-/* Seconds to keep listening for a follow-up after a reply, with no wake
- * word. The server's VAD ends it the moment you speak, and the server ends
- * the whole session (says goodbye, closes the socket) after ITS idle limit,
+/* Seconds to keep listening for a follow-up after a reply, with no new
+ * button/PWA trigger. The server's VAD ends it the moment you speak, and
+ * the server ends the whole session (says goodbye, closes the socket) after ITS idle limit,
  * which also ends this listen -- so in practice this is only a backstop.
  * Long on purpose: xiaozhi-esp32 keeps listening after a reply until the
  * server says goodbye, and a short window here (it was 8 s) meant that a
@@ -763,35 +737,65 @@ static void wake_button_init(void)
     }
 }
 
-/* Wait up to `ms` for the wake word OR a WAKE button press. A press is
- * turned into the same thing a detection is -- including the barge-in
- * abort if a reply is playing, which fetch_task does for the wake word --
- * so everything downstream is identical. Returns true if either happened. */
-static bool wake_auto_wait_trigger(uint32_t ms)
+typedef enum {
+    WAKE_TRIGGER_NONE,
+    WAKE_TRIGGER_BUTTON,
+    WAKE_TRIGGER_SOFTWARE,
+} wake_trigger_t;
+
+static bool s_button_was_down;
+static uint8_t s_button_debounce;
+
+/* Require two matching samples (100 ms) before changing pressed/released
+ * state. Bounce must not turn one actuation into a start plus a stop. */
+static bool wake_auto_poll_button(void)
 {
-    static bool was_down;
+    const bool down = gpio_get_level(WAKE_BUTTON_GPIO) == 0;
+    if (down == s_button_was_down) {
+        s_button_debounce = 0;
+        return false;
+    }
+    if (++s_button_debounce < 2) {
+        return false;
+    }
+    s_button_debounce = 0;
+    s_button_was_down = down;
+    if (!down) {
+        return false;
+    }
+    ESP_LOGI(TAG, "IO21_WAKE pressed");
+    /* Make fetch() leave promptly; the auto task owns all teardown. */
+    s_run = false;
+    return true;
+}
+
+static wake_trigger_t wake_auto_wait_trigger(uint32_t ms)
+{
     for (uint32_t waited = 0; waited < ms; waited += WAKE_BUTTON_POLL_MS) {
         if (xSemaphoreTake(s_detected, pdMS_TO_TICKS(WAKE_BUTTON_POLL_MS)) == pdTRUE) {
-            return true;
+            return WAKE_TRIGGER_SOFTWARE;
         }
-        const bool down = gpio_get_level(WAKE_BUTTON_GPIO) == 0;
-        if (down && !was_down) {
-            was_down = true;
-            ESP_LOGI(TAG, "WAKE button pressed -- same as the wake word");
-            if (mpx_voice_stream_is_playing()) {
-                mpx_voice_stream_abort_playback();
-                send_abort_wake_word();
-            }
-            /* The front end, if it is up, must leave its loop the way it
-             * does for a detection, or wake_stop() waits 2 s for fetch(). */
-            s_run = false;
-            return true;
-        }
-        if (!down) {
-            was_down = false;
+        if (wake_auto_poll_button()) {
+            return WAKE_TRIGGER_BUTTON;
         }
     }
-    return false;
+    return WAKE_TRIGGER_NONE;
+}
+
+/* End the session but leave the auto loop armed for the next button press. */
+static void wake_auto_stop_conversation(void)
+{
+    ESP_LOGI(TAG, "hands-free: IO21_WAKE stopped the conversation");
+    /* Discard only triggers already queued at the stop edge. A newer PWA
+     * Start during teardown must survive and start the requested session. */
+    (void)xSemaphoreTake(s_detected, 0);
+    mpx_voice_stream_abort_playback();
+    (void)mpx_voice_talk_stop();
+    (void)mpx_voice_talk_wait(1000);
+    mpx_voice_disconnect();
+    /* A late TTS event before socket teardown can re-arm playback. Abort
+     * once more after disconnect so no buffered late audio can restart. */
+    mpx_voice_stream_abort_playback();
 }
 
 /* Stop the front end, waiting first for a barge-in's playback teardown --
@@ -805,7 +809,7 @@ static void wake_auto_release_mic(void)
 }
 
 typedef enum {
-    WAKE_ST_LISTEN,   /* front end up, waiting for the wake word */
+    WAKE_ST_LISTEN,   /* idle, waiting for IO21_WAKE or the PWA */
     WAKE_ST_TALK,     /* microphone streaming to the server */
     WAKE_ST_REPLY,    /* reply arriving/playing; front end up for barge-in */
 } wake_auto_state_t;
@@ -830,40 +834,18 @@ static void wake_auto_task(void *arg)
     (void)arg;
     const uint32_t max_secs = CONFIG_APP_VOICE_AUTO_MAX_SECONDS;
     wake_auto_state_t state = WAKE_ST_LISTEN;
-    bool follow_up = false;   /* this TALK needs no wake word and no beep */
-    uint32_t listen_retry_ms = WAKE_AUTO_CONNECT_RETRY_MS;
+    bool follow_up = false;   /* this TALK needs no new trigger and no beep */
+    bool reply_already_done = false; /* reply fully drained during TALK transition */
+    uint32_t reply_completions_before = 0;
 
     while (s_auto_run) {
         s_auto_state = state;
         switch (state) {
 
         case WAKE_ST_LISTEN: {
-            /* Listen. If the mic could not be opened (someone ran `voice
-             * talk` by hand, say), try again shortly rather than give up. */
-            if (!s_active) {
-                const esp_err_t err = mpx_voice_wake_start();
-                if (err != ESP_OK) {
-                    /* Music and TLS can temporarily exhaust contiguous DMA
-                     * RAM. Back off instead of logging the same allocation
-                     * failure every two seconds for the life of the song. */
-                    ESP_LOGW(TAG, "hands-free: cannot listen (%s) -- retrying in %lu ms",
-                             esp_err_to_name(err), (unsigned long)listen_retry_ms);
-                    vTaskDelay(pdMS_TO_TICKS(listen_retry_ms));
-                    if (listen_retry_ms < 10000) {
-                        listen_retry_ms = (listen_retry_ms >= 5000)
-                                              ? 10000 : listen_retry_ms * 2;
-                    }
-                    break;
-                }
-                listen_retry_ms = WAKE_AUTO_CONNECT_RETRY_MS;
-            }
-            /* Short timeout only so `wake auto off` and a dead feed are
-             * noticed promptly. */
-            if (!wake_auto_wait_trigger(500)) {
-                if (s_feed_failed) {
-                    ESP_LOGW(TAG, "hands-free: microphone read died -- restarting the front end");
-                    mpx_voice_wake_stop();
-                }
+            /* No audio task or model inference runs while idle. IO21_WAKE and
+             * the PWA semaphore are the only ways out of this state. */
+            if (wake_auto_wait_trigger(500) == WAKE_TRIGGER_NONE) {
                 break;
             }
             wake_auto_release_mic();
@@ -873,6 +855,7 @@ static void wake_auto_task(void *arg)
         }
 
         case WAKE_ST_TALK: {
+            reply_completions_before = mpx_voice_stream_reply_completion_count();
             /* A session. The server drops idle sockets after a minute or
              * so, so reconnecting here is the normal case. */
             if (mpx_voice_state() != MPX_VOICE_READY) {
@@ -886,8 +869,8 @@ static void wake_auto_task(void *arg)
                     (void)mpx_voice_provision(NULL);
                 }
                 if (!mpx_voice_stored_url()[0]) {
-                    ESP_LOGW(TAG, "hands-free: not provisioned (no network?) -- say the "
-                                  "wake word again later, or run `voice provision`");
+                    ESP_LOGW(TAG, "hands-free: not provisioned (no network?) -- press WAKE "
+                                  "or use the PWA again later, or run `voice provision`");
                     state = WAKE_ST_LISTEN;
                     break;
                 }
@@ -901,7 +884,7 @@ static void wake_auto_task(void *arg)
                     }
                 }
                 if (err != ESP_OK) {
-                    ESP_LOGW(TAG, "hands-free: connect failed (%s) -- back to listening",
+                    ESP_LOGW(TAG, "hands-free: connect failed (%s) -- back to ready",
                              esp_err_to_name(err));
                     state = WAKE_ST_LISTEN;
                     break;
@@ -909,13 +892,13 @@ static void wake_auto_task(void *arg)
             }
 
             ESP_LOGI(TAG, "hands-free: turn (%s), internal RAM %u free / %u largest",
-                     follow_up ? "follow-up" : "wake word",
+                     follow_up ? "follow-up" : "button/PWA trigger",
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
             if (!follow_up) {
                 wake_auto_beep();
             } else {
-                ESP_LOGI(TAG, "hands-free: your turn -- no wake word needed until the server ends the session");
+                ESP_LOGI(TAG, "hands-free: your turn -- no new trigger needed until the server ends the session");
             }
             const uint32_t secs = follow_up ? WAKE_FOLLOWUP_SECONDS : max_secs;
             /* When the PWA owns the microphone, the SAME turn runs off the
@@ -925,15 +908,18 @@ static void wake_auto_task(void *arg)
                                       ? mpx_voice_talk_start_phone(secs)
                                       : mpx_voice_talk_start_auto(secs);
             if (err != ESP_OK) {
-                ESP_LOGW(TAG, "hands-free: talk failed (%s) -- back to listening",
+                ESP_LOGW(TAG, "hands-free: talk failed (%s) -- back to ready",
                          esp_err_to_name(err));
+                wake_auto_release_mic();
                 state = WAKE_ST_LISTEN;
                 break;
             }
-            /* Wait for the talk to release the mic, in short slices so that
-             * `wake auto off` mid-sentence is honoured within a beat. */
+            /* Physical stop and PWA Interrupt are consumed here, so neither
+             * can remain queued and interrupt a later reply unexpectedly. */
+            wake_trigger_t trigger = WAKE_TRIGGER_NONE;
             for (uint32_t waited = 0; mpx_voice_talk_active() && waited < secs * 1000u + 3000u; waited += 250) {
-                if (mpx_voice_talk_wait(250) == ESP_OK) {
+                trigger = wake_auto_wait_trigger(250);
+                if (trigger != WAKE_TRIGGER_NONE) {
                     break;
                 }
                 if (!s_auto_run) {
@@ -941,14 +927,52 @@ static void wake_auto_task(void *arg)
                     break;
                 }
             }
+            if (trigger == WAKE_TRIGGER_BUTTON) {
+                wake_auto_stop_conversation();
+                wake_auto_release_mic();
+                wake_auto_end_beep();
+                follow_up = false;
+                state = WAKE_ST_LISTEN;
+                break;
+            }
+            if (trigger == WAKE_TRIGGER_SOFTWARE) {
+                mpx_voice_talk_stop();
+                (void)mpx_voice_talk_wait(1000);
+                wake_auto_release_mic();
+                follow_up = false;
+                state = WAKE_ST_TALK;
+                break;
+            }
+            if (mpx_voice_talk_server_took_turn()) {
+                /* PWA Interrupt or a fast gateway can start TTS before raw
+                 * uplink teardown is observed. Preserve that reply even if
+                 * it finishes during this handoff. */
+                (void)mpx_voice_talk_wait(1000);
+                reply_already_done = mpx_voice_stream_reply_completion_count() !=
+                                     reply_completions_before;
+                state = WAKE_ST_REPLY;
+                break;
+            }
+            if (mpx_voice_talk_active()) {
+                /* A reply can cross the follow-up deadline by a few frames.
+                 * Give on_server_turn() time to stop raw uplink before
+                 * deciding that this turn had no answer. */
+                (void)mpx_voice_talk_wait(1000);
+            }
+            if (mpx_voice_talk_active()) {
+                mpx_voice_talk_stop();
+                (void)mpx_voice_talk_wait(1000);
+            }
             if (!mpx_voice_talk_server_took_turn()) {
                 /* Nothing was said, or nothing the server could use. */
-                ESP_LOGI(TAG, "hands-free: nothing heard -- listening for the wake word");
+                ESP_LOGI(TAG, "hands-free: nothing heard -- ready for IO21_WAKE/PWA");
                 wake_auto_release_mic();
                 wake_auto_end_beep();
                 state = WAKE_ST_LISTEN;
                 break;
             }
+            reply_already_done = mpx_voice_stream_reply_completion_count() !=
+                                 reply_completions_before;
             state = WAKE_ST_REPLY;
             break;
         }
@@ -957,29 +981,33 @@ static void wake_auto_task(void *arg)
             /* Keep AFE running ahead of the reply. With a negotiated
              * barge_in gateway, continuously stream its echo-cancelled PCM;
              * the gateway cancels old TTS only after its VAD confirms speech.
-             * Older gateways retain wake-word-only barge-in. */
-            const uint32_t stops_before = mpx_voice_stream_tts_stop_count();
-            if (!s_active && mpx_voice_wake_start() != ESP_OK) {
+             * Older gateways retain PWA Interrupt; IO21_WAKE stops the reply. */
+            const uint32_t completions_before = reply_completions_before;
+            bool finished = reply_already_done;
+            reply_already_done = false;
+            if (!finished && !s_active && mpx_voice_wake_start() != ESP_OK) {
                 ESP_LOGW(TAG, "hands-free: front end did not restart -- no barge-in this reply");
             }
             bool barge_talk = false;
             bool interrupted = false;
-            if (s_active && !mpx_phone_audio_mic_enabled()) {
+            if (!finished && s_active && !mpx_phone_audio_mic_enabled()) {
                 esp_err_t err = wake_barge_talk_start(WAKE_REPLY_TIMEOUT_MS / 1000);
                 if (err == ESP_OK) {
                     barge_talk = true;
                     ESP_LOGI(TAG, "hands-free: full-duplex barge-in armed");
                 } else if (err != ESP_ERR_NOT_SUPPORTED) {
-                    ESP_LOGW(TAG, "hands-free: barge-in stream failed (%s); wake word remains available",
+                    ESP_LOGW(TAG, "hands-free: barge-in stream failed (%s); PWA Interrupt/IO21 stop remain available",
                              esp_err_to_name(err));
                 }
             }
-            bool detected = false;
-            bool finished = false;
+            wake_trigger_t trigger = WAKE_TRIGGER_NONE;
             bool ended = false;
             for (uint32_t waited = 0; s_auto_run && waited < WAKE_REPLY_TIMEOUT_MS; waited += 250) {
-                if (wake_auto_wait_trigger(250)) {
-                    detected = true;
+                trigger = wake_auto_wait_trigger(250);
+                if (trigger != WAKE_TRIGGER_NONE || finished) {
+                    /* Even an already-drained reply polls once, so a queued
+                     * PWA Interrupt takes its branch instead of becoming a
+                     * stale trigger for a later session. */
                     break;
                 }
                 if (barge_talk &&
@@ -996,10 +1024,11 @@ static void wake_auto_task(void *arg)
                         finished = true;
                         break;
                     }
-                } else if (mpx_voice_stream_tts_stop_count() != stops_before &&
-                           !mpx_voice_stream_is_playing()) {
-                    /* Natural reply end. A barge stop takes the branch above
-                     * and must not truncate the user's new utterance. */
+                } else if (mpx_voice_stream_reply_completion_count() != completions_before) {
+                    /* Only a valid, fully drained stop completes a reply.
+                     * Aborted old replies and prebuffering never satisfy this.
+                     * A barge stop takes the branch above and must not truncate
+                     * the user's new utterance. */
                     finished = true;
                     break;
                 }
@@ -1007,7 +1036,7 @@ static void wake_auto_task(void *arg)
                  * timeout, or after you did) or the socket dropped. Do not
                  * sit here for a reply that is not coming, and do not offer
                  * a follow-up turn on a dead session: let whatever is still
-                 * playing finish, then go back to the wake word. */
+                 * playing finish, then go back to idle. */
                 if (mpx_voice_state() != MPX_VOICE_READY && !mpx_voice_stream_is_playing()) {
                     ended = true;
                     break;
@@ -1024,10 +1053,19 @@ static void wake_auto_task(void *arg)
                 wake_barge_talk_stop();
                 break;
             }
-            if (detected) {
-                /* Wake-word barge-in: fetch_task already aborted playback
-                 * and told the server. Stop processed uplink before handing
-                 * the capture hardware to an ordinary raw-mic turn. */
+            if (trigger == WAKE_TRIGGER_BUTTON) {
+                /* Physical WAKE is a toggle: stop this session and stay
+                 * armed, rather than turning the press into a new turn. */
+                wake_barge_talk_stop();
+                wake_auto_stop_conversation();
+                wake_auto_release_mic();
+                wake_auto_end_beep();
+                follow_up = false;
+                state = WAKE_ST_LISTEN;
+            } else if (trigger == WAKE_TRIGGER_SOFTWARE) {
+                /* PWA Interrupt already aborted playback and told the
+                 * server. Stop processed uplink before handing the capture
+                 * hardware to an ordinary raw-mic turn. */
                 wake_barge_talk_stop();
                 wake_auto_release_mic();
                 follow_up = false;
@@ -1035,15 +1073,16 @@ static void wake_auto_task(void *arg)
             } else if (finished && interrupted) {
                 /* STT/rearm closed the utterance; keep AFE up and arm
                  * barge-in for the replacement reply without an I2S restart.
-                 * This also re-enables WakeNet briefly between captures. */
+                 */
                 wake_barge_talk_stop();
                 state = WAKE_ST_REPLY;
             } else if (finished && s_followup_gate && s_followup_gate()) {
                 wake_barge_talk_stop();
                 /* Music is waiting for the speaker (it was just asked for,
                  * or this question interrupted it): no follow-up turn --
-                 * back to the wake word, so the music can play. */
-                ESP_LOGI(TAG, "hands-free: music waiting -- listening for the wake word");
+                 * close the mic so the music can play. */
+                wake_auto_release_mic();
+                ESP_LOGI(TAG, "hands-free: music waiting -- ready for IO21_WAKE/PWA");
                 state = WAKE_ST_LISTEN;
             } else if (finished && mpx_voice_state() == MPX_VOICE_READY) {
                 /* Reply done: hand the mic straight back for a follow-up. */
@@ -1058,13 +1097,13 @@ static void wake_auto_task(void *arg)
                  * session a distinct, softer falling-tone ending. */
                 wake_auto_release_mic();
                 wake_auto_end_beep();
-                ESP_LOGI(TAG, "hands-free: session ended -- listening for the wake word");
+                ESP_LOGI(TAG, "hands-free: session ended -- ready for IO21_WAKE/PWA");
                 state = WAKE_ST_LISTEN;
             } else {
                 wake_barge_talk_stop();
                 wake_auto_release_mic();
                 wake_auto_end_beep();
-                ESP_LOGW(TAG, "hands-free: no reply within %d s -- listening for the wake word",
+                ESP_LOGW(TAG, "hands-free: no reply within %d s -- ready for IO21_WAKE/PWA",
                          WAKE_REPLY_TIMEOUT_MS / 1000);
                 state = WAKE_ST_LISTEN;
             }
@@ -1112,7 +1151,7 @@ esp_err_t mpx_voice_wake_auto_start(void)
         s_auto_active = false;
         return ESP_ERR_NO_MEM;
     }
-    ESP_LOGI(TAG, "hands-free: say the wake word to talk");
+    ESP_LOGI(TAG, "hands-free: IO21_WAKE/PWA starts talk; press IO21_WAKE again to stop");
     return ESP_OK;
 }
 
@@ -1138,10 +1177,10 @@ bool mpx_voice_wake_auto_active(void)
 esp_err_t mpx_voice_wake_trigger(void)
 {
     if (!s_auto_active || !s_detected) return ESP_ERR_INVALID_STATE;
-    ESP_LOGI(TAG, "software wake -- same as the WAKE button");
-    if (mpx_voice_stream_is_playing()) {
+    ESP_LOGI(TAG, "PWA Start/Interrupt voice trigger");
+    if (mpx_voice_stream_reply_active() || mpx_voice_stream_is_playing()) {
         mpx_voice_stream_abort_playback();
-        send_abort_wake_word();
+        send_abort_voice_trigger();
     }
     /* Match the physical button: make fetch() leave its loop promptly, then
      * wake the orchestrator. It remains the sole owner of the mic handoff. */
@@ -1173,7 +1212,7 @@ const char *mpx_voice_wake_state_name(void)
     switch (s_auto_state) {
         case WAKE_ST_TALK:  return "talking";
         case WAKE_ST_REPLY: return "replying";
-        default:            return "listening";
+        default:            return "ready";
     }
 }
 

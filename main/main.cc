@@ -236,8 +236,8 @@ extern "C" void app_main(void)
 
 	// ── Reserve the voice front end before the agent ──────────
 	// ESP-SR 2.3.4 dereferences null model buffers after an allocation
-	// failure. MMNR + WakeNet must therefore take their internal/PSRAM
-	// before ESP-Claw; this does not open a socket or start capture tasks.
+	// failure. AFE/AEC must therefore take its internal/PSRAM before
+	// ESP-Claw; this does not open a socket or start capture tasks.
 	voice_glue::prepare();
 	log_internal_heap("voice front end");
 
@@ -253,7 +253,7 @@ extern "C" void app_main(void)
 
 	// ── Voice: gateway, MCP tools and music ───────────────────
 	// The AFE is already reserved by prepare(); start() will not construct it
-	// twice. Nothing touches the voice network until the first wake word.
+	// twice. Nothing touches the voice network until the first IO21/PWA trigger.
 	voice_glue::start();
 
 	// Policies are deliberately lazy: main/network/http_policy.cc calls

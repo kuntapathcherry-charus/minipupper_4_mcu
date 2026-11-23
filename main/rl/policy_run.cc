@@ -2853,7 +2853,7 @@ extern "C" esp_err_t mpx_policy_init(void)
     const esp_timer_create_args_t ta = { .callback = tick_cb, .arg = nullptr,
                                          .dispatch_method = ESP_TIMER_TASK, .name = "policy",
                                          .skip_unhandled_events = true };
-    // AFE/WakeNet and the policy cannot both fit in PSRAM. Use the existing
+    // AFE and the policy cannot both fit in PSRAM. Use the existing
     // counted hold to stop/join voice first, then destroy only the front end.
     // HTTP, IMU, servo guards, the agent and the app remain available.
     result = policy_acquire_audio();

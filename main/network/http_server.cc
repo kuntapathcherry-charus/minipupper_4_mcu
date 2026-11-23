@@ -379,7 +379,7 @@ static void skill_run_task(void *arg)
      * parameters at all gets. */
     wasm::set_params(a->params.empty() ? nullptr : a->params.c_str());
 
-    /* The skill gets the robot to itself: no wake word, no voice turn, no
+    /* The skill gets the robot to itself: no voice trigger, no voice turn, no
      * music, and the microphone free for a skill that asks for it
      * (mpx_mic_start). voice_glue::hold() remembers what was running and the
      * release below puts exactly that back; it is counted, so a manual hold
@@ -390,7 +390,7 @@ static void skill_run_task(void *arg)
      * start path may happen while the front end is still holding the mic. */
     esp_err_t audio_err = voice_glue::hold("skill");
     if (audio_err == ESP_OK) {
-        /* WAMR instantiation competes with MMNR/WakeNet for the same heaps.
+        /* WAMR instantiation competes with AFE for the same heaps.
          * Release the front end only after hold() has joined every AFE user;
          * release() recreates it after the sandbox has exited. */
         audio_err = voice_glue::release_front_end();

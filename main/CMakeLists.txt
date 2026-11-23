@@ -232,7 +232,7 @@ idf_component_register(
         esp_lvgl_port
         lvgl
         esp_new_jpeg
-        # Voice (main/voice): esp-sr for the wake word, the xiaozhi author's
+        # Voice (main/voice): esp-sr AFE for barge-in, the xiaozhi author's
         # Opus wrappers (esp-opus-encoder keeps esp-opus private, so opus.h
         # has to be asked for by name), the websocket client, the audio
         # player for music and the TLS/HTTP/NVS/app-desc pieces around them.

@@ -26,8 +26,7 @@ Target:
 
 That is the gateway's documented `brain:"device"` mode. No new server work.
 
-Non-goals: changing the wire protocol, replacing the gateway's TTS, local
-wake-word/TTS on the robot, and any per-unit build. MCP mode remains
+Non-goals: changing the wire protocol, replacing the gateway's TTS, local TTS and restoration of local wake-word detection on the robot, and any per-unit build. MCP mode remains
 available and is now the default low-latency voice path (see §5).
 
 ---
@@ -49,7 +48,7 @@ lines retained when compacting). The PWA imports them from
 `voice_state` on every chat socket, and supports archive/unarchive, unread
 turns, new voice session, and local-only delete. `POST /v1/voice/history/clear`
 erases transcripts only. Skill hold keeps the device-brain control socket
-open so the agent can still answer, while wake word/music remain held.
+open so the agent can still answer, while voice triggers/music remain held.
 
 The most recent voice conversation gets a one-line chip directly above the
 chat composer (`.voice-chip` in `pwa-claw/src/lib/chat/ChatView.svelte`):
@@ -66,13 +65,13 @@ enters the same `wake_auto` state machine as the physical WAKE button, so
 provisioning, microphone ownership, barge-in and follow-up turns are shared
 rather than duplicated in the HTTP handler. The first resulting voice turn
 opens its transcript on the phone. Existing chats keep the ordinary send
-button; the wake word and physical WAKE button remain available everywhere.
+button; the physical WAKE button remains available everywhere and toggles the conversation: first press starts, next press during talk or reply stops playback/talk, disconnects and returns to ready without disabling future triggers. There is no spoken wake word.
 
 `pwa-claw/src/lib/chat/VoicePanel.svelte` is a dedicated voice-chat subwindow,
 opened by that microphone, the latest-voice card, or a Voice row in History.
 It shows the live STT/TTS transcript and large Start/Interrupt, End, New
-session and Clear context controls. Start/Interrupt uses the same software
-wake path as the physical button, so it also barges into playback. End posts
+session and Clear context controls. Start/Interrupt uses the software
+wake path, so it barges into playback instead of toggling the session off. End posts
 `{"end":true}`; New keeps the old transcript but rolls both ESP-Claw and
 voice history to a fresh id; Clear posts `{"clear_context":"voice-…"}` and
 deletes that session's public ESP-Claw history, JSONL transcript and phone
@@ -84,7 +83,7 @@ clearly wants to leave; the bridge strips it, speaks any preceding goodbye,
 then ends on the gateway's playback-idle state. This avoids arbitrarily
 ending a conversation merely because it contains a word such as "goodbye".
 Ending retires the old id (a four-id ring consumes late agent output), aborts
-playback/talk and disconnects without disabling the wake-word loop. Repeated
+playback/talk and disconnects without disabling the IO21/PWA trigger loop. Repeated
 "One moment" filler is gone: the voice prompt requests one concise direct
 answer, uses tools only for explicit physical actions, and has one 80-second
 timeout instead of periodic spoken filler.
@@ -131,7 +130,7 @@ STT, the agent and TTS stay on the robot.
   The robot answers `{"type":"phone_audio","ok":true,...}` or `ok:false` with
   an `esp_err` name, which the panel shows. Turning the mic on runs the turn
   through `voice_glue::wake_now()`, so connecting, provisioning and
-  follow-ups behave exactly like a spoken wake word; `mpx_voice_wake.c` picks
+  follow-ups behave exactly like an IO21/PWA trigger; `mpx_voice_wake.c` picks
   `mpx_voice_talk_start_phone()` when the flag is set. Turning it off stops
   the turn and clears buffered audio. Closing the panel disables both and
   stops capture.
@@ -140,9 +139,8 @@ STT, the agent and TTS stay on the robot.
   needs a secure context, and the robot serves its PWA over plain HTTP, so on
   `http://<robot-ip>` the switches stay disabled with an explanatory hint.
   Either front the UI with TLS or add the origin to
-  `chrome://flags/#unsafely-treat-insecure-origin-as-secure`. The wake word
-  itself still comes from the robot microphone (unless the panel's primary
-  button is used), because browser wake-word detection is not implemented.
+  `chrome://flags/#unsafely-treat-insecure-origin-as-secure`. Neither the robot nor the browser performs wake-word detection; every conversation starts
+  from IO21_WAKE or a PWA control.
 
 ### 1c. Full-duplex speech barge-in and reference AEC
 
@@ -170,7 +168,7 @@ server and firmware reject stale IDs so delayed ASR cannot close a newer turn
 or produce transcript/thinking UI. Hands-free capture then re-arms instead of
 stalling after noise. Natural reply end stops barge-in capture and enters the
 normal follow-up turn. A server without the feature ack automatically retains
-wake-word/button barge-in.
+PWA Interrupt; physical IO21_WAKE instead stops the active conversation.
 
 Before VAD confirms speech, the server retains only a bounded 750 ms pre-roll
 and does not run the 15-second max-utterance timer. This lets it listen
@@ -200,17 +198,17 @@ worse with one microphone than with the dual-mic array, because beamforming
 and blind-source separation are gone. Restoring `MMNR` is the intended
 long-term fix, but it must come with an answer for the CPU cost that made it
 unstable here -- measured candidates are the BSS/NLP pass inside `feed()`,
-the second WakeNet inference, and Opus sharing the same core. Do not simply
+the BSS/NLP pass, and Opus sharing the same core. Do not simply
 re-enable the old dual-mic path: it produced idle-task watchdogs and ROM
 crashes within seconds of the first reply. Natural first experiments are a
-wider second core (moving Opus or WakeNet off core 1), decoding the AFE load
+wider second core (moving Opus off core 1), decoding the AFE load
 per stage, or trying `AFE_TYPE_FD` with the dual-mic config but `AFE_MODE`
 high-performance only after the CPU budget is understood.
 
 Policy loading and WASM skill execution are explicit resource modes. After
 the counted voice hold has stopped and joined all AFE users,
-`mpx_voice_wake_deinit()` destroys AFE,
-WakeNet and the barge ring and frees the temporary AFE config. Policy logs are
+`mpx_voice_wake_deinit()` destroys AFE
+and the barge ring and frees the temporary AFE config. Policy logs are
 saved and all policy resources are released before `voice_glue::release()`
 recreates the front end. This ordering is required by PSRAM capacity; audio
 is not restarted merely because the servos stopped. The skill coordinator
@@ -221,15 +219,15 @@ assertion.
 ### 1d. Stable I2S DMA allocation
 
 Hands-free capture keeps the ES7210 in its four-channel / 32-bit-slot layout
-for both wake-word listening and uplink talk. Previously the talk task opened
-two channels, shrinking the paired I2S DMA rings; the next wake-word open then
+for both reply/barge-in capture and uplink talk. Previously the talk task opened
+two channels, shrinking the paired I2S DMA rings; the next AFE open then
 needed twelve fresh 1920-byte DMA allocations. Once music, TLS and the agent
 had fragmented internal RAM, that failed repeatedly even with enough total
 bytes free. `audio_out_close()` also keeps the wide-slot configuration instead
 of forcing a 16-bit reconfigure, and failed microphone starts back off from
 2 to 10 seconds instead of logging the same error every two seconds. This is
-intended to preserve wake-word barge-in during music without increasing peak
-DMA usage beyond the layout the wake-word front end already needs.
+intended to preserve speech barge-in during music without increasing peak
+DMA usage beyond the layout the AFE front end already needs.
 
 Live music now destroys its HTTP/TLS/decoder pipeline when a conversation
 takes over, rather than retaining those buffers behind a stopped player.
@@ -644,8 +642,13 @@ Agent-side (safe, no board):
 
 Human-side (never claim these):
 
-- with the phone closed: say the wake word, ask something, hear an answer, ask a
-  follow-up ("and now sit") that proves context was kept;
+- with the phone closed: say "Hi ESP" and confirm nothing starts; press
+  IO21_WAKE, ask something, then press it again during uplink and during a
+  reply: each press must stop audio, disconnect and return to ready; a later
+  press must start a fresh turn. Also hear an answer and ask a follow-up
+  ("and now sit") that proves context was kept when not toggled off;
+- while idle, `GET /v1/voice` reports `hands_free:"ready"` and
+  `listening:false`; no microphone task runs until a trigger or reply;
 - open the PWA afterwards: the voice conversation is in the sidebar with both
   turns, timestamped, marked as voice;
 - open the PWA while talking: turns appear live, indicator changes;
@@ -660,7 +663,7 @@ Human-side (never claim these):
   because cleaned uplink is silent; ignored noise must emit capture-scoped
   `listen/rearm`, without STT or thinking UI, and accept a new utterance;
 - boot/DSP health: `session ready` says barge-in supported, AFE stays RMNN
-  (no fallback to two-channel `MN`), WakeNet9S loads `wn9s_hiesp`, AFE uses
+  (no fallback to two-channel `MN`), no WakeNet model loads, AFE uses
   WebRTC VAD while the gateway uses Silero for conversation VAD, and no
   `barge-in PCM ring overrun` appears;
 - all-systems RAM: `voice front end reserved` precedes `on-device agent

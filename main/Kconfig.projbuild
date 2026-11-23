@@ -462,7 +462,7 @@ config APP_SYSMON_ENABLE
           <- monitor_task (main/util/sys_monitor.cc sample_once)
 
         This firmware deletes WithCaps tasks whenever a skill runs, a
-        voice loopback runs, or the wake word / audio stream tears down,
+        voice loopback runs, or the voice front end / audio stream tears down,
         so the window is open often. Re-enable only after those tasks are
         made persistent (created once and suspended) instead of deleted.
 
@@ -498,7 +498,7 @@ config APP_AUDIO_ENABLE
     help
         Bring up the board's audio path (main/audio/mpx_audio.c): the
         speaker for voice replies and the Pi's music, the microphones for
-        the wake word and voice. Off: every audio call answers
+        voice triggers and voice. Off: every audio call answers
         ESP_ERR_NOT_SUPPORTED and the voice features are unavailable.
 
 # ── Raspberry Pi (ROS 2) link on J-PI ────────────────────────────────
@@ -647,7 +647,7 @@ config APP_POLICY_ENABLE
     help
         A policy exported with tools/policy/export_mpxp.py runs on core 1
         at 50 Hz and drives the twelve servos through the same raw path as
-        the Pi's RL link. The gait is parked and voice, wake-word detection
+        the Pi's RL link. The gait is parked and voice, voice-trigger handling
         and music are held for the run, then restored afterwards. The app's
         RL Walk page starts and steers it through /v1/policy. Models, workers
         and the auto-right timer are initialized lazily by the first actual
@@ -751,27 +751,26 @@ config APP_DISPLAY_BUFFER_LINES
 
 endif  # APP_DISPLAY_ENABLE
 
-# ── Voice: wake word, the MangDang voice gateway, music ─────────────
+# ── Voice: IO21/PWA triggers, MangDang voice gateway, music ────────
 # mpv2-claw's mpx_voice_link, mpx_voice_wake and cap_music (main/voice/),
 # ported, with a native MCP bridge (voice_tools.cc) in place of mpx_mcp_ws.
 
 config APP_VOICE_ENABLE
-    bool "Voice: wake word, MangDang voice gateway, music"
+    bool "Voice: IO21/PWA triggers, MangDang voice gateway, music"
     default y
     depends on APP_AUDIO_ENABLE
     help
-        Say "Hi ESP" and talk to the robot: esp-sr's wake word on the
-        microphones, speech to and from the MangDang voice gateway over a
-        WebSocket (Opus), the robot's tools offered to the server's model
-        (robot_move, display_show_emotion, music_play, ...), and internet
-        radio on the speaker. The owner can still turn voice off at run
-        time (Settings > AI & Voice, POST /v1/ai {"mode":"off"}).
+        Press IO21_WAKE or the PWA mic button to talk to the robot. Press
+        IO21_WAKE again during talk or a reply to stop and disconnect. Speech
+        goes to and from the MangDang voice gateway over a WebSocket
+        (Opus); the server's model can use robot tools and internet radio
+        plays on the speaker. ESP-SR supplies AEC/VAD for speech barge-in;
+        WakeNet and its model are disabled. The owner can turn voice off
+        at run time (Settings > AI & Voice, POST /v1/ai {"mode":"off"}).
 
-        Off: none of it is compiled, esp-sr's models are still built but
+        Off: none of it is compiled, esp-sr support is still built but
         unused, /v1/ai offers only "off" and /v1/voice does not exist.
-
-        The first `idf.py flash` after turning this on must be a full
-        flash: the wake-word models live in the `model` partition.
+        No wake-word model is built; the model partition layout is unchanged.
 
 if APP_VOICE_ENABLE
 
@@ -780,7 +779,7 @@ config APP_VOICE_OTA_URL
     default "http://35.220.215.160:8000/xiaozhi/ota/"
     help
         The MangDang voice gateway's OTA endpoint. The robot POSTs its
-        identity here on the first wake word and gets back the WebSocket
+        identity here on the first voice turn and gets back the WebSocket
         URL and token to talk to (saved in NVS). The same host serves the
         marketplace proxy and the chat ingress (APP_CHAT_SERVER_IP).
 
@@ -815,24 +814,24 @@ config APP_VOICE_CONV_IDLE_HOURS
     depends on APP_VOICE_ENABLE
     help
         Voice turns share one ESP-Claw session so follow-up questions keep
-        their context across wake words and reconnects. After this long
+        their context across voice turns and reconnects. After this long
         without a turn, the next utterance starts a fresh session.
 
 config APP_VOICE_AUTO_LISTEN
-    bool "Listen for the wake word from boot (hands-free)"
+    bool "Enable IO21/PWA voice triggers from boot (hands-free)"
     default y
     help
-        Start the hands-free loop at boot: listen for "Hi ESP", beep,
-        stream what is said, play the reply, keep listening for a
-        follow-up until the server ends the session. Off: nothing listens
-        until POST /v1/voice {"hands_free":true}.
+        Start the voice-trigger loop at boot. It waits with the microphone
+        closed until IO21_WAKE or the PWA starts a turn, then beeps, streams
+        speech, plays the reply, and offers follow-ups until the server ends
+        the session. Off: no triggers until POST /v1/voice {"hands_free":true}.
 
 config APP_VOICE_AUTO_MAX_SECONDS
     int "Longest a turn listens with nothing heard (seconds)"
     range 3 60
     default 12
     help
-        After the wake word the microphone streams until the server's VAD
+        After an IO21/PWA trigger the microphone streams until the server's VAD
         hears the end of what was said, or this long with nothing usable,
         whichever comes first.
 
@@ -844,8 +843,8 @@ config APP_VOICE_BARGE_IN
         its echo-cancelled PCM to a gateway that acknowledges barge_in.
         The gateway's VAD must confirm speech before it cancels the old
         reply, so opening the microphone alone does not interrupt. AEC and
-        server VAD work together to suppress residual speaker echo. Older gateways automatically retain wake-word-only
-        barge-in.
+        server VAD work together to suppress residual speaker echo. Older
+        gateways retain PWA Interrupt; IO21_WAKE stops the active session.
 
 endif  # APP_VOICE_ENABLE
 

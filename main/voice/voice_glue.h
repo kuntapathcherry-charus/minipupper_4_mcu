@@ -7,8 +7,8 @@
  *
  *   - The owner's choice, "AI & Voice" in the app (GET/POST /v1/ai), which
  *     agent_config owns since Phase 5: mangdang and own (voice goes through
- *     the MangDang voice gateway; the wake word works) or off (no voice, the
- *     microphone never opens). With APP_VOICE_BRAIN_LOCAL the gateway only
+ *     the MangDang voice gateway; IO21/PWA triggers work) or off (no voice,
+ *     the microphone never opens). With APP_VOICE_BRAIN_LOCAL the gateway only
  *     transcribes and speaks, and the on-device agent answers in either mode.
  *     Saved in NVS; applied live, no restart.
  *   - Boot: the face hooks (what was heard / said / felt goes on the screen),
@@ -51,13 +51,13 @@ void start();
  *  Pi link task: this only posts; a small task does the stopping. */
 void on_master_changed(bool active);
 
-/** Start hands-free listening now (mode must be MangDang). For a retry from
+/** Start the IO21/PWA voice-trigger loop now (mode must be MangDang). For a retry from
  *  /v1/voice after "could not start". */
 esp_err_t hands_free_start();
 void      hands_free_stop();
 
-/** Start listening immediately, without waiting for the wake word. Starts
- *  hands-free first if needed, then follows the physical WAKE button path. */
+/** Start a voice turn immediately. Starts hands-free orchestration first if
+ *  needed, then follows the PWA Start/Interrupt path. */
 esp_err_t wake_now();
 
 /** Provision against the gateway now (normally automatic on first use). */
@@ -65,7 +65,7 @@ esp_err_t provision();
 
 /* ── Holding voice back while a skill runs ─────────────────────────────────
  *
- * A wasm skill gets the robot to itself: no wake word, no new voice turn, no
+ * A wasm skill gets the robot to itself: no voice trigger, no new voice turn, no
  * music, and the microphone free if the skill asks for it (mpx_mic_start).
  * The current gateway control socket stays open so an MCP tool result and its
  * spoken reply can return when the run ends. hold() stops the audio work and
@@ -78,7 +78,7 @@ esp_err_t provision();
  * An ordinary skill/app hold keeps AFE resident for an instant restart.
  * Policy initialization additionally calls release_front_end(), after this
  * same hold has joined the audio tasks, to make room for its model. The last
- * release() recreates AFE before restoring hands-free listening.
+ * release() recreates AFE before restoring the IO21/PWA trigger loop.
  *
  * hold() can block for a couple of seconds (the front end's fetch() timeout)
  * while it waits for listening to actually stop, so a skill never starts on
@@ -86,7 +86,7 @@ esp_err_t provision();
  * instead: calling it from a task that must not block is wrong. */
 
 esp_err_t hold(const char *why);
-/** Free AFE/WakeNet while held. Returns INVALID_STATE if any task remains. */
+/** Free AFE while held. Returns INVALID_STATE if any task remains. */
 esp_err_t release_front_end();
 void      release(const char *why);
 

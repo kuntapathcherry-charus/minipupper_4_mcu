@@ -41,7 +41,7 @@ extern "C" {
  * ES7210 (mic) and the MAX98357A (speaker) sit on the same I2S peripheral,
  * and esp_codec_dev refuses to open the second direction at a different
  * sample rate from the first ("conflict sample_rate ... with peer mode").
- * The wake-word front end keeps the microphone open at 16 kHz while a reply
+ * The AFE front end keeps the microphone open at 16 kHz while a reply
  * plays -- that is how barge-in hears you -- so the reply has to play at
  * 16 kHz too. Wideband speech loses nothing audible in the process. */
 #define MPX_VOICE_PLAYBACK_RATE   16000
@@ -86,7 +86,7 @@ typedef enum {
  * So the order is: provision, read the code, bind it in the console,
  * provision again, then connect. */
 /* mpv2-claw: the MangDang voice gateway. It needs no activation code, so a
- * robot provisions itself the first time the wake word is heard.
+ * robot provisions itself on the first IO21/PWA-triggered turn.
  *
  * mpx-dog (local-claw): the same files, moved into main/voice/; the Kconfig
  * symbol is this firmware's CONFIG_APP_VOICE_OTA_URL (main/Kconfig.projbuild). */
@@ -112,7 +112,7 @@ uint32_t    mpx_voice_downlink_rate(void);
 
 /* True only when the connected gateway acknowledged features.barge_in in its
  * hello. Negotiated mode streams echo-cancelled microphone audio throughout
- * a reply; older gateways retain wake-word-only barge-in. */
+ * a reply; older gateways retain IO21/PWA-only barge-in. */
 bool        mpx_voice_barge_in_supported(void);
 
 /* Send one control message. `json` is sent verbatim, so the caller owns the
@@ -159,7 +159,7 @@ esp_err_t mpx_voice_talk_start(uint32_t max_seconds);
 void      mpx_voice_talk_stop(void);
 bool      mpx_voice_talk_active(void);
 
-/* Hands-free variant, used by mpx_voice_wake after the wake word. Sends
+/* Hands-free variant, used by mpx_voice_wake after an IO21/PWA trigger. Sends
  * listen/start in "auto" mode, so the SERVER decides when you have stopped
  * speaking (its VAD, not a fixed window): the microphone streams until the
  * server takes its turn -- an "stt" transcript or the first "tts" message
@@ -195,12 +195,17 @@ esp_err_t mpx_voice_talk_wait(uint32_t timeout_ms);
 /* After a talk has ended: did the server take its turn (a reply is on its
  * way), or did the talk end on its own -- timeout, or `voice talk stop`?
  * The hands-free loop uses this to tell "wait for the reply" from "nothing
- * was said, go back to the wake word". */
+ * was said, go back to idle". */
 bool mpx_voice_talk_server_took_turn(void);
 
-/* Counts "tts stop" messages, i.e. replies the server has finished
- * sending. Compare before and after to know a reply has ended; combine
- * with mpx_voice_stream_is_playing() to know it has finished playing. */
+/* TTS starts establish reply generations. reply_active stays true through
+ * prebuffering and playback until a valid stop drains all queued audio.
+ * The completion count excludes aborted replies and stale stop sentinels. */
+void     mpx_voice_stream_on_tts_start(bool explicit_start);
+uint32_t mpx_voice_stream_reply_completion_count(void);
+bool     mpx_voice_stream_reply_active(void);
+
+/* Legacy diagnostic count of received "tts stop" messages. */
 uint32_t mpx_voice_stream_tts_stop_count(void);
 
 /* STT closes the utterance for every auto-mode talk, including a duplex
@@ -223,7 +228,7 @@ void mpx_voice_stream_on_server_turn(void);
 
 /* True while a TTS reply is actively being decoded and played -- i.e.
  * between the first downlink audio frame of a reply and its "tts stop".
- * mpx_voice_wake uses this to decide whether a wake word heard mid-reply
+ * mpx_voice_wake uses this to decide whether an IO21/PWA trigger mid-reply
  * means barge-in (see mpx_voice_stream_abort_playback() below) or just an
  * ordinary wake from idle. */
 bool mpx_voice_stream_is_playing(void);
