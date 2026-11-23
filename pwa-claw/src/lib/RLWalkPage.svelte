@@ -42,6 +42,8 @@
     { v: 0.12, label: "Fast" },
   ];
   let fwdSpeed = $state(0.08);
+  // Balance + get up's speeds while it runs: the same, without "Stairs"
+  const BAL_RUN_SPEEDS = FWD_SPEEDS.filter((f) => f.label !== "Stairs");
   let ownCal = $state(null);        // null until the first status: then the robot's current choice
   let wantLog = $state(true);
   let noWifi = $state(false);       // "Without Wi-Fi": the radio off for the run
@@ -785,7 +787,12 @@
         <section>
           <h2>{running ? "Balance and get up" : st.phase === "getup" ? "It fell: getting up" : "Wait for it to stand"}</h2>
           <div class="drive" class:off={!running}>
-            <p class="big">{running ? "Standing still" : st.phase === "getup" ? "Getting up…" : "Standing up…"}</p>
+            <p class="big">{running ? (cmd[0] === 0 ? "Standing still" : `${cmd[0]} m/s forward`) : st.phase === "getup" ? "Getting up…" : "Standing up…"}</p>
+            <div class="seg" role="radiogroup" aria-label="Speed" style="grid-template-columns: repeat({BAL_RUN_SPEEDS.length}, minmax(0, 1fr))">
+              {#each BAL_RUN_SPEEDS as f}
+                <button type="button" role="radio" aria-checked={fwdSpeed === f.v} class:on={fwdSpeed === f.v} onclick={() => (fwdSpeed = f.v)}>{f.label}</button>
+              {/each}
+            </div>
           </div>
           <p class="note">Push it: it rides out what it can and gets up when it falls. Only Stop ends it (or 3 failed tries at getting up).</p>
         </section>

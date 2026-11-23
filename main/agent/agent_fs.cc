@@ -2,11 +2,13 @@
 
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "cJSON.h"
 #include "esp_littlefs.h"
 #include "esp_log.h"
 #include "sdkconfig.h"
@@ -42,6 +44,55 @@ bool path_exists(const char *path)
 {
 	struct stat st;
 	return stat(path, &st) == 0;
+}
+
+/* The agent's JSON files that its startup cannot do without: a damaged one (the power cut off mid-write, say)
+ * stops the scheduler or the router, and with it the whole on-device agent, on every boot. Each must parse as a
+ * JSON array, as its seed in /system/.recovery does. */
+const char *const kMustParse[] = {
+	"scheduler/schedules.json",
+	"router_rules/router_rules.json",
+};
+constexpr long kMustParseMax = 64 * 1024;
+
+/* A damaged file is moved aside (<name>.bad, kept to look at) so recover_missing() puts the seed back. */
+void set_aside_if_damaged(const char *path)
+{
+	FILE *f = fopen(path, "rb");
+	if (!f) {
+		return;   // missing: recover_missing() seeds it
+	}
+	fseek(f, 0, SEEK_END);
+	const long n = ftell(f);
+	fseek(f, 0, SEEK_SET);
+	bool ok = false;
+	if (n > 0 && n <= kMustParseMax) {
+		char *buf = static_cast<char *>(malloc(static_cast<size_t>(n) + 1));
+		if (!buf) {
+			fclose(f);
+			return;   // no memory to check it: leave it alone
+		}
+		const size_t got = fread(buf, 1, static_cast<size_t>(n), f);
+		buf[got] = '\0';
+		cJSON *root = got == static_cast<size_t>(n) ? cJSON_Parse(buf) : nullptr;
+		ok = cJSON_IsArray(root);
+		cJSON_Delete(root);
+		free(buf);
+	}
+	fclose(f);
+	if (ok) {
+		return;
+	}
+	char bad[kPathMax + 8];
+	snprintf(bad, sizeof(bad), "%s.bad", path);
+	unlink(bad);
+	if (rename(path, bad) == 0) {
+		ESP_LOGW(TAG, "%s was damaged (%ld bytes, not a JSON list): moved to %s, the default goes back", path, n, bad);
+	} else if (unlink(path) == 0) {
+		ESP_LOGW(TAG, "%s was damaged: deleted, the default goes back", path);
+	} else {
+		ESP_LOGE(TAG, "%s is damaged and could not be removed: %s", path, strerror(errno));
+	}
 }
 
 bool make_dir(const char *path)
@@ -191,6 +242,12 @@ esp_err_t init_once()
 		}
 	}
 
+	for (const char *rel : kMustParse) {
+		char path[kPathMax];
+		if (join(path, sizeof(path), kDataRoot, rel)) {
+			set_aside_if_damaged(path);
+		}
+	}
 	ret = recover_missing(kRecoveryDir, kDataRoot);
 	if (ret != ESP_OK) {
 		ESP_LOGW(TAG, "recovery into %s incomplete: %s", kDataRoot, esp_err_to_name(ret));
