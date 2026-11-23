@@ -232,8 +232,10 @@
 
   async function balance() {
     if (busy || !recoveryWalk) return;
-    if (st?.builtin !== recoveryWalk) await selectPolicy(recoveryWalk);
-    if (st?.builtin !== recoveryWalk) return;   // could not load it (selectPolicy said why)
+    // After a run the robot frees every model (the RAM goes back to voice) but keeps the selection: load it again
+    // whenever it is not loaded, which also loads the get-up, or the check below finds it missing.
+    if (!st?.loaded || st?.builtin !== recoveryWalk) await selectPolicy(recoveryWalk);
+    if (!st?.loaded || st?.builtin !== recoveryWalk) return;   // could not load it (selectPolicy said why)
     if (!st?.getup_ready) {
       say(`Balance needs the get-up policy, but it could not be loaded${st?.getup_error ? ": " + st.getup_error : ""}.`, true);
       return;
@@ -249,12 +251,14 @@
   // The page's three runs: Omni walk and Stairs walk forward at PRESET_SPEED with that policy (the options below
   // apply: run time, calibration, log ...); Balance and get up is balance() above, standing.
   const PRESET_SPEED = 0.10;
-  const OMNI_WALK = "walk";            // default.mpxp: sku1v2_405_walk_s2
-  const STAIRS = "sku2_stairs";
+  // Both from the recovery repository (mini_pupper_4_rl): its one SKU1 walker walks in every direction and, trained on
+  // rough ground and narrow stairs, climbs steps too. Its get-up loads with it, so a fall gets back up.
+  const OMNI_WALK = "sku1v2_recovery";   // sku1v2_recovery.mpxp: mp4_rl/skills/walker/policies/sku1
+  const STAIRS = "sku1v2_recovery";
   async function runPreset(name) {
     if (busy) return;
     if (st?.builtin !== name || !st?.loaded) await selectPolicy(name);
-    if (st?.builtin !== name) return;   // could not load it (selectPolicy said why)
+    if (st?.builtin !== name || !st?.loaded) return;   // could not load it (selectPolicy said why)
     if (otherRobot) force = true;       // a policy for the other model runs without asking (SKU1 walk on an SKU2 build)
     mode = "forward";
     fwdSpeed = PRESET_SPEED;
@@ -768,7 +772,7 @@
           <section>
             <h2>Omni walk</h2>
             <button type="button" class="go" disabled={busy} onclick={() => runPreset(OMNI_WALK)}>Start · walk forward {PRESET_SPEED.toFixed(2)} m/s</button>
-            <p class="note">{POLICY_LABEL[OMNI_WALK]}, {seconds ? `for ${seconds} s` : "until you press Stop"} (Options below).</p>
+            <p class="note">Walk · SKU1 (the balance walker, gets up if it falls), {seconds ? `for ${seconds} s` : "until you press Stop"} (Options below).</p>
           </section>
         {/if}
 
@@ -776,7 +780,7 @@
           <section>
             <h2>Stairs</h2>
             <button type="button" class="go" disabled={busy} onclick={() => runPreset(STAIRS)}>Start · walk forward {PRESET_SPEED.toFixed(2)} m/s</button>
-            <p class="note">{POLICY_LABEL[STAIRS]}: walks up steps in front of it, {seconds ? `for ${seconds} s` : "until you press Stop"}. Face it square to the stairs.</p>
+            <p class="note">Walk · SKU1 (the balance walker): walks up steps in front of it, {seconds ? `for ${seconds} s` : "until you press Stop"}. Face it square to the stairs.</p>
           </section>
         {/if}
 
