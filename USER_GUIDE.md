@@ -82,31 +82,71 @@ and is the brain behind voice turns.
 
 ## 2. Quick start
 
-1. **Place the robot** on a flat, clear surface, with about a good amount of space
-   around it.
-2. **Power it on.** The screen shows the eyes, and the robot starts a Wi-Fi
-   hotspot.
-3. **On your phone**, join the hotspot. Its name looks like
-   `MPX-Dog 01-XXXXXX`; it has **no password** by default.
-4. **Open the app.** Your phone may offer a "sign in to network" page — that is
-   the robot. If not, open <http://192.168.2.1/>.
-5. **Slide to unlock**, pick your home/office Wi-Fi, and enter its password.
-6. When the app says **Connected**, note the robot's IP and tap **Start**. Then
-   reconnect your phone to the same Wi-Fi and open that IP.
-7. **Turn the controller on** — **L1** in the PS4 scheme, or the power icon in
-   the Haris scheme; this is separate from the robot's physical switch — then
-   use the sticks to walk.
+From the box to walking in four steps. If anything looks different, each step
+links to the full section.
 
-That is the whole setup. Charge the robot fully before the first run, then let
-it stand on the floor for a minute so you can see how the face and the network
-behave. The next sections explain each step.
+| 1. Charge | 2. Turn on | 3. Connect phone | 4. Drive |
+|:---:|:---:|:---:|:---:|
+| <img src="docs/user-guide/img/quickstart/step1-charge.svg" width="72" alt="Battery icon"> | <img src="docs/user-guide/img/quickstart/step2-power.svg" width="72" alt="Power icon"> | <img src="docs/user-guide/img/quickstart/step3-phone.svg" width="72" alt="Phone with Wi-Fi icon"> | <img src="docs/user-guide/img/quickstart/step4-drive.svg" width="72" alt="Move arrows icon"> |
+| Charge fully with the supplied charger | **Press and hold** the power button until the screen lights up | Join the robot's Wi-Fi and open the app | Press **L1**, then **R1** for Trot, then push **MOVE** |
+
+### Step 1: Charge and place
+
+- Charge the battery fully before the first run. Use only the charger and
+  battery that came with the robot.
+- Put the robot on a flat, clear floor, away from stairs, water and heat.
+
+### Step 2: Turn on
+
+- **Press and hold** the power button until the screen lights up, then let go.
+  Leave the robot alone for a few seconds while it starts.
+- It is ready when it **stands straight** and the screen shows **two eyes**.
+- Screen shows something else, or stays dark? See
+  [Power and first boot](#3-power-and-first-boot).
+
+### Step 3: Connect your phone
+
+1. On your phone, join the Wi-Fi named `MPX-Dog 01-XXXXXX`. It has **no
+   password**.
+2. The app may open by itself as a "sign in to network" page. If not, open
+   <http://192.168.2.1/>.
+3. **Slide to unlock.**
+4. Pick your home/office Wi-Fi and enter its password.
+5. When the app says **Connected**, note the robot's IP and tap **Start**.
+   Then put your phone back on the same Wi-Fi and open that IP. The robot's
+   screen shows the IP too.
+
+More detail and screenshots: [Connect your phone](#4-connect-your-phone).
+
+### Step 4: Drive
+
+<p align="center">
+  <img src="docs/user-guide/img/quickstart/controller-map.png" width="640" alt="Controller map: L1 turns the controller on, R1 switches Trot and Pose, MOVE stick walks, POSE stick turns, D-pad sets body height, bottom button jumps">
+</p>
+
+1. Press **L1** to turn the controller on. Nothing moves while it is off.
+   This is separate from the robot's power button.
+2. Press **R1** to switch from **Pose** to **Trot**. The controller always
+   starts in Pose, and the MOVE stick only works in Trot.
+3. Push the **MOVE** stick gently to walk.
+4. Use the **POSE** stick to turn. Let go of the sticks to stop.
+
+Prefer different controls? See [Haris scheme](#53-haris-scheme-alternative).
+
+> [!WARNING]
+> - Press **L1** to turn the controller off before picking the robot up, and
+>   lift it by the body, never by a leg.
+> - Don't force a joint by hand.
+> - Don't leave the robot charging unattended on a soft surface.
+>
+> More in [Safety, care and privacy](#13-safety-care-and-privacy).
 
 ---
 
 ## 3. Power and first boot
 
-Put the robot on the floor or a table with room to move. Switch it on and leave
-it alone for a few seconds while the control loop, screen and Wi-Fi start. You'll know
+Put the robot on the floor or a table with room to move. Press and hold the
+power button until the screen lights up, then leave it alone for a few seconds while the control loop, screen and Wi-Fi start. You'll know
 its ready when it stands straight.
 
 The face tells you what the network is doing:
@@ -123,7 +163,8 @@ The robot creates its own hotspot **every time it boots**, even when it is also
 connected to your Wi-Fi. That is the fallback: if you move to a new network, you
 can always join the hotspot and set it up again.
 
-> **No screen output?** Check the power switch and the battery. If the robot
+> **No screen output?** Make sure you held the power button long enough, and
+> check the battery. If the robot
 > boots but the screen stays dark, see [Troubleshooting](#12-troubleshooting).
 
 ---
