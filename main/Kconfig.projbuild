@@ -780,7 +780,9 @@ config APP_VOICE_OTA_URL
     help
         The MangDang voice gateway's OTA endpoint. The robot POSTs its
         identity here on the first voice turn and gets back the WebSocket
-        URL and token to talk to (saved in NVS). The same host serves the
+        URL and token to talk to (saved in NVS). Changing this URL in a new
+        image automatically re-provisions before the next voice connection;
+        no manual pairing or NVS erase is needed. The same host serves the
         marketplace proxy and the chat ingress (APP_CHAT_SERVER_IP).
 
 config APP_VOICE_BRAIN_LOCAL

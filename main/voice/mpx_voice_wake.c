@@ -875,13 +875,22 @@ static void wake_auto_task(void *arg)
              * so, so reconnecting here is the normal case. */
             if (mpx_voice_state() != MPX_VOICE_READY) {
                 /* Zero setup: the MangDang gateway hands out a URL and a
-                 * token with no activation code, so provision on first use
-                 * -- and again if the stored token stopped working (the
-                 * server's secret changed). */
-                if (!mpx_voice_stored_url()[0]) {
-                    ESP_LOGI(TAG, "hands-free: first use -- provisioning against %s",
+                 * token with no activation code. Provision on first use, when
+                 * a new image changes the OTA endpoint, and again if the stored
+                 * token stopped working (the server's secret changed). */
+                const bool had_url = mpx_voice_stored_url()[0];
+                if (mpx_voice_provision_needed()) {
+                    ESP_LOGI(TAG, "hands-free: %s -- provisioning against %s",
+                             had_url ? "gateway configuration changed" : "first use",
                              MPX_VOICE_DEFAULT_OTA_URL);
-                    (void)mpx_voice_provision(NULL);
+                    const esp_err_t provision_err = mpx_voice_provision(NULL);
+                    if (provision_err != ESP_OK && had_url) {
+                        /* Do not strand a unit when the new endpoint is briefly
+                         * unreachable. Retry provisioning on every reconnect;
+                         * the old credentials remain a fallback until then. */
+                        ESP_LOGW(TAG, "hands-free: provisioning failed (%s) -- trying stored gateway",
+                                 esp_err_to_name(provision_err));
+                    }
                 }
                 if (!mpx_voice_stored_url()[0]) {
                     ESP_LOGW(TAG, "hands-free: not provisioned (no network?) -- press WAKE "

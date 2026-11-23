@@ -101,6 +101,11 @@ esp_err_t mpx_voice_provision(const char *ota_url);
 const char *mpx_voice_stored_url(void);
 const char *mpx_voice_stored_token(void);
 
+/* True when no websocket is stored, or when this image's OTA URL differs from
+ * the one that issued the stored credentials. Automatic connection paths use
+ * this to pick up a gateway change in a new build without erasing NVS. */
+bool mpx_voice_provision_needed(void);
+
 /* Passing NULL for either uses whatever provisioning stored. */
 esp_err_t mpx_voice_connect(const char *url, const char *token);
 void      mpx_voice_disconnect(void);
