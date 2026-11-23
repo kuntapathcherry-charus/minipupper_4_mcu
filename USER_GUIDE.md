@@ -39,14 +39,23 @@ This guide is divided into two halves:
 
 ### What is on it
 
-| Part | What it does |
-|---|---|
-| Four legs, three joints each | 12 servos: abduction (sideways), hip (forward/back) and knee. |
-| 320 × 240 screen | The face. Shows animated eyes, emotions, GIFs and drawings. |
-| Microphone and speaker | Wake word, voice chat, music. |
-| Wi-Fi (2.4 GHz) | Serves the phone app; joins your network for the Store and AI. |
-| USB port | Firmware flashing and serial logs. |
-| Raspberry Pi (MP4+) | ROS 2 / full reinforcement-learning link. |
+<p align="center">
+  <img src="docs/user-guide/img/robot-map.png" width="760" alt="Mini Pupper 4 with labels: 1 body with the ESP32-S3 brain, 2 screen (the face), 3 servos, 4 legs. Also on board: microphone and speaker, Wi-Fi, USB-C charging, Raspberry Pi on MP4+">
+</p>
+
+The numbers match the picture.
+
+| # | Part | What it does |
+|:---:|---|---|
+| 1 | Body (ESP32-S3) | The brain. Runs the legs, the face, sound, Wi-Fi and the phone app. See [How it is put together](#how-it-is-put-together). |
+| 2 | 320 × 240 screen | The face. Shows animated eyes, emotions, GIFs and drawings. |
+| 3 | 12 servos | Three per leg: abduction (sideways), hip (forward/back) and knee. |
+| 4 | Four legs | Walk, trot, pose and jump. |
+| | Microphone and speaker | Wake word, voice chat, music. |
+| | Wi-Fi (2.4 GHz) | Serves the phone app; joins your network for the Store and AI. |
+| | USB-C port | Charging: the light is red while charging and green when full. |
+| | USB port | Firmware flashing and serial logs. |
+| | Raspberry Pi (MP4+ only) | ROS 2 / full reinforcement-learning link. |
 
 ### How it is put together
 
