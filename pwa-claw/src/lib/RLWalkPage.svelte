@@ -416,7 +416,7 @@
   const deg = (v) => (v < 0.01 ? v.toFixed(3) : v.toFixed(2));
 
   // ── The built-in walk policies (main/rl/policies/) ──
-  const POLICY_LABEL = { walk: "Walk · SKU1 v2 · 405 g", terrain: "Terrain · SKU2", sku1: "Walk · SKU1", sku1_terrain: "Terrain · SKU1", sku1_terr11k: "Terrain 2 · SKU1 · 11k", sku1_terr15k: "Terrain 2 · SKU1 · 15k", sku1v2_stairs: "Stairs · SKU1 v2", sku1v2_405_stairs: "Stairs · SKU1 v2 · 405 g", sku1v2_405_walk: "Walk · SKU1 v2 · 405 g", sku1v2_405v2_stairs: "Stairs · SKU1 v2 · v3", sku2_stairs: "Stairs · SKU2", sku2_recovery: "Walk + get-up · SKU2", sku1v2_recovery: "Walk + get-up · SKU1 v2" };
+  const POLICY_LABEL = { walk: "Walk · SKU1 v2 · 405 g", terrain: "Terrain · SKU2", sku1: "Walk · SKU1", sku1_terrain: "Terrain · SKU1", sku1_terr11k: "Terrain 2 · SKU1 · 11k", sku1_terr15k: "Terrain 2 · SKU1 · 15k", sku1v2_stairs: "Stairs · SKU1 v2", sku1v2_405_stairs: "Stairs · SKU1 v2 · 405 g", sku1v2_405_walk: "Walk · SKU1 v2 · 405 g", sku1v2_405v2_stairs: "Stairs · SKU1 v2 · v3", sku2_stairs: "Stairs · SKU2", sku1v2_recovery: "Balance + get-up · SKU1" };
   async function selectPolicy(name) {
     if (busy || (st?.loaded && st?.builtin === name)) return;
     busy = true;

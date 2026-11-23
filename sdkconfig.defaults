@@ -253,7 +253,7 @@ CONFIG_APP_VOICE_AUTO_LISTEN=y
 # voice hold as a skill before touching the robot and releases it afterwards,
 # so wake-word/audio work cannot run underneath inference or raw servo control.
 CONFIG_APP_POLICY_ENABLE=y
-CONFIG_APP_POLICY_ROBOT="sku2"
+CONFIG_APP_POLICY_ROBOT="sku1"
 # Opt-in: unattended motion must not be a new default on the full firmware.
 # CONFIG_APP_POLICY_AUTO_RIGHT is not set
 CONFIG_APP_POLICY_WEIGHT_BITS=16
