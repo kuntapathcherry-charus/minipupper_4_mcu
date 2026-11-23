@@ -82,64 +82,61 @@ and is the brain behind voice turns.
 
 ## 2. Quick start
 
-From the box to walking in four steps. If anything looks different, each step
-links to the full section.
+From the box to walking in four steps. Stuck? Each step links to the details.
 
-| 1. Charge | 2. Turn on | 3. Connect phone | 4. Drive |
-|:---:|:---:|:---:|:---:|
-| <img src="docs/user-guide/img/quickstart/step1-charge.svg" width="72" alt="Battery icon"> | <img src="docs/user-guide/img/quickstart/step2-power.svg" width="72" alt="Power icon"> | <img src="docs/user-guide/img/quickstart/step3-phone.svg" width="72" alt="Phone with Wi-Fi icon"> | <img src="docs/user-guide/img/quickstart/step4-drive.svg" width="72" alt="Move arrows icon"> |
-| Charge fully with the supplied charger | **Press and hold** the power button until the screen lights up | Join the robot's Wi-Fi and open the app | Press **L1**, then **R1** for Trot, then push **MOVE** |
+### 1. Charge and turn on
 
-### Step 1: Charge and place
-
-- Charge the battery fully before the first run. Use only the charger and
-  battery that came with the robot.
-- Put the robot on a flat, clear floor, away from stairs, water and heat.
-
-### Step 2: Turn on
-
-- **Press and hold** the power button until the screen lights up, then let go.
-  Leave the robot alone for a few seconds while it starts.
-- It is ready when it **stands straight** and the screen shows **two eyes**.
-- Screen shows something else, or stays dark? See
-  [Power and first boot](#3-power-and-first-boot).
-
-### Step 3: Connect your phone
-
-1. On your phone, join the Wi-Fi named `MPX-Dog 01-XXXXXX`. It has **no
-   password**.
-2. The app may open by itself as a "sign in to network" page. If not, open
-   <http://192.168.2.1/>.
-3. **Slide to unlock.**
-4. Pick your home/office Wi-Fi and enter its password.
-5. When the app says **Connected**, note the robot's IP and tap **Start**.
-   Then put your phone back on the same Wi-Fi and open that IP. The robot's
-   screen shows the IP too.
-
-More detail and screenshots: [Connect your phone](#4-connect-your-phone).
-
-### Step 4: Drive
+Plug in **USB-C**: the light is **red** while charging and **green** when full.
+Then **press and hold** the power button until the green light comes on, and
+wait until the robot stands up.
 
 <p align="center">
-  <img src="docs/user-guide/img/quickstart/controller-map.png" width="640" alt="Controller map: L1 turns the controller on, R1 switches Trot and Pose, MOVE stick walks, POSE stick turns, D-pad sets body height, bottom button jumps">
+  <img src="docs/user-guide/img/quickstart/1-charging.gif" width="48%" alt="Plugging in a USB-C cable; the light turns red while charging and green when full">
+  <img src="docs/user-guide/img/quickstart/2-power-on.gif" width="48%" alt="Pressing and holding the power button; the green light comes on and the robot stands up">
 </p>
 
-1. Press **L1** to turn the controller on. Nothing moves while it is off.
-   This is separate from the robot's power button.
-2. Press **R1** to switch from **Pose** to **Trot**. The controller always
-   starts in Pose, and the MOVE stick only works in Trot.
-3. Push the **MOVE** stick gently to walk.
-4. Use the **POSE** stick to turn. Let go of the sticks to stop.
+### 2. Join the robot's Wi-Fi
 
-Prefer different controls? See [Haris scheme](#53-haris-scheme-alternative).
+The robot's screen shows its Wi-Fi name, `MP4-XXXXXX`. Join it on your phone in
+**Settings › Wi-Fi**. There is no password.
+
+<p align="center">
+  <img src="docs/user-guide/img/quickstart/3-wifi-name.gif" width="76%" alt="The robot's screen showing its Wi-Fi name, MP4-XXXXXX">
+  <img src="docs/user-guide/img/quickstart/4-join-wifi.gif" width="20%" alt="Phone Wi-Fi settings, joining MP4-XXXXXX">
+</p>
+
+### 3. Connect the robot to your Wi-Fi
+
+The setup page opens by itself. If it doesn't, go to **http://192.168.2.1** in
+your browser. **Slide to unlock**, pick your Wi-Fi, enter its password and tap
+**Join**. The robot's screen then shows its new **IP address**.
+
+<p align="center">
+  <img src="docs/user-guide/img/quickstart/5-setup-wifi.gif" width="20%" alt="Opening 192.168.2.1, unlocking, and joining a Wi-Fi network in the app">
+  <img src="docs/user-guide/img/quickstart/6-new-ip.gif" width="76%" alt="The robot's screen showing its new IP address">
+</p>
+
+More help: [Connect your phone](#4-connect-your-phone).
+
+### 4. Open the controller and drive
+
+Put your phone back on **your** Wi-Fi, open the IP address shown on the robot,
+and slide to unlock. Then:
+
+**L1** on → **R1** to switch to Trot → **MOVE** stick to walk → **POSE** stick to turn. Let go to stop.
+
+<p align="center">
+  <img src="docs/user-guide/img/quickstart/7-open-app.gif" width="21%" alt="Typing the robot's IP address into the browser and unlocking the controller">
+  <img src="docs/user-guide/img/quickstart/controller-map.png" width="74%" alt="Controller map: L1 turns the controller on, R1 switches Pose and Trot, MOVE stick walks, POSE stick turns, D-pad sets body height, bottom button jumps">
+</p>
+
+The controller always starts in **Pose**, and the MOVE stick only works in
+**Trot**. More: [Driving the robot](#5-driving-the-robot).
 
 > [!WARNING]
-> - Press **L1** to turn the controller off before picking the robot up, and
->   lift it by the body, never by a leg.
-> - Don't force a joint by hand.
-> - Don't leave the robot charging unattended on a soft surface.
->
-> More in [Safety, care and privacy](#13-safety-care-and-privacy).
+> Turn the controller off (**L1**) before picking the robot up, and lift it by
+> the body, never a leg. Use the charger that came with the robot. More in
+> [Safety](#13-safety-care-and-privacy).
 
 ---
 
@@ -179,7 +176,7 @@ from an app store, and the core controls do not need internet.
 On the phone, open Wi-Fi settings and join a network named like:
 
 ```text
-MPX-Dog 01-387D1D
+MP4-387D1D
 ```
 
 The suffix is derived from robot's MAC address, so every robot is has a unique
@@ -1063,7 +1060,7 @@ image you flashed, and the exact commands you ran. Do not paste guesses.
 
 | Thing | Default / limit |
 |---|---|
-| Robot hotspot | `MPX-Dog 01-XXXXXX`, open, `192.168.2.1` |
+| Robot hotspot | `MP4-XXXXXX`, open, `192.168.2.1` |
 | Wi-Fi | 2.4 GHz only |
 | Screen | 320 × 240, landscape |
 | GIF upload | 320 × 240 or smaller, under 600 KB |
