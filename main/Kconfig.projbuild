@@ -342,7 +342,7 @@ config APP_PROV_SEAL_KEY_ID
         keys during the overlap.
 
 config APP_FACTORY_SELF_PROVISION
-    bool "Burn a fresh identity on the first boot (factory image only)"
+    bool "Burn a fresh identity on the first boot"
     default n
     depends on APP_IDENTITY_SOURCE_EFUSE
     help
@@ -358,10 +358,11 @@ config APP_FACTORY_SELF_PROVISION
         and announces K_v on the first connect, as it does for a station-run
         unit.
 
-        IRREVERSIBLE, and there is no human in the loop. Keep it in
-        sdkconfig.defaults.factory and never in the default, pilot or shipped
-        profiles. A board that already carries a record is left untouched; a
-        half-burned board is refused rather than "repaired".
+        IRREVERSIBLE, and there is no human in the loop. The production
+        default and factory profiles enable this for tray flashing; the pilot
+        profile explicitly disables it in favour of bench provisioning. A
+        board that already carries a record is left untouched; a half-burned
+        board is refused rather than "repaired".
 
 # ── First-connect enrolment ───────────────────────────────────────
 # The robot announces its own key instead of the factory carrying it: at first

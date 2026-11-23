@@ -1,4 +1,6 @@
-# Factory image: one binary for a tray of blank boards.
+# Explicit factory image: one binary for a tray of blank boards. The
+# production sdkconfig.defaults now enables the same first-boot burn; this
+# profile remains as an explicit, self-documenting factory build target.
 #
 #   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.factory" build
 #
@@ -12,8 +14,8 @@
 # default with the eFuse source) seals K_v to the embedded KMS key and POSTs it
 # to the gateway, exactly as for a station-provisioned unit.
 #
-# Never ship this profile: the first boot of any blank board irreversibly
-# becomes a robot, with no human confirming which board it is.
+# Never boot this profile on an unapproved blank board: its first boot
+# irreversibly becomes a robot, with no human confirming which board it is.
 
 CONFIG_APP_IDENTITY_SOURCE_EFUSE=y
 CONFIG_APP_FACTORY_SELF_PROVISION=y

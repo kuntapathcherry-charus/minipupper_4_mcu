@@ -12,7 +12,18 @@ CONFIG_IDF_TARGET="esp32s3"
 # esp_http_server (the PWA chat and the Pi link ride on it), 240 MHz, and
 # the Wi-Fi/lwIP buffer trims from the Phase 4 internal-RAM work.
 CONFIG_APP_AP_SSID="MPX-Dog 01"
-CONFIG_APP_CHAT_SERVER_IP="35.220.215.160"
+CONFIG_APP_CHAT_SERVER_IP="api.mangdang.org"
+CONFIG_APP_CHAT_SERVER_PORT=80
+CONFIG_APP_VOICE_OTA_URL="http://voice.mangdang.org/xiaozhi/ota/"
+CONFIG_APP_AGENT_GATEWAY_LLM_URL="http://voice.mangdang.org/v1/llm"
+
+# Production identity: a blank board mints and irreversibly burns a random
+# MPX UUID and HMAC root secret on its first boot, then reboots and enrols.
+# Already-provisioned boards are left untouched. Do not boot this image on a
+# blank board unless that board is meant to receive a permanent identity.
+CONFIG_APP_IDENTITY_SOURCE_EFUSE=y
+CONFIG_APP_FACTORY_SELF_PROVISION=y
+
 CONFIG_HTTPD_WS_SUPPORT=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_LWIP_TCP_OOSEQ_MAX_PBUFS=4
