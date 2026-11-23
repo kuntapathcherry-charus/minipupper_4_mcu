@@ -82,7 +82,11 @@
     if (ownCal === null && st?.loaded) ownCal = !!st.own_calibration;
     if (getupAuto === null && st?.loaded) getupAuto = !!st.getup_auto;
   });
-  $effect(() => { if (!active) { getupRun = false; climbRun = false; } });
+  // What the run on now is, for its screen: "stairs" and "balance" show only that (no speed choice), else null
+  let runKind = $state(null);
+  // ... also when this page opens on a run already going (Balance keeps going without the page)
+  const kind = $derived(runKind ?? (active ? (st?.keep_up ? "balance" : st?.stairs ? "stairs" : null) : null));
+  $effect(() => { if (!active) { getupRun = false; climbRun = false; runKind = null; } });
   const canGetUp = $derived(!!st && st.available !== false && (st.getup_ready || !st.loaded));
   const canClimb = $derived(!!st && st.available !== false && (st.climb_ready || !st.loaded));
   // Without Wi-Fi nothing can steer it: walk forward, for a set time.
@@ -181,11 +185,14 @@
     return () => clearInterval(t);
   });
 
+  let stairsReq = false;           // the next start is a Stairs run (no get-up)
   let keepUpReq = false;            // the next start is Balance + get up's "keep up" (only Stop or 3 failed tries end it)
   async function start() {
     if (busy) return;
     const keepUp = keepUpReq;
     keepUpReq = false;
+    const stairsRun = stairsReq;
+    stairsReq = false;
     busy = true;
     test = null;
     logged = null;
@@ -199,6 +206,7 @@
         log: wantLog || offline, offline,
       };
       if (keepUp) body.keep_up = true;
+      if (stairsRun) body.stairs = true;   // the robot turns the get-up off for this run only
       // Before initialization these are unknown, not false: let firmware
       // choose the calibration and recovery defaults of the selected model.
       if (ownCal !== null) body.own_calibration = ownCal;
@@ -251,6 +259,7 @@
     getupAuto = true;
     noWifi = false;
     keepUpReq = true;
+    runKind = "balance";
     await start();
   }
 
@@ -261,25 +270,38 @@
   // rough ground and narrow stairs, climbs steps too. Its get-up loads with it, so a fall gets back up.
   const OMNI_WALK = "sku1v2_recovery";   // sku1v2_recovery.mpxp: mp4_rl/skills/walker/policies/sku1
   const STAIRS = "sku1v2_recovery";
-  async function runPreset(name) {
+  // stairs: no get-up on this run (high steps pitch the body; it stops only if it lies over)
+  async function runPreset(name, stairs = false) {
     if (busy) return;
     if (st?.builtin !== name || !st?.loaded) await selectPolicy(name);
     if (st?.builtin !== name || !st?.loaded) return;   // could not load it (selectPolicy said why)
     if (otherRobot) force = true;       // a policy for the other model runs without asking (SKU1 walk on an SKU2 build)
     mode = "forward";
     fwdSpeed = PRESET_SPEED;
+    stairsReq = stairs;
+    runKind = stairs ? "stairs" : null;
     await start();
   }
 
   // Opened from Home's RL actions: start that run once, when the first status is in (nothing started if a run is
   // already on: the page then just shows it, with its Stop).
-  let autoStarted = false;
+  let autoStarted = $state(false);
+  // ... and once that run is over (Stop, or its time is up), back to Home's joystick.
+  let autoSawActive = false;
+  $effect(() => {
+    if (!autostart) return;
+    if (active) autoSawActive = true;
+    else if (autoSawActive && settled) {
+      autoSawActive = false;
+      onBack?.();
+    }
+  });
   $effect(() => {
     if (autoStarted || !autostart || !st || busy) return;
     autoStarted = true;
     if (st.active) return;
     if (autostart === "balance") balance();
-    else if (autostart === "stairs") runPreset(STAIRS);
+    else if (autostart === "stairs") runPreset(STAIRS, true);
   });
 
   // "Always gets back up": the robot's own watcher (outside any run), on or off until the robot restarts.
@@ -750,6 +772,24 @@
           </div>
         </section>
         <button type="button" class="stop" onclick={stop}>Stop</button>
+      {:else if active && kind === "stairs"}
+        <section>
+          <h2>{running ? "Stairs" : "Wait for it to stand"}</h2>
+          <div class="drive" class:off={!running}>
+            <p class="big">{running ? `Climbing · ${cmd[0]} m/s forward` : "Standing up…"}</p>
+          </div>
+          <p class="note">No get-up on the stairs: it stops (limp) only if it lies over.</p>
+        </section>
+        <button type="button" class="stop" onclick={stop}>Stop</button>
+      {:else if active && kind === "balance"}
+        <section>
+          <h2>{running ? "Balance and get up" : st.phase === "getup" ? "It fell: getting up" : "Wait for it to stand"}</h2>
+          <div class="drive" class:off={!running}>
+            <p class="big">{running ? "Standing still" : st.phase === "getup" ? "Getting up…" : "Standing up…"}</p>
+          </div>
+          <p class="note">Push it: it rides out what it can and gets up when it falls. Only Stop ends it (or 3 failed tries at getting up).</p>
+        </section>
+        <button type="button" class="stop" onclick={stop}>Stop</button>
       {:else if active && mode === "forward"}
         <section>
           <h2>{running ? (cmd[0] === 0 ? "Standing, taking pushes" : "Walking forward") : st.phase === "getup" ? "It fell: getting up" : "Wait for it to stand"}</h2>
@@ -785,6 +825,16 @@
           </div>
         </section>
         <button type="button" class="stop" onclick={stop}>Stop</button>
+      {:else if autostart}
+        <!-- opened from Home's RL actions: just that run, nothing else to choose -->
+        <section>
+          <h2>{autostart === "stairs" ? "Stairs" : "Balance and get up"}</h2>
+          {#if busy || !autoStarted}
+            <p class="note">Starting… keep the robot still for 1 s.</p>
+          {:else}
+            <button type="button" class="go" onclick={() => (autostart === "stairs" ? runPreset(STAIRS, true) : balance())}>Start again</button>
+          {/if}
+        </section>
       {:else}
         {#if st.builtins?.includes(OMNI_WALK)}
           <section>
@@ -797,8 +847,8 @@
         {#if st.builtins?.includes(STAIRS)}
           <section>
             <h2>Stairs</h2>
-            <button type="button" class="go" disabled={busy} onclick={() => runPreset(STAIRS)}>Start · walk forward {PRESET_SPEED.toFixed(2)} m/s</button>
-            <p class="note">Walk · SKU1 (the balance walker): walks up steps in front of it, {seconds ? `for ${seconds} s` : "until you press Stop"}. Face it square to the stairs.</p>
+            <button type="button" class="go" disabled={busy} onclick={() => runPreset(STAIRS, true)}>Start · walk forward {PRESET_SPEED.toFixed(2)} m/s</button>
+            <p class="note">Walk · SKU1 (the balance walker): walks up steps in front of it, {seconds ? `for ${seconds} s` : "until you press Stop"}. Face it square to the stairs. No get-up on the stairs: it keeps walking however it pitches, and stops (limp) only if it lies over for a second.</p>
           </section>
         {/if}
 

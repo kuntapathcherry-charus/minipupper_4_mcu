@@ -535,6 +535,140 @@ static esp_err_t send_listen_state(const char *state, const char *mode)
     return err;
 }
 
+/* ── End of speech, heard here ──────────────────────────────────────────
+ * An auto-mode turn relies on the server's VAD to say "you are done" (stt or
+ * tts start). When the gateway's VAD does not close the utterance, the turn
+ * ran to its time limit every time (12 s, or 90 s on a follow-up) and only
+ * the "stop" sent then made the server transcribe it. So the frames are also
+ * measured here: once speech has been heard, END_SILENCE_FRAMES of quiet end
+ * the turn with "stop" -- the server then transcribes at once. A room too
+ * loud to tell speech from quiet simply never triggers it (the limit and the
+ * server's own VAD still apply). */
+#define DEV_VAD_MIN_RMS          250.0f   /* int16 RMS: never call quieter than this speech */
+#define DEV_VAD_SPEECH_X         3.0f     /* speech: this many times the noise floor */
+#define DEV_VAD_SPEECH_FRAMES    5        /* 300 ms of speech before the turn can end */
+#define DEV_VAD_SETTLE_FRAMES    8        /* the first 480 ms only learn the room: the codec's start-up burst,
+                                           * the start beep and the end of the robot's own reply are not you */
+#define DEV_VAD_END_SILENCE_FRAMES 17     /* ~1 s of quiet after speech ends the turn (a pause to think does not) */
+
+typedef struct {
+    float floor;          /* the room's level (RMS), learned from the quiet frames */
+    int frames;           /* frames measured */
+    int speech;           /* speech frames heard */
+    int quiet;            /* quiet frames in a row since the last speech frame */
+} dev_vad_t;
+
+static float frame_rms(const int16_t *pcm, size_t n)
+{
+    double acc = 0.0;
+    for (size_t i = 0; i < n; i++) {
+        acc += (double)pcm[i] * (double)pcm[i];
+    }
+    return n ? (float)__builtin_sqrt(acc / (double)n) : 0.0f;
+}
+
+/* One 60 ms frame; true when speech was heard and has now ended. */
+static bool dev_vad_update(dev_vad_t *v, const int16_t *pcm, size_t n)
+{
+    const float rms = frame_rms(pcm, n);
+    if (v->frames++ == 0) {
+        v->floor = rms < 150.0f ? rms : 150.0f;   /* capped: you may already be talking in the first frame */
+    }
+    if (v->frames <= DEV_VAD_SETTLE_FRAMES) {
+        if (rms < v->floor) v->floor = rms;       /* the quietest of the settling frames */
+        return false;
+    }
+    const float thr = v->floor * DEV_VAD_SPEECH_X > DEV_VAD_MIN_RMS ? v->floor * DEV_VAD_SPEECH_X : DEV_VAD_MIN_RMS;
+    if (rms > thr) {
+        v->speech++;
+        v->quiet = 0;
+        return false;
+    }
+    /* quiet: follow the room's level (faster down than up) */
+    v->floor += (rms - v->floor) * (rms < v->floor ? 0.3f : 0.05f);
+    if (v->speech >= DEV_VAD_SPEECH_FRAMES) {
+        v->quiet++;
+    }
+    return v->speech >= DEV_VAD_SPEECH_FRAMES && v->quiet >= DEV_VAD_END_SILENCE_FRAMES;
+}
+
+/* ── Which of the codec's channels is the microphone ─────────────────────
+ * The talk capture opens the codec's 4 TDM channels and used to take a fixed
+ * slot (TALK_CAPTURE_PICK). The slot order is not the same on every open:
+ * some turns got the reference or an unused input, the server heard nothing,
+ * and the conversation died after one reply on some boots and not others.
+ * So every turn measures each channel's level (its RMS about its mean) and
+ * streams the loudest, starting from TALK_CAPTURE_PICK and moving only to a
+ * channel clearly louder (MIC_PICK_SWITCH_X, plus a margin) -- speech decides
+ * it within a frame or two. The levels are logged so a layout change shows. */
+#define MIC_PICK_MAX_CH     4
+#define MIC_PICK_SWITCH_X   2.0f
+#define MIC_PICK_MARGIN     50.0f
+#define MIC_PICK_LOG_FRAME  5      /* log the levels once, 300 ms in */
+
+static volatile uint8_t s_mic_slot = TALK_CAPTURE_PICK;   /* the last turn's microphone channel */
+
+uint8_t mpx_voice_talk_mic_slot(void)
+{
+    return s_mic_slot;
+}
+
+typedef struct {
+    float lvl[MIC_PICK_MAX_CH];
+    uint8_t pick;
+    uint32_t frames;
+} mic_pick_t;
+
+/* True when it moved to another channel this frame. */
+static bool mic_pick_update(mic_pick_t *m, const int16_t *raw, size_t n, uint8_t nch)
+{
+    bool moved = false;
+    if (nch > MIC_PICK_MAX_CH) nch = MIC_PICK_MAX_CH;
+    for (uint8_t c = 0; c < nch; c++) {
+        double sum = 0.0, sq = 0.0;
+        for (size_t i = 0; i < n; i++) {
+            const double x = raw[i * nch + c];
+            sum += x;
+            sq += x * x;
+        }
+        const double mean = sum / (double)n;
+        const double var = sq / (double)n - mean * mean;
+        const float rms = var > 0.0 ? (float)__builtin_sqrt(var) : 0.0f;
+        m->lvl[c] = m->frames ? m->lvl[c] * 0.8f + rms * 0.2f : rms;
+    }
+    m->frames++;
+    /* Only the microphones are candidates: this board's 4-channel capture is R,M,N,M (slot 0 the speaker's
+     * reference, 2 unused), so music or the end of a reply on slot 0 can never be streamed as "you". */
+    uint8_t best = m->pick;
+    for (uint8_t c = 0; c < nch; c++) {
+        if (nch == 4 && c != 1 && c != 3) continue;
+        if (m->lvl[c] > m->lvl[best]) best = c;
+    }
+    if (best != m->pick && m->lvl[best] > MIC_PICK_SWITCH_X * m->lvl[m->pick] + MIC_PICK_MARGIN) {
+        ESP_LOGI(TAG, "talk mic: slot %u -> %u (levels %.0f / %.0f / %.0f / %.0f)", (unsigned)m->pick,
+                 (unsigned)best, (double)m->lvl[0], (double)m->lvl[1], (double)(nch > 2 ? m->lvl[2] : 0.0f),
+                 (double)(nch > 3 ? m->lvl[3] : 0.0f));
+        m->pick = best;
+        moved = true;
+        s_mic_slot = best;
+    }
+    if (m->frames == MIC_PICK_LOG_FRAME) {
+        ESP_LOGI(TAG, "talk mic: slot %u (levels %.0f / %.0f / %.0f / %.0f)", (unsigned)m->pick,
+                 (double)m->lvl[0], (double)m->lvl[1], (double)(nch > 2 ? m->lvl[2] : 0.0f),
+                 (double)(nch > 3 ? m->lvl[3] : 0.0f));
+    }
+    return moved;
+}
+
+/* The stream moved to another microphone channel: its level is not the old one's, so start the speech count over
+ * (a louder channel must not look like the start of speech, nor a quieter one like its end). */
+static void dev_vad_new_channel(dev_vad_t *v)
+{
+    if (v->floor > 150.0f) v->floor = 150.0f;
+    v->speech = 0;
+    v->quiet = 0;
+}
+
 static void talk_task(void *arg)
 {
     const uint32_t max_seconds = (uint32_t)(uintptr_t)arg;
@@ -546,6 +680,11 @@ static void talk_task(void *arg)
     int16_t pcm[MPX_VOICE_UPLINK_FRAME];
     uint8_t packet[MPX_VOICE_PACKET_MAX];
     uint32_t frames_sent = 0;
+    dev_vad_t vad = { 0 };
+    bool vad_ended = false;
+    mic_pick_t mic = { .pick = (s_mic_slot == 1 || s_mic_slot == 3) ? s_mic_slot : TALK_CAPTURE_PICK };   /* last turn's */
+    int16_t *raw = NULL;          /* all the codec's channels, when it delivers more than one */
+    uint8_t raw_ch = 1;
 
     if (!phone && !barge_in) {
         const esp_err_t open_err = mpx_audio_capture_start(MPX_VOICE_UPLINK_RATE,
@@ -560,6 +699,13 @@ static void talk_task(void *arg)
         }
     } else if (phone) {
         mpx_phone_audio_set_streaming(true);
+    }
+    if (!barge_in) {
+        raw_ch = TALK_CAPTURE_CHANNELS;
+        raw = heap_caps_malloc(sizeof(int16_t) * MPX_VOICE_UPLINK_FRAME * raw_ch, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!raw) {
+            ESP_LOGW(TAG, "no memory to measure the mic channels -- slot %d fixed", TALK_CAPTURE_PICK);
+        }
     }
 
     const bool auto_mode = s_talk_auto;
@@ -611,6 +757,17 @@ static void talk_task(void *arg)
                 ESP_LOGW(TAG, "processed capture returned a partial frame -- stopping");
                 break;
             }
+        } else if (raw && mpx_audio_capture_channels() == raw_ch) {
+            if (mpx_audio_capture_read_raw(raw, MPX_VOICE_UPLINK_FRAME) != ESP_OK) {
+                ESP_LOGW(TAG, "capture read failed -- stopping");
+                break;
+            }
+            if (mic_pick_update(&mic, raw, MPX_VOICE_UPLINK_FRAME, raw_ch)) {
+                dev_vad_new_channel(&vad);
+            }
+            for (size_t i = 0; i < MPX_VOICE_UPLINK_FRAME; i++) {
+                pcm[i] = raw[i * raw_ch + mic.pick];
+            }
         } else if (mpx_audio_capture_read(pcm, MPX_VOICE_UPLINK_FRAME) != ESP_OK) {
             ESP_LOGW(TAG, "capture read failed -- stopping");
             break;
@@ -623,8 +780,15 @@ static void talk_task(void *arg)
             }
         }
         frames_sent++;
+        if (auto_mode && !barge_in && dev_vad_update(&vad, pcm, MPX_VOICE_UPLINK_FRAME)) {
+            vad_ended = true;   /* you stopped talking: "stop" below makes the server transcribe now */
+            break;
+        }
     }
 
+    if (raw) {
+        heap_caps_free(raw);
+    }
     if (phone) {
         mpx_phone_audio_set_streaming(false);
     } else if (!barge_in) {
@@ -639,7 +803,8 @@ static void talk_task(void *arg)
     }
     ESP_LOGI(TAG, "stopped listening (%" PRIu32 " frames sent, %.1fs%s)",
              frames_sent, (double)frames_sent * MPX_VOICE_FRAME_MS / 1000.0,
-             (auto_mode && s_server_turn) ? ", server took its turn" : "");
+             (auto_mode && s_server_turn) ? ", server took its turn" :
+             vad_ended ? ", end of speech heard here" : "");
 
     s_talk_active = false;
     s_talk_barge = false;

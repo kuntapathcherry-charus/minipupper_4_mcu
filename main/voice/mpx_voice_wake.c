@@ -361,6 +361,16 @@ static void feed_task(void *arg)
             s_run = false;
             break;
         }
+        /* AFE takes slot 1 as its microphone ("RMNN"). This board has a second microphone on slot 3, and the
+         * talk turns measure which one is louder (mpx_voice_talk_mic_slot): when it is slot 3, hand AFE that one,
+         * so barge-in hears you as well as an ordinary turn does. */
+        if (channels == 4 && mpx_voice_talk_mic_slot() == 3) {
+            for (int i = 0; i < chunk; i++) {
+                const int16_t t = buf[i * 4 + 1];
+                buf[i * 4 + 1] = buf[i * 4 + 3];
+                buf[i * 4 + 3] = t;
+            }
+        }
         s_afe_handle->feed(s_afe_data, buf);
     }
 
@@ -722,6 +732,11 @@ static void wake_auto_end_beep(void)
 #define WAKE_FOLLOWUP_SECONDS   90
 /* Upper bound on waiting for a reply to arrive and finish. */
 #define WAKE_REPLY_TIMEOUT_MS   60000
+/* After WE end a listen ("stop": end of speech heard here, or the time limit)
+ * the server only then transcribes it: its answer (stt / tts start) takes a
+ * second or two. Wait this long for it before calling the turn "nothing
+ * heard" -- giving up at once lost replies and ended the conversation. */
+#define WAKE_LATE_ANSWER_MS     6000
 
 static void wake_button_init(void)
 {
@@ -962,6 +977,23 @@ static void wake_auto_task(void *arg)
             if (mpx_voice_talk_active()) {
                 mpx_voice_talk_stop();
                 (void)mpx_voice_talk_wait(1000);
+            }
+            bool stop_pressed = false;
+            for (uint32_t waited = 0; !mpx_voice_talk_server_took_turn() && waited < WAKE_LATE_ANSWER_MS;
+                 waited += WAKE_BUTTON_POLL_MS) {
+                if (wake_auto_poll_button()) {
+                    stop_pressed = true;
+                    break;
+                }
+                vTaskDelay(pdMS_TO_TICKS(WAKE_BUTTON_POLL_MS));
+            }
+            if (stop_pressed) {
+                wake_auto_stop_conversation();
+                wake_auto_release_mic();
+                wake_auto_end_beep();
+                follow_up = false;
+                state = WAKE_ST_LISTEN;
+                break;
             }
             if (!mpx_voice_talk_server_took_turn()) {
                 /* Nothing was said, or nothing the server could use. */

@@ -198,6 +198,10 @@ esp_err_t mpx_voice_talk_wait(uint32_t timeout_ms);
  * was said, go back to idle". */
 bool mpx_voice_talk_server_took_turn(void);
 
+/* The codec channel the last talk turn found to be the microphone (its loudest: 1 or 3 on this board's
+ * R,M,N,M capture). The barge-in front end feeds AFE from it too. */
+uint8_t mpx_voice_talk_mic_slot(void);
+
 /* TTS starts establish reply generations. reply_active stays true through
  * prebuffering and playback until a valid stop drains all queued audio.
  * The completion count excludes aborted replies and stale stop sentinels. */

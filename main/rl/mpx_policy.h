@@ -64,6 +64,7 @@ typedef struct {
     bool     auto_getup;        /* runs started now get up after a fall instead of going limp */
     bool     auto_right;        /* "always gets back up": lying still with nothing running starts the get-up */
     bool     keep_up;           /* this run is Balance + get up's "keep up" (mpx_policy_set_keep_up) */
+    bool     stairs;            /* this run is a Stairs run: no get-up (mpx_policy_set_stairs) */
     uint32_t getups;            /* get-ups in this (or the last) run */
     uint32_t getups_ok;         /* ... that reached the stand */
     /* The climb policy (policies/climb.mpxp, built in when present: omniRL climb_track.py --residual-deg,
@@ -120,6 +121,16 @@ bool mpx_policy_set_auto_getup(bool on);
  */
 #define MPX_POLICY_KEEP_UP_TRIES 3
 void mpx_policy_set_keep_up(bool on);
+
+/**
+ * "Stairs" (the RL page's Stairs): for the next run started, no get-up. The walk keeps walking through the pitch of
+ * high steps: the recovery walker's fall detector (60 deg held 0.3 s, or 45 deg with a fast turn) is replaced by one
+ * that stops (limp) only when the robot lies over, tilt above MPX_POLICY_STAIRS_FALL_DEG for
+ * MPX_POLICY_STAIRS_FALL_S. "Always gets back up" then waits until the robot has stood upright again.
+ */
+#define MPX_POLICY_STAIRS_FALL_DEG 75.0
+#define MPX_POLICY_STAIRS_FALL_S   1.0
+void mpx_policy_set_stairs(bool on);
 
 /**
  * Run the get-up policy alone: from wherever the robot lies (on its back, a

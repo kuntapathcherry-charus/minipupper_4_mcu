@@ -235,6 +235,7 @@ float    *s_cl_work = nullptr;
 bool      s_cl_ok = false;
 bool      s_auto_getup = false;
 bool      s_keep_up = false;      // the next run is a "keep up" one (mpx_policy_set_keep_up)
+bool      s_stairs = false;       // the next run is a Stairs one (mpx_policy_set_stairs)
 
 // Requests from other tasks (under s_mux).
 bool  s_req_start = false, s_req_stop = false, s_req_dry = false, s_req_getup = false, s_req_climb = false;
@@ -399,6 +400,8 @@ struct Run {
     int       gu_tries;               //   the current get-up's failed tries (phase restarts)
     int       imu_bad;                //   consecutive ticks without a valid IMU sample
     bool      deadman_noted;          //   the app went quiet: the command was zeroed (said once)
+    bool      stairs;                 // Stairs: no get-up; stops only when it lies over (MPX_POLICY_STAIRS_FALL_*)
+    double    st_over_since;          //   when the tilt went over MPX_POLICY_STAIRS_FALL_DEG (-1: not over)
     uint32_t  getups;
     int       gu_steps, gu_ok;        // GETUP: steps so far, consecutive steps standing
     int       gu_pstep, gu_back;      // GETUP_PHASE: steps since the motion (re)started, steps still on the back
@@ -691,11 +694,22 @@ void start_run()
     R.auto_up = s_auto_getup && s_gu_ok && !getup_only && !R.climb_only &&
                 std::strcmp(s_gu_net.h->robot, s_net.h->robot) == 0 &&
                 std::memcmp(s_gu_net.h->signs, s_net.h->signs, sizeof(s_net.h->signs)) == 0;
+    // Stairs: no get-up, a fall only when it lies over; "always gets back up" waits until it has stood again
+    R.stairs = s_stairs && s_net.dec != nullptr && !getup_only && !R.climb_only;
+    s_stairs = false;
+    R.st_over_since = -1.0;
+    if (R.stairs) {
+        R.auto_up = false;
+        s_ar_tries = AR_TRIES;
+        ESP_LOGW(TAG, "stairs: no get-up; stops only past %.0f deg for %.1f s", MPX_POLICY_STAIRS_FALL_DEG,
+                 MPX_POLICY_STAIRS_FALL_S);
+    }
     // keep up (Balance + get up): a recovery walk that gets up by itself, only
     R.keep_up = s_keep_up && R.auto_up && s_net.dec != nullptr;
     s_keep_up = false;
     portENTER_CRITICAL(&s_mux);
     s_st.keep_up = R.keep_up;
+    s_st.stairs = R.stairs;
     portEXIT_CRITICAL(&s_mux);
     if (R.keep_up) ESP_LOGW(TAG, "keep up: gets up after every fall; ends on Stop or %d failed get-up tries",
                             MPX_POLICY_KEEP_UP_TRIES);
@@ -1342,6 +1356,20 @@ void rec_imu_tick(uint32_t missed, mpx_policy_state_t st)
     // the walk's side of the run (runner MODE_WALK: its stand ramp and the ramp down after a stop included)
     const bool walking = st == MPX_POLICY_RUN || st == MPX_POLICY_RAMP_IN || st == MPX_POLICY_HOLD_IN ||
                          st == MPX_POLICY_RAMP_OUT || st == MPX_POLICY_HOLD_OUT;
+    if (walking && s_net.dec && R.stairs) {
+        // Stairs: high steps pitch the body; only lying over for a while is a fall (then limp, no get-up)
+        const double t = R.ticks * (TICK_US * 1e-6);
+        if (R.tilt_cf > MPX_POLICY_STAIRS_FALL_DEG) {
+            if (R.st_over_since < 0.0) R.st_over_since = t;
+            if (t - R.st_over_since >= MPX_POLICY_STAIRS_FALL_S && !R.fall_pending) {
+                R.fall_pending = true;
+                ESP_LOGW(TAG, "stairs: lying over (tilt %.0f deg)", R.tilt_cf);
+            }
+        } else {
+            R.st_over_since = -1.0;
+        }
+        return;
+    }
     if (walking && s_net.dec && pol_fall_update(&R.fall, R.rules, R.tilt_cf, R.gyro_norm, R.ticks * (TICK_US * 1e-6)) &&
         !R.fall_pending) {
         R.fall_pending = true;
@@ -1363,6 +1391,7 @@ bool rec_fall_step()
     char why[64];
     if (R.auto_up) std::snprintf(why, sizeof(why), "fall %u: %u get-ups reached (limp)",
                                  static_cast<unsigned>(R.getups + 1), static_cast<unsigned>(max_getups()));
+    else if (R.stairs) std::snprintf(why, sizeof(why), "stairs: fell over (tilt %.0f deg, limp)", R.tilt_cf);
     else std::snprintf(why, sizeof(why), "fell (tilt %.0f deg)", R.tilt_cf);
     if (R.dry) graceful_stop(why);
     else immediate_stop(why);
@@ -3063,6 +3092,11 @@ extern "C" esp_err_t mpx_policy_start(float seconds, float hold_s, bool force, b
 extern "C" void mpx_policy_set_keep_up(bool on)
 {
     s_keep_up = on;
+}
+
+extern "C" void mpx_policy_set_stairs(bool on)
+{
+    s_stairs = on;
 }
 
 extern "C" bool mpx_policy_set_auto_getup(bool on)
