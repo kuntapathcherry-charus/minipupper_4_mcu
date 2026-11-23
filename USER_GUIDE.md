@@ -11,7 +11,7 @@ This guide is divided into two halves:
 - **Development** — sections 10–11: flashing firmware, provisioning, and
   building/publishing skills with the `mpx` CLI.
 
-> New robot? Start with [Quick start](#2-quick-start).
+> **New robot:** start with [Quick start](#2-quick-start).
 
 ---
 
@@ -86,11 +86,14 @@ and is the brain behind voice turns.
 
 ## 2. Quick start
 
-From the box to walking in four steps. Stuck? Each step links to the details.
+From the box to walking in four steps. Each step links to the full details.
 
-| [1. Charge & turn on](#1-charge-and-turn-on) | [2. Join the robot's Wi-Fi](#2-join-the-robots-wi-fi) | [3. Connect to your Wi-Fi](#3-connect-the-robot-to-your-wi-fi) | [4. Open & drive](#4-open-the-controller-and-drive) |
-|:---:|:---:|:---:|:---:|
-| <img src="docs/user-guide/img/quickstart/step1-charge-on.svg" width="64" alt="Lightning bolt"> | <img src="docs/user-guide/img/quickstart/step2-robot-wifi.svg" width="64" alt="Phone with Wi-Fi"> | <img src="docs/user-guide/img/quickstart/step3-home-wifi.svg" width="64" alt="Wi-Fi router"> | <img src="docs/user-guide/img/quickstart/step4-drive.svg" width="64" alt="Gamepad"> |
+<p align="center">
+  <a href="#1-charge-and-turn-on"><img src="docs/user-guide/img/quickstart/tile-step1.png" width="23.7%" alt="Step 1: charge and turn on"></a>
+  <a href="#2-join-the-robots-wi-fi"><img src="docs/user-guide/img/quickstart/tile-step2.png" width="23.7%" alt="Step 2: join the robot's Wi-Fi"></a>
+  <a href="#3-connect-the-robot-to-your-wi-fi"><img src="docs/user-guide/img/quickstart/tile-step3.png" width="23.7%" alt="Step 3: connect the robot to your Wi-Fi"></a>
+  <a href="#4-open-the-controller-and-drive"><img src="docs/user-guide/img/quickstart/tile-step4.png" width="23.7%" alt="Step 4: open the controller and drive"></a>
+</p>
 
 ### 1. Charge and turn on
 
@@ -165,8 +168,9 @@ The robot starts its own hotspot **every time it boots**, even when it is also o
 your Wi-Fi. If you move to a new network, you can always join the hotspot and set
 it up again.
 
-> **Screen stays dark?** Hold the power button until the green light comes on,
-> and check the battery. Still dark? See [Troubleshooting](#12-troubleshooting).
+> **If the screen stays dark:** hold the power button until the green light comes
+> on, and check the battery. If it is still dark, see
+> [Troubleshooting](#12-troubleshooting).
 
 ---
 
@@ -433,7 +437,7 @@ Move skills show a **3D preview** before purchase:
 The preview is a MuJoCo simulation, so poses can differ slightly from the real
 robot.
 
-> **Store empty or "offline"?** The robot cannot reach the internet. Reconnect
+> **If the Store is empty or "offline":** the robot cannot reach the internet. Reconnect
 > it to your Wi-Fi (the screen should show a LAN IP), then reopen the Store.
 
 The **RL** category is marked *soon*; it is not available yet.
