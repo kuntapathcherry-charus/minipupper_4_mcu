@@ -107,9 +107,9 @@ The robot's screen shows its Wi-Fi name, `MP4-XXXXXX`. Join it on your phone in
 
 ### 3. Connect the robot to your Wi-Fi
 
-The setup page opens by itself. If it doesn't, go to **http://192.168.2.1** in
-your browser. **Slide to unlock**, pick your Wi-Fi, enter its password and tap
-**Join**. The robot's screen then shows its new **IP address**.
+**Slide to unlock** and pick your Wi-Fi, then enter its password and tap **Join**.
+(If no page opens, go to **192.168.2.1** in your browser first.)
+The robot's screen then shows its new **IP address**.
 
 <p align="center">
   <img src="docs/user-guide/img/quickstart/5-setup-wifi.gif" width="31%" alt="Opening 192.168.2.1, unlocking, and joining a Wi-Fi network in the app">
@@ -142,11 +142,8 @@ The controller always starts in **Pose**, and the MOVE stick only works in
 
 ## 3. Power and first boot
 
-Put the robot on the floor or a table with room to move. Press and hold the
-power button until the screen lights up, then leave it alone for a few seconds while the control loop, screen and Wi-Fi start. You'll know
-its ready when it stands straight.
-
-The face tells you what the network is doing:
+Turning on is covered in [Quick start](#2-quick-start). Once the robot is on, its
+face tells you what the network is doing:
 
 | Screen | Meaning |
 |---|---|
@@ -156,124 +153,75 @@ The face tells you what the network is doing:
 | An IP address, e.g. `192.168.1.105` | Connected to your network. This is the address to open in the browser. |
 | `ZZ` | Asleep/idle. The robot is still connected; a move or a control wakes it. |
 
-The robot creates its own hotspot **every time it boots**, even when it is also
-connected to your Wi-Fi. That is the fallback: if you move to a new network, you
-can always join the hotspot and set it up again.
+The robot starts its own hotspot **every time it boots**, even when it is also on
+your Wi-Fi. If you move to a new network, you can always join the hotspot and set
+it up again.
 
-> **No screen output?** Make sure you held the power button long enough, and
-> check the battery. If the robot
-> boots but the screen stays dark, see [Troubleshooting](#12-troubleshooting).
+> **Screen stays dark?** Hold the power button until the green light comes on,
+> and check the battery. Still dark? See [Troubleshooting](#12-troubleshooting).
 
 ---
 
 ## 4. Connect your phone
 
-The phone app is a PWA (a web app served by the robot). You do not install it
-from an app store, and the core controls do not need internet.
+The app is a web app (PWA) that the robot serves itself: there is nothing to
+install from an app store, and driving works without internet. The steps are in
+[Quick start](#2-quick-start), steps 2–4. This section covers the details.
 
-### 4.1 Join the robot's hotspot
+### 4.1 The robot's hotspot
 
-On the phone, open Wi-Fi settings and join a network named like:
+- **Name:** `MP4-XXXXXX`. The six characters come from the robot's MAC address,
+  so every robot has its own name. It is **open** (no password).
+- **Address:** on its hotspot the robot is always at **http://192.168.2.1/**.
+  Joining usually opens the app by itself as a "sign in to network" page.
+- **Welcome screen:** on a fresh robot, Wi-Fi setup appears after you slide to
+  unlock. After a successful connection it is skipped for 24 hours.
+- **No internet:** the hotspot is fine for driving, but the Store, AI and voice
+  need the robot on your Wi-Fi.
 
-```text
-MP4-387D1D
-```
+### 4.2 Joining your Wi-Fi
 
-The suffix is derived from robot's MAC address, so every robot is has a unique
-WiFi SSID. The default hotspot is **open** (no password). The robot's address on
-its own hotspot is always **`192.168.2.1`**.
+<img align="right" width="32%" src="docs/user-guide/img/quickstart/6-new-ip.gif" alt="The robot's screen showing its IP address after joining Wi-Fi">
 
-Depending on the phone, joining may open the app automatically as a captive
-portal. If it does not, open a browser and go to:
-
-```text
-http://192.168.2.1/
-```
-
-<p align="center">
-  <img src="docs/user-guide/img/01-lock-screen.png" width="300" alt="Lock screen with the MangDang eyes and a Slide to unlock control">
-</p>
-
-Slide the arrow to the right to unlock. On a fresh robot, the welcome screen
-appears; after a successful connection, welcome is skipped for 24 hours.
-
-### 4.2 Pick your Wi-Fi
-
-The welcome screen lists the networks the robot can hear:
-
-<p align="center">
-  <img src="docs/user-guide/img/02-wifi-setup.png" width="300" alt="Wi-Fi setup page listing nearby networks">
-</p>
-
-1. Tap your network.
-2. Type the password. If your network uses enterprise sign-in, the identity
-   field appears as well.
-3. Tap **Join**.
-
-The robot restarts its network while it joins. The page may stop answering for
-a few seconds; the app will tell you to rejoin the hotspot if that happens. The
-hotspot comes back when the network is up. This is a network restart, not a
-reboot.
-
-When it has joined, the welcome screen shows the connection and the robot's new
-LAN address:
-
-<p align="center">
-  <img src="docs/user-guide/img/03-connected.png" width="300" alt="Connected screen showing the Wi-Fi name and the robot's IP address">
-</p>
-
-The robot's screen shows the same address, which is handy when the phone is not connected
-to the robot's hotspot:
-
-<p align="center">
-  <img src="docs/user-guide/img/04-robot-screen.jpg" width="520" alt="Photo of the robot's screen showing the yellow eyes and its IP address">
-</p>
-
-### 4.3 Move the phone to the same network
-
-The hotspot is fine for driving, but it has **no internet**. For features which work through the robot,
-this is fine. But it is required for the Store to enter the checkout link. To connect via LAN:
-
-1. On the phone, leave the robot hotspot and join the same Wi-Fi you gave the
-   robot.
-2. Open the IP address shown on the robot's screen, for example
-   `http://192.168.1.105/`.
-3. The app reconnects automatically on later visits; if it cannot, tap the
-   Wi-Fi pill at the top of Home and check which network the robot is on.
+- **2.4 GHz only.** A 5 GHz-only network will not appear in the list.
+- **Enterprise networks** show an extra identity field.
+- **While joining**, the robot restarts its network (not a reboot). The page may
+  stop answering for a few seconds; if the app asks, rejoin the hotspot.
+- **When it has joined**, the app and the robot's screen both show its new IP
+  address. Put your phone on the same Wi-Fi and open that address, for example
+  `http://192.168.1.105/`. Later visits reconnect automatically; if not, tap the
+  Wi-Fi pill at the top of Home.
 
 > **The IP can change.** Most routers hand out a new address after a reboot. The
-> screen always shows the current one. If you want a stable address, reserve one
-> for the robot in your router's DHCP settings.
+> screen always shows the current one. For a fixed address, reserve one for the
+> robot in your router's DHCP settings.
 
-If your phone stays on the hotspot, `http://192.168.2.1/` still works for
-driving, but internet features will not work.
+<br clear="right">
+
+### 4.3 Change networks later
+
+- **Home:** tap the Wi-Fi pill in the top-left (or pull it down) to open the
+  network picker.
+- **Settings › ESP Wi-Fi:** see the current network and IP, **Disconnect** or
+  **Forget network** (the robot then falls back to its hotspot), join a nearby
+  network, or type the name of a hidden network.
+- **Settings › ESP hotspot:** rename the robot's hotspot and set a password (at
+  least 8 characters, or empty for open). Saving restarts the hotspot; rejoin it
+  with the new name and password.
+
+> **Security:** the default hotspot is open, so anyone nearby can join it. Set a
+> hotspot password in **Settings › ESP hotspot** if that matters where you use
+> the robot.
 
 ### 4.4 Install it like an app (limited)
 
-The PWA can be added to your phone's home screen for a full-screen,
-app-like window. Use your browser's **Add to Home Screen** / **Install app**
-action. It is still served by the robot, so it only works while the phone can
-reach the robot.
+You can add the app to your phone's home screen with the browser's **Add to Home
+Screen** / **Install app** action. It is still served by the robot, so it only
+works while the phone can reach the robot.
 
-> **Note**: Since the PWA is hosted via HTTP, it is considered an _insecure context_,
-> therefore it can't be installed as an app unless specifically added to a browsers support list
-> like in chorme://flags
- 
-### 4.5 Change networks later
-
-- From **Home**, tap the Wi-Fi pill in the top-left (or pull it down). This opens
-  the network picker.
-- From **Settings › ESP Wi-Fi**, you can see the current network, **Disconnect**
-  or **Forget network**, join a nearby network, or type the name of a hidden
-  network.
-- From **Settings › ESP hotspot**, you can rename the robot's hotspot and set a
-  password (at least 8 characters, or leave it empty for open). Saving restarts
-  the hotspot; rejoin it with the new name and password.
-
-> **Security:** the default hotspot is open, so anyone nearby can join it. If
-> that matters where you use the robot, set a hotspot password in
-> **Settings › ESP hotspot**. It is a local access point, not an internet
-> gateway.
+> **Note:** the app is served over HTTP, which browsers treat as an _insecure
+> context_, so it may not install as a full app unless the address is allowed in
+> the browser's settings (for example in `chrome://flags`).
 
 ---
 
@@ -281,28 +229,28 @@ reach the robot.
 
 ### 5.1 The Home screen
 
-<p align="center">
-  <img src="docs/user-guide/img/05-home.png" width="320" alt="Home screen with the controller, Quick actions and the bottom tabs">
-</p>
+<img align="right" width="26%" src="docs/user-guide/img/05-home.png" alt="Home screen with the controller, volume and the bottom tabs">
 
-| Area | What it does |
-|---|---|
-| Top-left Wi-Fi pill | Shows the network the robot is on. Tap or pull down to change it. |
-| Top-right gamepad icon | Full-screen landscape controller (phone only). |
-| L1 / R1 | Shoulder buttons; their meaning depends on the control scheme. |
-| BODY d-pad | Body height and body roll. |
-| ACTIONS buttons | Face buttons. Their meaning depends on the scheme. |
-| MOVE stick | Walk / strafe. |
-| POSE stick | Turn, or aim the body. |
-| Quick actions | Moves you pinned. **See all** opens the full list. |
-| Bottom tabs | Home, Skills, Store, Chat, Settings. |
-
-The power state matters: when the controller is **off**, movement input is
-disabled. Turn the controller on before trying to walk.
+- **Wi-Fi pill** (top left): the network the robot is on. Tap or pull down to
+  change it.
+- **Gamepad icon** (top right): full-screen landscape controller (phone only).
+- **Controller:** L1/R1, BODY d-pad, ACTIONS buttons, MOVE and POSE sticks. See
+  [5.2](#52-ps4-scheme-default) and [5.3](#53-haris-scheme-alternative).
+- **Quick actions:** moves you pinned. **See all** opens the full list.
+- **Bottom tabs:** Home, Skills, Store, Chat, Settings.
 
 ### 5.2 PS4 scheme (default)
 
-This is the default on a new robot. It behaves like a gamepad.
+The default on a new robot; it behaves like a gamepad. The
+[controller map](#4-open-the-controller-and-drive) in Quick start shows where each
+button is.
+
+The controller always starts in **Pose**: press **R1** for Trot before using the
+left stick. The label above the right stick shows the current mode (`Pose R1` or
+`Trot R1`). Trot is the walking gait; Pose holds the feet and lets you lean, aim
+and pose.
+
+<br clear="right">
 
 | Control | Action |
 |---|---|
@@ -310,14 +258,11 @@ This is the default on a new robot. It behaves like a gamepad.
 | **R1** (right shoulder) | Switch between **Pose** and **Trot**. |
 | **D-pad up / down** | Raise / lower the body. |
 | **D-pad left / right** | Roll the body left / right. |
-| **Left stick** | Walk forward/back and strafe, in Trot. |
-| **Right stick** | Turn left/right in Trot; aim yaw/pitch in Pose. |
+| **Left stick** (MOVE) | Walk forward/back and strafe, in Trot only. |
+| **Right stick** (POSE) | Turn left/right in Trot; aim yaw/pitch in Pose. |
 | **Blue pentagon** (bottom face button) | Jump. |
 | Triangle / square / circle | Unassigned in this scheme. |
 | Arrow keys / WASD (desktop browser) | Walk. |
-
-The label above the right stick shows the current mode (`Pose R1` or `Trot R1`).
-Trot is the walking gait; Pose holds the feet and lets you lean, aim and pose.
 
 ### 5.3 Haris scheme (alternative)
 
@@ -340,34 +285,29 @@ are stored in the app, not on the robot.
 
 ### 5.4 Running moves
 
-Tap a move to run it. Moves are organised in **All moves**:
+<img align="right" width="26%" src="docs/user-guide/img/06-all-moves.png" alt="All moves screen with installed and built-in moves">
 
-<p align="center">
-  <img src="docs/user-guide/img/06-all-moves.png" width="300" alt="All moves screen with installed and built-in moves">
-</p>
+Moves are listed in **All moves** (**See all** on Home):
 
 - **Installed skills** appear first (for example, *Dance With Music*).
 - **Built in** moves include Forward, Backward, Strafe Left/Right, Turn
   Left/Right, Trot, Step, Speed Test, Jump, Jump Fwd and single-leg lifts.
-- Tap a move to run it immediately.
-- Tap the **pin** icon to put it in **Quick actions** on Home.
-- Tap **+** to create a custom action.
-- Use the search box when the list gets long.
+- Tap a move to run it; tap the **pin** icon to add it to **Quick actions**; tap
+  **+** to create a custom action; use the search box when the list gets long.
 
 A move takes over the robot while it runs. Wake word, voice and music are
-stopped, and a second skill is refused rather than queued. This is deliberate:
-one program owns the legs at a time.
+stopped, and a second skill is refused rather than queued: one program owns the
+legs at a time.
 
 ### 5.5 First driving tips
 
-- Start in **Trot** on a flat floor.
-- Move the stick gently; the robot accelerates and decelerates rather than
-  snapping to a speed.
+- Start in **Trot** on a flat floor, and move the stick gently. The robot speeds
+  up and slows down smoothly rather than snapping to a speed.
 - If it bumps something, release the stick. It will stop.
-- To pick it up, turn the controller off first, then lift it by the body — not by
-  a leg.
 - If a leg looks crooked or the robot walks in an arc, see
   [Calibration](#95-calibration). Do not force a joint by hand.
+
+<br clear="right">
 
 ---
 
@@ -377,15 +317,9 @@ A skill is a small program that adds a behaviour: a dance, a walk, a screen
 drawing, a browser task. Skills are managed on the **Skills** tab and in
 **Files**.
 
-<p align="center">
-  <img src="docs/user-guide/img/07-skills-web.png" width="300" alt="Skills page showing web skills">
-</p>
-
 ### 6.1 Move skills
 
-<p align="center">
-  <img src="docs/user-guide/img/08-skills-move.png" width="300" alt="Skills page showing move skills with Run, Pin and Remove">
-</p>
+<img align="right" width="26%" src="docs/user-guide/img/08-skills-move.png" alt="Skills page showing move skills with Run, Pin and Remove">
 
 | Button | What it does |
 |---|---|
@@ -404,25 +338,27 @@ A move skill may be:
 Both run in the same WASM sandbox with the same host API. Only one skill runs at
 a time, and a running skill holds the robot until it finishes.
 
+<br clear="right">
+
 ### 6.2 Web skills
+
+<img align="right" width="26%" src="docs/user-guide/img/07-skills-web.png" alt="Skills page showing web skills">
 
 Web skills are automations that run in a browser outside the robot — for
 example, a merchant skill that searches a shop and returns a result. They are
-listed on the **Web skills** tab with a toggle:
+listed on the **Web skills** tab:
 
-| Control | What it does |
-|---|---|
-| **Turn off / Turn on** | Enables or disables the skill for the agent. |
-| **Web skill · Agent** badge | The skill is agent-facing; it is invoked by the Pupper agent. |
+- **Turn off / Turn on** enables or disables the skill for the agent.
+- A **Web skill · Agent** badge means the Pupper agent runs it for you.
 
 Web skills need the robot to have internet access. They do not run in voice
 turns; see [What voice can do](#83-what-voice-can-and-cannot-do).
 
+<br clear="right">
+
 ### 6.3 Files on the robot
 
-<p align="center">
-  <img src="docs/user-guide/img/18-files.png" width="300" alt="Files page with folders and uploaded skill files">
-</p>
+<img align="right" width="26%" src="docs/user-guide/img/18-files.png" alt="Files page with folders and uploaded skill files">
 
 **Settings › Files on the robot** is a browser for the robot's LittleFS storage.
 It shows the folders the robot uses (`agent`, `display`, `lua`, `voice`, `www`),
@@ -441,16 +377,16 @@ The Files page is the most reliable way to check a skill you installed is on the
 then pin it to Quick actions. Custom actions are stored in the browser; the
 underlying move or skill still has to exist on the robot.
 
-Currently, it act's like an alias for Move skills. In the future, you can add Lua scripts to
-be executable from custom actions/.
+For now a custom action works as a shortcut to a move skill. Running Lua scripts
+from custom actions is planned.
+
+<br clear="right">
 
 ---
 
 ## 7. The Skill Store
 
-<p align="center">
-  <img src="docs/user-guide/img/09-store.png" width="300" alt="Store with web skills, categories and featured skills">
-</p>
+<img align="right" width="26%" src="docs/user-guide/img/09-store.png" alt="Store with web skills, categories and featured skills">
 
 The Store is where new move and web skills come from. It needs the **robot** to
 have internet access — connect it to your Wi-Fi and open the app through the
@@ -468,26 +404,25 @@ robot's LAN IP, not through the hotspot.
 | **A price** | Opens checkout in your browser. |
 | **Open** | You already own it. |
 
-<p align="center">
-  <img src="docs/user-guide/img/10-store-checkout.png" width="300" alt="Checkout screen for a skill">
-</p>
+<br clear="right">
+
+<img align="right" width="24%" src="docs/user-guide/img/10-store-checkout.png" alt="Checkout screen for a skill">
+
+<img align="right" width="24%" src="docs/user-guide/img/11-skill-preview.png" alt="3D preview of a move skill">
 
 A paid skill opens the gateway's secure checkout in a browser. After payment,
 the app polls the order and installs the skill on the robot. Keep the app open
 while the order is pending.
 
-Move skills show a **3D preview** before purchase:
-
-<p align="center">
-  <img src="docs/user-guide/img/11-skill-preview.png" width="300" alt="3D preview of a move skill">
-</p>
-
-The preview is a MuJoCo simulation, and have some slight pose differences compared to the real machine.
+Move skills show a **3D preview** before purchase. The preview is a MuJoCo
+simulation, so poses can differ slightly from the real robot.
 
 > **Store empty or "offline"?** The robot cannot reach the internet. Reconnect
 > it to your Wi-Fi (the screen should show a LAN IP), then reopen the Store.
 
 The **RL** category is marked *soon*; it is not available yet.
+
+<br clear="right">
 
 ---
 
@@ -495,11 +430,9 @@ The **RL** category is marked *soon*; it is not available yet.
 
 The **Chat** tab is how you talk to Pupper, the robot's on-device agent.
 
-<p align="center">
-  <img src="docs/user-guide/img/12-chat.png" width="300" alt="Chat screen with the Pupper agent">
-</p>
-
 ### 8.1 Text chat
+
+<img align="right" width="26%" src="docs/user-guide/img/12-chat.png" alt="Chat screen with the Pupper agent">
 
 Type a request and send it. Pupper can answer questions, run a move or skill,
 write and run short Lua scripts, show an emotion, draw on the screen, play music,
@@ -513,30 +446,31 @@ actions ask for confirmation before doing anything destructive.
   and text turns.
 - The **Cloud** brain is not available in this build; Pupper handles chat.
 
+<br clear="right">
+
 ### 8.2 Voice
 
-Tap the **microphone** in the Chat tab, or say **"Hi ESP"**. The voice panel 
+<img align="right" width="26%" src="docs/user-guide/img/13-voice.png" alt="Voice panel showing listening status">
+
+Tap the **microphone** in the Chat tab, or say **"Hi ESP"**. The voice panel
 shows what is happening:
 
-| Status | Meaning |
-|---|---|
-| **Listening — speak naturally** | The microphone is open. |
-| **Pupper is thinking** | The turn is being processed. |
-| **Speaking — you can interrupt** | The answer is playing; start talking to interrupt. |
-| **Ready for a follow-up** | You can continue without saying the wake word again. |
+- **Listening — speak naturally:** the microphone is open.
+- **Pupper is thinking:** the turn is being processed.
+- **Speaking — you can interrupt:** the answer is playing; start talking to
+  interrupt.
+- **Ready for a follow-up:** carry on without saying the wake word again.
 
 Use **Start talking**, **Speak again**, **Interrupt & speak**, and **End voice
 chat** to control the session. You can also end a session by saying the equivalent of
 "goodbye" or "enough".
 
-<p align="center">
-  <img src="docs/user-guide/img/13-voice.png" width="300" alt="Voice panel showing listening status">
-</p>
-
 Voice needs internet: speech recognition and speech synthesis run on the MangDang
 gateway, and the robot's agent answers the turn. The gateway pairs with the
 robot on first use; if it says **Not paired**, use **Pair with MangDang now** in
 **Settings › AI & Voice**.
+
+<br clear="right">
 
 ### 8.3 What voice can and cannot do
 
@@ -583,38 +517,39 @@ Music is part of the voice/AI settings, but it also works without a chat:
 
 ## 9. Settings
 
-<p align="center">
-  <img src="docs/user-guide/img/15-settings.png" width="300" alt="Settings screen">
-</p>
+<img align="right" width="26%" src="docs/user-guide/img/15-settings.png" alt="Settings screen">
 
 Settings is split into sections. The most useful rows:
 
-| Section | Row | What it does |
-|---|---|---|
-| ESP32 | **ESP Wi-Fi** | Current network and IP; join, disconnect, forget, hidden network. |
-| ESP32 | **ESP hotspot** | Rename the robot's hotspot and set a password. |
-| Raspberry Pi | **Pi link** | Optional Pi connection; shows whether the Pi is reachable. |
-| Raspberry Pi | **Shut down / Restart** | Stops the Pi safely. Only when a Pi is connected. |
-| AI | **AI & Voice** | AI mode, keys, voice pairing, microphone/speaker and music. |
-| AI | **Allow writes (YOLO)** | On: the agent saves and deletes files without asking. Off: it asks first. Leave it off unless you are testing. |
-| Robot | **Control scheme** | PS4 or Haris; saved on the robot. |
-| Robot | **Display** | GIFs, brightness, 180° flip. |
-| Robot | **Calibration** | Per-joint offsets with a 3D leg view. |
-| Robot | **MangDang Servo Studio** | Servo gains on the driver boards. Advanced. |
-| Robot | **Rest when idle** | Lie down and switch the servos off after 2, 5, 10 or 30 minutes, or never. **Rest now** / **Stand up now**. |
-| Advanced | **Files on the robot** | Browse, upload and run skill files. |
+- **ESP32**
+  - **ESP Wi-Fi:** current network and IP; join, disconnect, forget, hidden
+    network.
+  - **ESP hotspot:** rename the robot's hotspot and set a password.
+- **Raspberry Pi**
+  - **Pi link:** optional Pi connection; shows whether the Pi is reachable.
+  - **Shut down / Restart:** stops the Pi safely. Only when a Pi is connected.
+- **AI**
+  - **AI & Voice:** AI mode, keys, voice pairing, microphone/speaker and music.
+  - **Allow writes (YOLO):** on, the agent saves and deletes files without
+    asking; off, it asks first. Leave it off unless you are testing.
+- **Robot**
+  - **Control scheme:** PS4 or Haris; saved on the robot.
+  - **Display:** GIFs, brightness, 180° flip.
+  - **Calibration:** per-joint offsets with a 3D leg view.
+  - **MangDang Servo Studio:** servo gains on the driver boards. Advanced.
+  - **Rest when idle:** lie down and switch the servos off after 2, 5, 10 or 30
+    minutes, or never. **Rest now** / **Stand up now**.
+- **Advanced**
+  - **Files on the robot:** browse, upload and run skill files.
+
+<br clear="right">
 
 ### 9.1 Network
 
-- **ESP Wi-Fi** shows the connected SSID and IP, plus **Disconnect** and
-  **Forget network**. Forgetting removes the saved credentials; the robot falls
-  back to its hotspot only.
-- **Networks nearby** is a live scan. Tap a network, enter the password, join.
-- **Join a hidden network** lets you type an SSID that is not broadcast.
-- **ESP hotspot** changes the robot's own AP. Saving restarts the hotspot and
-  may disconnect the phone; rejoin with the new name and password.
-
-The robot supports 2.4 GHz Wi-Fi only. A 5 GHz-only network will not appear.
+**ESP Wi-Fi** and **ESP hotspot** are covered in
+[Change networks later](#43-change-networks-later). **Networks nearby** is a live
+scan: tap a network, enter the password, join. The robot supports 2.4 GHz Wi-Fi
+only.
 
 ### 9.2 AI and voice
 
@@ -634,9 +569,7 @@ a volume slider.
 
 ### 9.4 Display
 
-<p align="center">
-  <img src="docs/user-guide/img/17-display.png" width="300" alt="Display settings with animations, brightness and flip">
-</p>
+<img align="right" width="26%" src="docs/user-guide/img/17-display.png" alt="Display settings with animations, brightness and flip">
 
 - **Play animation** pauses the eyes and plays the selected GIF.
 - **Animations** lists built-in and uploaded GIFs with their size. Built-in
@@ -648,11 +581,11 @@ a volume slider.
 - **Brightness**: 5–100%, in 5% steps.
 - **Turned 180°**: flips the picture if the screen was mounted upside down.
 
+<br clear="right">
+
 ### 9.5 Calibration
 
-<p align="center">
-  <img src="docs/user-guide/img/16-calibration.png" width="300" alt="Calibration screen with a 3D leg and joint offsets">
-</p>
+<img align="right" width="26%" src="docs/user-guide/img/16-calibration.png" alt="Calibration screen with a 3D leg and joint offsets">
 
 Calibration adjusts the **zero offset** of each servo. Use it when a leg is
 visibly crooked in the neutral pose, or when the robot walks in a curve with all
@@ -668,6 +601,8 @@ four feet on the ground.
 
 Do not use calibration to compensate for a mechanically bent leg, a loose horn
 or a broken servo. Fix the hardware first; offsets are meant for small trim only.
+
+<br clear="right">
 
 ### 9.6 MangDang Servo Studio
 
