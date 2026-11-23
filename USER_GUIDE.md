@@ -229,28 +229,23 @@ works while the phone can reach the robot.
 
 ### 5.1 The Home screen
 
-<img align="right" width="26%" src="docs/user-guide/img/05-home.png" alt="Home screen with the controller, volume and the bottom tabs">
+<p align="center">
+  <img src="docs/user-guide/img/05-home.png" width="320" alt="Home screen with the controller, volume and the bottom tabs">
+</p>
 
-- **Wi-Fi pill** (top left): the network the robot is on. Tap or pull down to
-  change it.
-- **Gamepad icon** (top right): full-screen landscape controller (phone only).
-- **Controller:** L1/R1, BODY d-pad, ACTIONS buttons, MOVE and POSE sticks. See
-  [5.2](#52-ps4-scheme-default) and [5.3](#53-haris-scheme-alternative).
-- **Quick actions:** moves you pinned. **See all** opens the full list.
-- **Bottom tabs:** Home, Skills, Store, Chat, Settings.
+| Area | What it does |
+|---|---|
+| Wi-Fi pill (top left) | Shows the network the robot is on. Tap or pull down to change it. |
+| Gamepad icon (top right) | Full-screen landscape controller (phone only). |
+| Controller | L1/R1, BODY d-pad, ACTIONS buttons, MOVE and POSE sticks. See [5.2](#52-ps4-scheme-default) and [5.3](#53-haris-scheme-alternative). |
+| Quick actions | Moves you pinned. **See all** opens the full list. |
+| Bottom tabs | Home, Skills, Store, Chat, Settings. |
 
 ### 5.2 PS4 scheme (default)
 
 The default on a new robot; it behaves like a gamepad. The
 [controller map](#4-open-the-controller-and-drive) in Quick start shows where each
 button is.
-
-The controller always starts in **Pose**: press **R1** for Trot before using the
-left stick. The label above the right stick shows the current mode (`Pose R1` or
-`Trot R1`). Trot is the walking gait; Pose holds the feet and lets you lean, aim
-and pose.
-
-<br clear="right">
 
 | Control | Action |
 |---|---|
@@ -263,6 +258,11 @@ and pose.
 | **Blue pentagon** (bottom face button) | Jump. |
 | Triangle / square / circle | Unassigned in this scheme. |
 | Arrow keys / WASD (desktop browser) | Walk. |
+
+The controller always starts in **Pose**: press **R1** for Trot before using the
+left stick. The label above the right stick shows the current mode (`Pose R1` or
+`Trot R1`). Trot is the walking gait; Pose holds the feet and lets you lean, aim
+and pose.
 
 ### 5.3 Haris scheme (alternative)
 
@@ -285,9 +285,11 @@ are stored in the app, not on the robot.
 
 ### 5.4 Running moves
 
-<img align="right" width="26%" src="docs/user-guide/img/06-all-moves.png" alt="All moves screen with installed and built-in moves">
-
 Moves are listed in **All moves** (**See all** on Home):
+
+<p align="center">
+  <img src="docs/user-guide/img/06-all-moves.png" width="300" alt="All moves screen with installed and built-in moves">
+</p>
 
 - **Installed skills** appear first (for example, *Dance With Music*).
 - **Built in** moves include Forward, Backward, Strafe Left/Right, Turn
@@ -307,8 +309,6 @@ legs at a time.
 - If a leg looks crooked or the robot walks in an arc, see
   [Calibration](#95-calibration). Do not force a joint by hand.
 
-<br clear="right">
-
 ---
 
 ## 6. Skills
@@ -317,9 +317,15 @@ A skill is a small program that adds a behaviour: a dance, a walk, a screen
 drawing, a browser task. Skills are managed on the **Skills** tab and in
 **Files**.
 
+<p align="center">
+  <img src="docs/user-guide/img/07-skills-web.png" width="300" alt="Skills page showing web skills">
+</p>
+
 ### 6.1 Move skills
 
-<img align="right" width="26%" src="docs/user-guide/img/08-skills-move.png" alt="Skills page showing move skills with Run, Pin and Remove">
+<p align="center">
+  <img src="docs/user-guide/img/08-skills-move.png" width="300" alt="Skills page showing move skills with Run, Pin and Remove">
+</p>
 
 | Button | What it does |
 |---|---|
@@ -338,27 +344,25 @@ A move skill may be:
 Both run in the same WASM sandbox with the same host API. Only one skill runs at
 a time, and a running skill holds the robot until it finishes.
 
-<br clear="right">
-
 ### 6.2 Web skills
-
-<img align="right" width="26%" src="docs/user-guide/img/07-skills-web.png" alt="Skills page showing web skills">
 
 Web skills are automations that run in a browser outside the robot — for
 example, a merchant skill that searches a shop and returns a result. They are
-listed on the **Web skills** tab:
+listed on the **Web skills** tab with a toggle:
 
-- **Turn off / Turn on** enables or disables the skill for the agent.
-- A **Web skill · Agent** badge means the Pupper agent runs it for you.
+| Control | What it does |
+|---|---|
+| **Turn off / Turn on** | Enables or disables the skill for the agent. |
+| **Web skill · Agent** badge | The skill is agent-facing; it is invoked by the Pupper agent. |
 
 Web skills need the robot to have internet access. They do not run in voice
 turns; see [What voice can do](#83-what-voice-can-and-cannot-do).
 
-<br clear="right">
-
 ### 6.3 Files on the robot
 
-<img align="right" width="26%" src="docs/user-guide/img/18-files.png" alt="Files page with folders and uploaded skill files">
+<p align="center">
+  <img src="docs/user-guide/img/18-files.png" width="300" alt="Files page with folders and uploaded skill files">
+</p>
 
 **Settings › Files on the robot** is a browser for the robot's LittleFS storage.
 It shows the folders the robot uses (`agent`, `display`, `lua`, `voice`, `www`),
@@ -380,13 +384,13 @@ underlying move or skill still has to exist on the robot.
 For now a custom action works as a shortcut to a move skill. Running Lua scripts
 from custom actions is planned.
 
-<br clear="right">
-
 ---
 
 ## 7. The Skill Store
 
-<img align="right" width="26%" src="docs/user-guide/img/09-store.png" alt="Store with web skills, categories and featured skills">
+<p align="center">
+  <img src="docs/user-guide/img/09-store.png" width="300" alt="Store with web skills, categories and featured skills">
+</p>
 
 The Store is where new move and web skills come from. It needs the **robot** to
 have internet access — connect it to your Wi-Fi and open the app through the
@@ -404,25 +408,27 @@ robot's LAN IP, not through the hotspot.
 | **A price** | Opens checkout in your browser. |
 | **Open** | You already own it. |
 
-<br clear="right">
-
-<img align="right" width="24%" src="docs/user-guide/img/10-store-checkout.png" alt="Checkout screen for a skill">
-
-<img align="right" width="24%" src="docs/user-guide/img/11-skill-preview.png" alt="3D preview of a move skill">
+<p align="center">
+  <img src="docs/user-guide/img/10-store-checkout.png" width="300" alt="Checkout screen for a skill">
+</p>
 
 A paid skill opens the gateway's secure checkout in a browser. After payment,
 the app polls the order and installs the skill on the robot. Keep the app open
 while the order is pending.
 
-Move skills show a **3D preview** before purchase. The preview is a MuJoCo
-simulation, so poses can differ slightly from the real robot.
+Move skills show a **3D preview** before purchase:
+
+<p align="center">
+  <img src="docs/user-guide/img/11-skill-preview.png" width="300" alt="3D preview of a move skill">
+</p>
+
+The preview is a MuJoCo simulation, so poses can differ slightly from the real
+robot.
 
 > **Store empty or "offline"?** The robot cannot reach the internet. Reconnect
 > it to your Wi-Fi (the screen should show a LAN IP), then reopen the Store.
 
 The **RL** category is marked *soon*; it is not available yet.
-
-<br clear="right">
 
 ---
 
@@ -430,9 +436,11 @@ The **RL** category is marked *soon*; it is not available yet.
 
 The **Chat** tab is how you talk to Pupper, the robot's on-device agent.
 
-### 8.1 Text chat
+<p align="center">
+  <img src="docs/user-guide/img/12-chat.png" width="300" alt="Chat screen with the Pupper agent">
+</p>
 
-<img align="right" width="26%" src="docs/user-guide/img/12-chat.png" alt="Chat screen with the Pupper agent">
+### 8.1 Text chat
 
 Type a request and send it. Pupper can answer questions, run a move or skill,
 write and run short Lua scripts, show an emotion, draw on the screen, play music,
@@ -446,31 +454,30 @@ actions ask for confirmation before doing anything destructive.
   and text turns.
 - The **Cloud** brain is not available in this build; Pupper handles chat.
 
-<br clear="right">
-
 ### 8.2 Voice
-
-<img align="right" width="26%" src="docs/user-guide/img/13-voice.png" alt="Voice panel showing listening status">
 
 Tap the **microphone** in the Chat tab, or say **"Hi ESP"**. The voice panel
 shows what is happening:
 
-- **Listening — speak naturally:** the microphone is open.
-- **Pupper is thinking:** the turn is being processed.
-- **Speaking — you can interrupt:** the answer is playing; start talking to
-  interrupt.
-- **Ready for a follow-up:** carry on without saying the wake word again.
+| Status | Meaning |
+|---|---|
+| **Listening — speak naturally** | The microphone is open. |
+| **Pupper is thinking** | The turn is being processed. |
+| **Speaking — you can interrupt** | The answer is playing; start talking to interrupt. |
+| **Ready for a follow-up** | You can continue without saying the wake word again. |
 
 Use **Start talking**, **Speak again**, **Interrupt & speak**, and **End voice
 chat** to control the session. You can also end a session by saying the equivalent of
 "goodbye" or "enough".
 
+<p align="center">
+  <img src="docs/user-guide/img/13-voice.png" width="300" alt="Voice panel showing listening status">
+</p>
+
 Voice needs internet: speech recognition and speech synthesis run on the MangDang
 gateway, and the robot's agent answers the turn. The gateway pairs with the
 robot on first use; if it says **Not paired**, use **Pair with MangDang now** in
 **Settings › AI & Voice**.
-
-<br clear="right">
 
 ### 8.3 What voice can and cannot do
 
@@ -517,32 +524,26 @@ Music is part of the voice/AI settings, but it also works without a chat:
 
 ## 9. Settings
 
-<img align="right" width="26%" src="docs/user-guide/img/15-settings.png" alt="Settings screen">
+<p align="center">
+  <img src="docs/user-guide/img/15-settings.png" width="300" alt="Settings screen">
+</p>
 
 Settings is split into sections. The most useful rows:
 
-- **ESP32**
-  - **ESP Wi-Fi:** current network and IP; join, disconnect, forget, hidden
-    network.
-  - **ESP hotspot:** rename the robot's hotspot and set a password.
-- **Raspberry Pi**
-  - **Pi link:** optional Pi connection; shows whether the Pi is reachable.
-  - **Shut down / Restart:** stops the Pi safely. Only when a Pi is connected.
-- **AI**
-  - **AI & Voice:** AI mode, keys, voice pairing, microphone/speaker and music.
-  - **Allow writes (YOLO):** on, the agent saves and deletes files without
-    asking; off, it asks first. Leave it off unless you are testing.
-- **Robot**
-  - **Control scheme:** PS4 or Haris; saved on the robot.
-  - **Display:** GIFs, brightness, 180° flip.
-  - **Calibration:** per-joint offsets with a 3D leg view.
-  - **MangDang Servo Studio:** servo gains on the driver boards. Advanced.
-  - **Rest when idle:** lie down and switch the servos off after 2, 5, 10 or 30
-    minutes, or never. **Rest now** / **Stand up now**.
-- **Advanced**
-  - **Files on the robot:** browse, upload and run skill files.
-
-<br clear="right">
+| Section | Row | What it does |
+|---|---|---|
+| ESP32 | **ESP Wi-Fi** | Current network and IP; join, disconnect, forget, hidden network. |
+| ESP32 | **ESP hotspot** | Rename the robot's hotspot and set a password. |
+| Raspberry Pi | **Pi link** | Optional Pi connection; shows whether the Pi is reachable. |
+| Raspberry Pi | **Shut down / Restart** | Stops the Pi safely. Only when a Pi is connected. |
+| AI | **AI & Voice** | AI mode, keys, voice pairing, microphone/speaker and music. |
+| AI | **Allow writes (YOLO)** | On: the agent saves and deletes files without asking. Off: it asks first. Leave it off unless you are testing. |
+| Robot | **Control scheme** | PS4 or Haris; saved on the robot. |
+| Robot | **Display** | GIFs, brightness, 180° flip. |
+| Robot | **Calibration** | Per-joint offsets with a 3D leg view. |
+| Robot | **MangDang Servo Studio** | Servo gains on the driver boards. Advanced. |
+| Robot | **Rest when idle** | Lie down and switch the servos off after 2, 5, 10 or 30 minutes, or never. **Rest now** / **Stand up now**. |
+| Advanced | **Files on the robot** | Browse, upload and run skill files. |
 
 ### 9.1 Network
 
@@ -569,7 +570,9 @@ a volume slider.
 
 ### 9.4 Display
 
-<img align="right" width="26%" src="docs/user-guide/img/17-display.png" alt="Display settings with animations, brightness and flip">
+<p align="center">
+  <img src="docs/user-guide/img/17-display.png" width="300" alt="Display settings with animations, brightness and flip">
+</p>
 
 - **Play animation** pauses the eyes and plays the selected GIF.
 - **Animations** lists built-in and uploaded GIFs with their size. Built-in
@@ -581,11 +584,11 @@ a volume slider.
 - **Brightness**: 5–100%, in 5% steps.
 - **Turned 180°**: flips the picture if the screen was mounted upside down.
 
-<br clear="right">
-
 ### 9.5 Calibration
 
-<img align="right" width="26%" src="docs/user-guide/img/16-calibration.png" alt="Calibration screen with a 3D leg and joint offsets">
+<p align="center">
+  <img src="docs/user-guide/img/16-calibration.png" width="300" alt="Calibration screen with a 3D leg and joint offsets">
+</p>
 
 Calibration adjusts the **zero offset** of each servo. Use it when a leg is
 visibly crooked in the neutral pose, or when the robot walks in a curve with all
@@ -601,8 +604,6 @@ four feet on the ground.
 
 Do not use calibration to compensate for a mechanically bent leg, a loose horn
 or a broken servo. Fix the hardware first; offsets are meant for small trim only.
-
-<br clear="right">
 
 ### 9.6 MangDang Servo Studio
 
