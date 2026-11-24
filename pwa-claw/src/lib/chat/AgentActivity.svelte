@@ -15,8 +15,7 @@
   let last = $derived(steps[steps.length - 1]);
   let open = $state(true);
 
-  // Auto-collapse once the turn finishes, but let the user re-open. Voice
-  // disables this for tool-only turns so their visible result is not hidden.
+  // Auto-collapse once the turn finishes, but let the user re-open.
   let wasActive = false;
   $effect(() => {
     if (wasActive && !active && autoCollapse) open = false;
@@ -76,6 +75,9 @@
 
 <style>
   .activity {
+    /* A flex transcript must scroll, not compress this card and clip its
+       header against the overflow below. Folding remains controlled by open. */
+    flex-shrink: 0;
     margin: 2px 16px;
     max-width: 85%;
     border-radius: 18px;
