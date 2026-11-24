@@ -1,9 +1,11 @@
 <script>
   import AgentActivity from "./AgentActivity.svelte";
   import ChatMessage from "./ChatMessage.svelte";
+  import VoiceMicMonitor from "./VoiceMicMonitor.svelte";
 
   let {
     messages = [],
+    micSamples = [],
     voiceState = "idle",
     busy = false,
     error = "",
@@ -83,6 +85,8 @@
     <span>{statusText(voiceState)}</span>
   </div>
 
+  <VoiceMicMonitor samples={micSamples} />
+
   <div class="transcript" bind:this={transcriptEl} aria-live="polite" aria-label="Live voice transcript">
     {#if messages.length === 0}
       <div class="empty">
@@ -102,6 +106,7 @@
             steps={item.steps}
             title={activityTitle(item.steps)}
             active={voiceState === "thinking" && item.endIndex === messages.length - 1}
+            autoCollapse={messages[item.endIndex + 1]?.role === "assistant"}
           />
         {:else}
           {@const chatMessage = { ...item.message, role: item.message.role === "user" ? "user" : "bot" }}

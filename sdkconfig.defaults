@@ -259,6 +259,8 @@ CONFIG_APP_VOICE_ENABLE=y
 CONFIG_APP_AGENT_ENABLE=y
 CONFIG_APP_VOICE_BRAIN_LOCAL=n
 CONFIG_APP_VOICE_AUTO_LISTEN=y
+# Opt-in real-time audio diagnostics: selected channel, dBFS and ASCII envelope.
+# CONFIG_APP_VOICE_MIC_LOG_ENABLE is not set
 
 # On-device RL policies (main/rl). The policy worker takes the same counted
 # voice hold as a skill before touching the robot and releases it afterwards,

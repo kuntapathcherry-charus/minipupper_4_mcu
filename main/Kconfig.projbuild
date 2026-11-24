@@ -849,6 +849,27 @@ config APP_VOICE_BARGE_IN
         server VAD work together to suppress residual speaker echo. Older
         gateways retain PWA Interrupt; IO21_WAKE stops the active session.
 
+config APP_VOICE_MIC_LOG_ENABLE
+    bool "Log live microphone levels and an ASCII amplitude envelope"
+    default n
+    help
+        During each voice capture, log the selected microphone, RMS and peak
+        dBFS, all raw candidate channel levels, frames sent, and a 12-bin
+        ASCII amplitude envelope. This distinguishes silent/wrong-channel
+        capture from gateway VAD or ASR trouble without logging raw PCM.
+        Diagnostic only: leave off in production to avoid log traffic in the
+        real-time audio task. Enable gateway DEBUG logging to correlate these
+        lines with Silero VAD probability.
+
+config APP_VOICE_MIC_LOG_INTERVAL
+    int "Microphone log interval (60 ms frames)"
+    range 1 100
+    default 1
+    depends on APP_VOICE_MIC_LOG_ENABLE
+    help
+        Log every N captured frames. One frame is 60 ms: 1 gives the most
+        detail, 5 gives one line every 300 ms, and 10 one every 600 ms.
+
 endif  # APP_VOICE_ENABLE
 
 # ── The on-device agent: ESP-Claw (main/agent/) ─────────────────────
