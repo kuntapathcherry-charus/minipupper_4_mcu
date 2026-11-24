@@ -2728,7 +2728,8 @@ void gait_task()
         if (cmd == GaitCmd::TurnL) {
             const float h  = static_cast<float>(s_cfg.height);
             const float uh = static_cast<float>(s_cfg.up_height);
-            const float t  = static_cast<float>(s_cfg.tilt);
+            // The MPX hardware runs these two named gaits mirrored.
+            const float t  = -static_cast<float>(s_cfg.tilt);
             const float p  = static_cast<float>(s_cfg.period);
 
             time_mSt = millis(); tim = 0;
@@ -2776,7 +2777,8 @@ void gait_task()
         if (cmd == GaitCmd::TurnR) {
             const float h  = static_cast<float>(s_cfg.height);
             const float uh = static_cast<float>(s_cfg.up_height);
-            const float t  = static_cast<float>(s_cfg.tilt);
+            // Negate the lateral component as for TurnL to match its name.
+            const float t  = -static_cast<float>(s_cfg.tilt);
             const float p  = static_cast<float>(s_cfg.period);
 
             time_mSt = millis(); tim = 0;

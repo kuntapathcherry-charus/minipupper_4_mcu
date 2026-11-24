@@ -99,6 +99,22 @@ Reply not_ready()
 
 /* ── robot ───────────────────────────────────────────────────────────── */
 
+Reply drive_reply(float f, float s, float t, int duration)
+{
+    mpx_robot_drive_for(f, s, t, (uint32_t)duration);
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddBoolToObject(o, "ok", true);
+    cJSON *d = cJSON_AddObjectToObject(o, "driving");
+    cJSON_AddNumberToObject(d, "forward", f);
+    cJSON_AddNumberToObject(d, "strafe", s);
+    cJSON_AddNumberToObject(d, "turn", t);
+    if (duration > 0) {
+        cJSON_AddNumberToObject(o, "stops_after_ms", duration);
+        cJSON_AddStringToObject(o, "after", "none");
+    }
+    return { print_and_free(o), false };
+}
+
 Reply robot_move(const cJSON *args)
 {
     if (!mpx_robot_ready()) return not_ready();
@@ -112,6 +128,14 @@ Reply robot_move(const cJSON *args)
     if (duration > kMaxDriveMs) duration = kMaxDriveMs;
 
     if (const char *movement = str(args, "movement")) {
+        /* Keep voice turns on the smooth trot even if a model ignores the
+         * schema and still sends one of the legacy named turn gaits. */
+        if (std::strcmp(movement, "turnL") == 0) {
+            return drive_reply(0.0f, 0.0f, 0.5f, duration);
+        }
+        if (std::strcmp(movement, "turnR") == 0) {
+            return drive_reply(0.0f, 0.0f, -0.5f, duration);
+        }
         /* Built-ins first, then a skill that provides the name (mpv2's
          * movement layer did the same: a downloaded skill must not shadow
          * "advance"). */
@@ -156,19 +180,7 @@ Reply robot_move(const cJSON *args)
     if (std::fabs(f) < 0.08f && std::fabs(s) < 0.08f && std::fabs(t) < 0.08f) {
         return { "Error: give either a movement name, or forward/strafe/turn past the 0.08 dead zone.", true };
     }
-    mpx_robot_drive_for(f, s, t, (uint32_t)duration);
-
-    cJSON *o = cJSON_CreateObject();
-    cJSON_AddBoolToObject(o, "ok", true);
-    cJSON *d = cJSON_AddObjectToObject(o, "driving");
-    cJSON_AddNumberToObject(d, "forward", f);
-    cJSON_AddNumberToObject(d, "strafe", s);
-    cJSON_AddNumberToObject(d, "turn", t);
-    if (duration > 0) {
-        cJSON_AddNumberToObject(o, "stops_after_ms", duration);
-        cJSON_AddStringToObject(o, "after", "none");
-    }
-    return { print_and_free(o), false };
+    return drive_reply(f, s, t, duration);
 }
 
 Reply robot_pose(const cJSON *args)
@@ -610,20 +622,22 @@ Reply speaker_set_volume(const cJSON *args)
 
 const Tool kTools[] = {
     { "robot_move", kGroupRobot,
-      "Make the robot walk, turn, or perform a named movement. Either give a "
-      "movement name from robot_get_state.movements, or drive it with "
-      "forward/strafe/turn between -1 and 1. Continuous moves stop in the "
-      "neutral stand after duration_ms (default 3000); set duration_ms to 0 "
-      "only when the move should hold until another robot_move call.",
+      "Make the robot walk, turn, or perform a named movement. Directions are "
+      "from the robot's perspective. For every turn, omit movement and use "
+      "analog turn: 0.5 for a normal left turn, -0.5 for a normal right turn. "
+      "This selects the smooth stanford gait; do not use named turnL/turnR. "
+      "Positive strafe is left, negative is right. Continuous moves stop in "
+      "the neutral stand after duration_ms (default 3000); set duration_ms "
+      "to 0 only when the move should hold until another robot_move call.",
       nullptr,
       "{\"type\":\"object\",\"properties\":{"
       "\"movement\":{\"type\":\"string\",\"description\":"
-      "\"A movement name, e.g. advance, stanford, lookup, twerk, backflip (the safe one with the screen).\"},"
+      "\"A non-turning name from robot_get_state.movements: left/right strafe, lookleft/lookright look, advance, stanford, lookup, twerk, backflip (the safe one with the screen). Do not use turnL/turnR; omit movement and use turn instead.\"},"
       "\"forward\":{\"type\":\"number\",\"minimum\":-1,\"maximum\":1},"
       "\"strafe\":{\"type\":\"number\",\"minimum\":-1,\"maximum\":1,"
-      "\"description\":\"Positive is left.\"},"
+      "\"description\":\"Robot's left is positive; robot's right is negative.\"},"
       "\"turn\":{\"type\":\"number\",\"minimum\":-1,\"maximum\":1,"
-      "\"description\":\"Positive turns left.\"},"
+      "\"description\":\"Use this alone for all turns: robot's left positive, right negative; normal speed is +/-0.5. Omit movement. Opposite sign convention to robot_pose.yaw.\"},"
       "\"duration_ms\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":10000,"
       "\"description\":\"Milliseconds before stopping in the neutral stand "
       "(default 3000). Use it for 'forward for 3 seconds'; 0 holds until "
@@ -631,14 +645,17 @@ const Tool kTools[] = {
       robot_move },
     { "robot_pose", kGroupRobot,
       "Hold a body attitude in degrees while the feet stay planted. Use it to "
-      "make the robot look up, tilt its head, or lean. Roll is limited to 25, "
-      "pitch to 20 and yaw to 30 degrees.",
+      "make the robot look up, tilt its head, or lean. Directions are from "
+      "the robot's perspective. Roll is limited to 25, pitch to 20 and yaw "
+      "to 30 degrees. Positive yaw looks right; negative yaw looks left, "
+      "opposite to robot_move.turn.",
       nullptr,
       "{\"type\":\"object\",\"properties\":{"
       "\"roll\":{\"type\":\"number\",\"minimum\":-25,\"maximum\":25},"
       "\"pitch\":{\"type\":\"number\",\"minimum\":-20,\"maximum\":20,"
       "\"description\":\"Positive raises the nose.\"},"
-      "\"yaw\":{\"type\":\"number\",\"minimum\":-30,\"maximum\":30},"
+      "\"yaw\":{\"type\":\"number\",\"minimum\":-30,\"maximum\":30,"
+      "\"description\":\"Look robot's right with positive; left with negative. Opposite sign convention to robot_move.turn.\"},"
       "\"speed_dps\":{\"type\":\"number\",\"minimum\":0,\"description\":"
       "\"Degrees per second. 0 snaps instantly.\"}}}",
       robot_pose },
