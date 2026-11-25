@@ -246,16 +246,19 @@ works while the phone can reach the robot.
 ### 5.1 The Home screen
 
 <p align="center">
-  <img src="docs/user-guide/img/05-home.png" width="320" alt="Home screen with the controller, volume and the bottom tabs">
+  <img src="docs/user-guide/img/home-map.png" width="640" alt="Home screen with labels: 1 Wi-Fi pill, 2 gamepad icon, 3 controller, 4 volume, 5 Quick actions, 6 bottom tabs">
 </p>
 
-| Area | What it does |
-|---|---|
-| Wi-Fi pill (top left) | Shows the network the robot is on. Tap or pull down to change it. |
-| Gamepad icon (top right) | Full-screen landscape controller (phone only). |
-| Controller | L1/R1, BODY d-pad, ACTIONS buttons, MOVE and POSE sticks. See [5.2](#52-ps4-scheme-default) and [5.3](#53-haris-scheme-alternative). |
-| Quick actions | Moves you pinned. **See all** opens the full list. |
-| Bottom tabs | Home, Skills, Store, Chat, Settings. |
+The numbers match the picture.
+
+| # | Area | What it does |
+|:---:|---|---|
+| 1 | Wi-Fi pill (top left) | Shows the network the robot is on. Tap or pull down to change it. |
+| 2 | Gamepad icon (top right) | Full-screen landscape controller (phone only). |
+| 3 | Controller | L1/R1, BODY d-pad, ACTIONS buttons, MOVE and POSE sticks. See [5.2](#52-ps4-scheme-default) and [5.3](#53-haris-scheme-alternative). |
+| 4 | Volume | The robot's speaker volume. |
+| 5 | Quick actions | Scroll down to see the moves you pinned. **See all** opens the full list. |
+| 6 | Bottom tabs | Home, Skills, Store, Chat, Settings. |
 
 ### 5.2 PS4 scheme (default)
 
