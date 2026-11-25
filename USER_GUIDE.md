@@ -54,6 +54,10 @@ The numbers match the picture.
 
 ### How it is put together
 
+<p align="center">
+  <img src="docs/user-guide/img/robot-inside.gif" width="520" alt="Animation: the top cover lifts off Mini Pupper 4 to show the ESP32 board inside the body and the battery underneath">
+</p>
+
 The ESP32-S3 inside the robot runs the control loop, the screen, audio, Wi-Fi,
 the HTTP server, the on-device agent and the skill sandboxes. There is no app to
 download: the robot **serves the phone app itself** at `http://<robot-ip>/`, and
