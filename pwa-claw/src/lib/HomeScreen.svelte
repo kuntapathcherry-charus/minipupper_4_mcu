@@ -9,6 +9,7 @@
   import AddActionView from "./AddActionView.svelte";
   import AllActions from "./AllActions.svelte";
   import RLWalkPage from "./RLWalkPage.svelte";
+  import PupperIcon from "./PupperIcon.svelte";
   import ChatView from "./chat/ChatView.svelte";
   import SkillsMarketplace from "./SkillsMarketplace.svelte";
   import SkillsManagement from "./SkillsManagement.svelte";
@@ -372,13 +373,13 @@
               <ul class="quick-grid rl-grid">
                 <li>
                   <button type="button" class="qa" disabled={!online} onclick={() => (rlStart = "balance")} aria-label="Balance and get up">
-                    <span class="qa-ico">🧍</span>
+                    <span class="qa-ico"><PupperIcon pose="rl_balance" /></span>
                     <span class="qa-lbl">Balance + get up</span>
                   </button>
                 </li>
                 <li>
                   <button type="button" class="qa" disabled={!online} onclick={() => (rlStart = "stairs")} aria-label="Stairs">
-                    <span class="qa-ico">🪜</span>
+                    <span class="qa-ico"><PupperIcon pose="rl_stairs" /></span>
                     <span class="qa-lbl">Stairs</span>
                   </button>
                 </li>
@@ -531,7 +532,7 @@
   .see-all { height: 32px; border-radius: 16px; border: none; background: var(--ground); padding: 0 12px; font-size: 13px; font-weight: 700; cursor: pointer; color: var(--ink); }
   .quick-grid { list-style: none; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
   .qa {
-    width: 100%; height: 62px; border-radius: 16px; border: none; background: var(--ground); color: var(--ink);
+    width: 100%; height: 72px; border-radius: 16px; border: none; background: var(--ground); color: var(--ink);
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
     cursor: pointer; transition: background var(--dur-fast), transform var(--dur-fast);
   }

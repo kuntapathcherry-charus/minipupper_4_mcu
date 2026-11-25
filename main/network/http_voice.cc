@@ -56,6 +56,7 @@
 #include "audio/mpx_audio.h"
 #include "voice/cap_music.h"
 #include "voice/mpx_voice_link.h"
+#include "voice/mpx_voice_wake.h"
 #include "voice/voice_brain.h"
 #include "voice/voice_history.h"
 #include "voice/voice_tools.h"
@@ -377,6 +378,14 @@ esp_err_t voice_post_handler(httpd_req_t *req)
             problem = "could not clear voice context";
             ESP_LOGW(TAG, "clear voice context: %s", esp_err_to_name(err));
         }
+    }
+
+    /* Settings -> Voice: {"listen_s": 5..30, "followup_s": 0..120} */
+    const cJSON *listen_s = cJSON_GetObjectItem(body, "listen_s");
+    const cJSON *followup_s = cJSON_GetObjectItem(body, "followup_s");
+    if (!problem && (cJSON_IsNumber(listen_s) || cJSON_IsNumber(followup_s))) {
+        mpx_voice_wake_set_listen_times(cJSON_IsNumber(listen_s) ? listen_s->valueint : -1,
+                                        cJSON_IsNumber(followup_s) ? followup_s->valueint : -1);
     }
 
     const cJSON *hands_free = cJSON_GetObjectItem(body, "hands_free");

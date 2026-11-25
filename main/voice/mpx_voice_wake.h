@@ -112,6 +112,16 @@ esp_err_t mpx_voice_wake_trigger(void);
  * the reply arrives and plays. False while idle. */
 bool mpx_voice_wake_conversing(void);
 
+/* How long a conversation listens (Settings -> Voice; kept in NVS):
+ *   turn_s     after a button/PWA trigger, the longest it streams with
+ *              nothing heard (5..30 s, default CONFIG_APP_VOICE_AUTO_MAX_SECONDS)
+ *   followup_s after each reply, how long it keeps listening for the next
+ *              sentence without a new trigger (0..120 s, default 90; 0 = the
+ *              conversation ends after every reply)
+ * Applies from the next turn. */
+void mpx_voice_wake_set_listen_times(int turn_s, int followup_s);
+void mpx_voice_wake_get_listen_times(int *turn_s, int *followup_s);
+
 /* Asked when a reply has finished: return true to skip the follow-up turn
  * and go straight back to idle (cap_music: a song is waiting for the
  * speaker). NULL = always offer the follow-up. */

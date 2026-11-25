@@ -572,6 +572,12 @@ std::string status_json()
     cJSON_AddBoolToObject(o, "held", s_hold_depth.load() > 0);
     cJSON_AddNumberToObject(o, "hold_depth", s_hold_depth.load());
     cJSON_AddNumberToObject(o, "task_priority", mpx_voice_wake_task_priority());
+    {
+        int turn_s = 0, followup_s = 0;
+        mpx_voice_wake_get_listen_times(&turn_s, &followup_s);
+        cJSON_AddNumberToObject(o, "listen_s", turn_s);
+        cJSON_AddNumberToObject(o, "followup_s", followup_s);
+    }
     cJSON_AddBoolToObject(o, "listening", mpx_voice_wake_active());
     cJSON_AddBoolToObject(o, "talking", mpx_voice_talk_active());
     cJSON_AddBoolToObject(o, "playing_reply", mpx_voice_stream_is_playing());

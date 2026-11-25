@@ -3,6 +3,8 @@
    * ActionIcon now renders a simple emoji based on the action id.
    * Built-in actions have predefined emojis; custom actions pass their emoji directly.
    */
+  import PupperIcon, { has as hasPupper } from "./PupperIcon.svelte";
+
   let { id, emoji } = $props();
 
   const builtinEmojis = {
@@ -77,9 +79,16 @@
   const displayEmoji = $derived(emoji || builtinEmojis[id] || "⚙️");
 </script>
 
-<span class="action-emoji" role="img" aria-label={id}>{displayEmoji}</span>
+{#if hasPupper(id)}
+  <!-- the app's own moves (ids with a drawing): the Mini Pupper 4 itself in that pose, even though their catalogue
+       entry carries an emoji too; custom actions have their own ids and keep their emoji -->
+  <span class="action-pupper"><PupperIcon pose={id} label={id} /></span>
+{:else}
+  <span class="action-emoji" role="img" aria-label={id}>{displayEmoji}</span>
+{/if}
 
 <style>
+  .action-pupper { display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
   .action-emoji {
     font-size: 1.8rem;
     line-height: 1;

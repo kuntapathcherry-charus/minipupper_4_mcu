@@ -375,6 +375,21 @@
                    onchange={commitVolume} />
           </label>
 
+          {#if voice.listen_s !== undefined}
+            <label class="field">
+              <span>Listen after the button <em>{voice.listen_s} s</em></span>
+              <input type="range" min="5" max="30" step="1" value={voice.listen_s} disabled={voiceBusy}
+                     onchange={(e) => postVoice({ listen_s: Number(e.currentTarget.value) })} />
+              <small class="note">The longest it waits for you to start talking. It stops by itself about 1 s after you finish.</small>
+            </label>
+            <label class="field">
+              <span>Keep listening after a reply <em>{voice.followup_s ? `${voice.followup_s} s` : "off"}</em></span>
+              <input type="range" min="0" max="120" step="5" value={voice.followup_s} disabled={voiceBusy}
+                     onchange={(e) => postVoice({ followup_s: Number(e.currentTarget.value) })} />
+              <small class="note">After it answers, how long you can just talk again without pressing the button. Off: press the button for every question.</small>
+            </label>
+          {/if}
+
           <div class="row">
             <button class="pill" type="button" disabled={voiceBusy || voice.pi_in_control}
                     onclick={() => postVoice({ hands_free: !handsFreeOn })}>

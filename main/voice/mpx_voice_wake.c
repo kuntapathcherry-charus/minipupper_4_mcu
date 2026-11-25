@@ -40,6 +40,8 @@
 #include "board_config.h"
 #include "mpx_audio.h"
 #include "mpx_voice_link.h"
+#include "nvs.h"
+#include "cap_music.h"
 #include "voice/voice_phone_audio.h"
 #include "sdkconfig.h"
 
@@ -178,6 +180,21 @@ static volatile bool s_feed_failed;    /* capture read died under feed_task */
 static volatile bool s_debug;
 static float s_last_volume_dbfs;
 static int   s_last_vad;
+/* ── Talking over the robot (hands-free) ─────────────────────────────────────
+ * While a reply or the music plays, the front end listens through its echo
+ * cancellation (the speaker's own sound is taken out of the microphone). When
+ * its VAD hears speech for s_onset_need fetches in a row (32 ms each) that is
+ * you, talking over it: the loop stops the reply / the music and gives you the
+ * turn, without waiting for the server to notice. */
+#define ONSET_REPLY_FETCHES  10   /* ~0.32 s of speech over a reply */
+#define ONSET_MUSIC_FETCHES  14   /* ~0.45 s over music (louder, steadier echo) */
+static volatile bool s_onset_armed;
+static volatile bool s_onset;
+static volatile int  s_onset_need = ONSET_REPLY_FETCHES;
+static int           s_onset_run;
+static volatile bool s_quiet_turn;    /* the next turn starts without the beep (you are already talking) */
+static bool          s_music_watch;   /* the front end is up to hear you over the music */
+static bool          s_music_watch_off;
 static float s_last_ringbuf_free;
 static SemaphoreHandle_t s_detected;   /* PWA trigger -> auto task */
 static SemaphoreHandle_t s_auto_done;
@@ -503,6 +520,18 @@ static void fetch_task(void *arg)
         s_last_volume_dbfs = res->data_volume;
         s_last_vad = (int)res->vad_state;
         s_last_ringbuf_free = res->ringbuff_free_pct;
+        if (s_onset_armed && !s_onset) {
+            if (res->vad_state == VAD_SPEECH) {
+                if (++s_onset_run >= s_onset_need) {
+                    s_onset = true;
+                    ESP_LOGI(TAG, "voice over the speaker (%.0f dBFS, %d ms)", (double)res->data_volume, s_onset_run * 32);
+                }
+            } else {
+                s_onset_run = 0;
+            }
+        } else if (!s_onset_armed) {
+            s_onset_run = 0;
+        }
         if (s_debug) {
             static TickType_t last;
             const TickType_t now = xTaskGetTickCount();
@@ -730,6 +759,52 @@ static void wake_auto_end_beep(void)
  * server says goodbye, and a short window here (it was 8 s) meant that a
  * pause to think became "the robot stopped listening". */
 #define WAKE_FOLLOWUP_SECONDS   90
+
+/* The two listening times, adjustable in Settings (mpx_voice_wake_set_listen_times), in NVS "voice". */
+#define LISTEN_NVS_NS        "voice"
+#define LISTEN_TURN_MIN      5
+#define LISTEN_TURN_MAX      30
+#define LISTEN_FOLLOWUP_MAX  120
+static int s_turn_s = -1;          /* -1: not loaded yet */
+static int s_followup_s = -1;
+
+static int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+static void listen_times_load(void)
+{
+    if (s_turn_s >= 0) return;
+    s_turn_s = CONFIG_APP_VOICE_AUTO_MAX_SECONDS;
+    s_followup_s = WAKE_FOLLOWUP_SECONDS;
+    nvs_handle_t h;
+    if (nvs_open(LISTEN_NVS_NS, NVS_READONLY, &h) == ESP_OK) {
+        int32_t v;
+        if (nvs_get_i32(h, "turn_s", &v) == ESP_OK) s_turn_s = clampi((int)v, LISTEN_TURN_MIN, LISTEN_TURN_MAX);
+        if (nvs_get_i32(h, "follow_s", &v) == ESP_OK) s_followup_s = clampi((int)v, 0, LISTEN_FOLLOWUP_MAX);
+        nvs_close(h);
+    }
+}
+
+void mpx_voice_wake_get_listen_times(int *turn_s, int *followup_s)
+{
+    listen_times_load();
+    if (turn_s) *turn_s = s_turn_s;
+    if (followup_s) *followup_s = s_followup_s;
+}
+
+void mpx_voice_wake_set_listen_times(int turn_s, int followup_s)
+{
+    listen_times_load();
+    if (turn_s >= 0) s_turn_s = clampi(turn_s, LISTEN_TURN_MIN, LISTEN_TURN_MAX);
+    if (followup_s >= 0) s_followup_s = clampi(followup_s, 0, LISTEN_FOLLOWUP_MAX);
+    nvs_handle_t h;
+    if (nvs_open(LISTEN_NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_i32(h, "turn_s", s_turn_s);
+        nvs_set_i32(h, "follow_s", s_followup_s);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    ESP_LOGI(TAG, "listening: %d s for a turn, %d s for a follow-up", s_turn_s, s_followup_s);
+}
 /* Upper bound on waiting for a reply to arrive and finish. */
 #define WAKE_REPLY_TIMEOUT_MS   60000
 /* After WE end a listen ("stop": end of speech heard here, or the time limit)
@@ -847,7 +922,7 @@ void mpx_voice_wake_set_followup_gate(mpx_voice_wake_gate_fn skip_followup)
 static void wake_auto_task(void *arg)
 {
     (void)arg;
-    const uint32_t max_secs = CONFIG_APP_VOICE_AUTO_MAX_SECONDS;
+    listen_times_load();
     wake_auto_state_t state = WAKE_ST_LISTEN;
     bool follow_up = false;   /* this TALK needs no new trigger and no beep */
     bool reply_already_done = false; /* reply fully drained during TALK transition */
@@ -858,11 +933,39 @@ static void wake_auto_task(void *arg)
         switch (state) {
 
         case WAKE_ST_LISTEN: {
-            /* No audio task or model inference runs while idle. IO21_WAKE and
-             * the PWA semaphore are the only ways out of this state. */
+            /* Idle: IO21_WAKE and the PWA start a turn. While music plays the
+             * front end also listens (echo-cancelled), so talking over the
+             * music stops it and starts a turn; otherwise nothing runs. */
+            const bool music = cap_music_active();
+            if (music && !s_music_watch && !s_music_watch_off && !s_active) {
+                if (mpx_voice_wake_start() == ESP_OK) {
+                    s_music_watch = true;
+                    s_onset = false;
+                    ESP_LOGI(TAG, "hands-free: music playing -- talk over it to stop it");
+                } else {
+                    s_music_watch_off = true;   /* not this song: IO21_WAKE still stops it */
+                    ESP_LOGW(TAG, "hands-free: cannot listen during the music (memory?) -- IO21_WAKE stops it");
+                }
+            } else if (!music && (s_music_watch || s_music_watch_off)) {
+                s_onset_armed = false;
+                if (s_music_watch) mpx_voice_wake_stop();
+                s_music_watch = s_music_watch_off = false;
+            }
+            s_onset_need = ONSET_MUSIC_FETCHES;
+            s_onset_armed = s_music_watch && s_active;
+            if (s_onset_armed && s_onset) {
+                s_onset_armed = false;
+                s_onset = false;
+                ESP_LOGI(TAG, "hands-free: you talked over the music -- stopping it");
+                cap_music_stop();
+                s_quiet_turn = true;
+                (void)mpx_voice_wake_trigger();
+            }
             if (wake_auto_wait_trigger(500) == WAKE_TRIGGER_NONE) {
                 break;
             }
+            s_onset_armed = false;
+            s_music_watch = s_music_watch_off = false;
             wake_auto_release_mic();
             follow_up = false;
             state = WAKE_ST_TALK;
@@ -910,12 +1013,15 @@ static void wake_auto_task(void *arg)
                      follow_up ? "follow-up" : "button/PWA trigger",
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-            if (!follow_up) {
+            if (!follow_up && !s_quiet_turn) {
                 wake_auto_beep();
+            } else if (s_quiet_turn) {
+                ESP_LOGI(TAG, "hands-free: your turn (you are already talking)");
             } else {
                 ESP_LOGI(TAG, "hands-free: your turn -- no new trigger needed until the server ends the session");
             }
-            const uint32_t secs = follow_up ? WAKE_FOLLOWUP_SECONDS : max_secs;
+            s_quiet_turn = false;
+            const uint32_t secs = (uint32_t)(follow_up ? s_followup_s : s_turn_s);   /* Settings -> Voice */
             /* When the PWA owns the microphone, the SAME turn runs off the
              * phone's PCM ring instead of I2S -- connection, provisioning,
              * follow-ups and barge-in stay in this loop either way. */
@@ -1034,6 +1140,9 @@ static void wake_auto_task(void *arg)
             }
             wake_trigger_t trigger = WAKE_TRIGGER_NONE;
             bool ended = false;
+            s_onset = false;
+            s_onset_need = ONSET_REPLY_FETCHES;
+            s_onset_armed = s_active;      /* talk over the reply: it stops and you have the turn */
             for (uint32_t waited = 0; s_auto_run && waited < WAKE_REPLY_TIMEOUT_MS; waited += 250) {
                 trigger = wake_auto_wait_trigger(250);
                 if (trigger != WAKE_TRIGGER_NONE || finished) {
@@ -1041,6 +1150,19 @@ static void wake_auto_task(void *arg)
                      * PWA Interrupt takes its branch instead of becoming a
                      * stale trigger for a later session. */
                     break;
+                }
+                if (s_onset_armed && s_onset && mpx_voice_stream_is_playing()) {
+                    /* You spoke over it: the same as the app's Interrupt (stop the
+                     * reply, tell the server), then a new turn without the beep. */
+                    s_onset_armed = false;
+                    s_onset = false;
+                    ESP_LOGI(TAG, "hands-free: you talked over the reply -- your turn");
+                    s_quiet_turn = true;
+                    (void)mpx_voice_wake_trigger();
+                    continue;
+                }
+                if (s_onset && !mpx_voice_stream_is_playing()) {
+                    s_onset = false;    /* speech while nothing plays: the normal turn handles it */
                 }
                 if (barge_talk &&
                     (mpx_voice_stream_barge_accepted() ||
@@ -1081,6 +1203,7 @@ static void wake_auto_task(void *arg)
                     (void)mpx_voice_wake_start();
                 }
             }
+            s_onset_armed = false;
             if (!s_auto_run) {
                 wake_barge_talk_stop();
                 break;
@@ -1116,8 +1239,9 @@ static void wake_auto_task(void *arg)
                 wake_auto_release_mic();
                 ESP_LOGI(TAG, "hands-free: music waiting -- ready for IO21_WAKE/PWA");
                 state = WAKE_ST_LISTEN;
-            } else if (finished && mpx_voice_state() == MPX_VOICE_READY) {
-                /* Reply done: hand the mic straight back for a follow-up. */
+            } else if (finished && mpx_voice_state() == MPX_VOICE_READY && s_followup_s > 0) {
+                /* Reply done: hand the mic straight back for a follow-up
+                 * (Settings -> Voice: 0 s = no follow-up, the branch below ends it). */
                 wake_barge_talk_stop();
                 wake_auto_release_mic();
                 follow_up = true;
