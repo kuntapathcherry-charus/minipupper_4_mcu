@@ -32,6 +32,7 @@
 #include "mpx_voice_link.h"
 
 #include <inttypes.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -660,6 +661,54 @@ static bool mic_pick_update(mic_pick_t *m, const int16_t *raw, size_t n, uint8_t
     return moved;
 }
 
+#if CONFIG_APP_VOICE_MIC_LOG_ENABLE
+#define MIC_LOG_WAVE_BINS 12
+
+static float mic_dbfs(float amplitude)
+{
+    return amplitude > 0.0f ? 20.0f * log10f(amplitude / 32768.0f) : -96.0f;
+}
+
+/* A compact envelope, not a sample-by-sample oscilloscope trace: each bin is
+ * the peak of 5 ms from the normal 60 ms uplink frame. This shows speech-like
+ * bursts while keeping the real-time task's serial output bounded. */
+static void mic_log_frame(const int16_t *pcm, size_t n, uint32_t frames_sent, uint8_t slot,
+                          const float *levels, const char *source)
+{
+    static const uint16_t thresholds[9] = { 50, 100, 250, 500, 1000, 2000, 4000, 8000, 16000 };
+    static const char shades[] = " .:-=+*#%@";
+    char wave[MIC_LOG_WAVE_BINS + 1];
+    int frame_peak = 0;
+
+    for (size_t bin = 0; bin < MIC_LOG_WAVE_BINS; bin++) {
+        const size_t begin = bin * n / MIC_LOG_WAVE_BINS;
+        const size_t end = (bin + 1) * n / MIC_LOG_WAVE_BINS;
+        int peak = 0;
+        for (size_t i = begin; i < end; i++) {
+            const int sample = pcm[i];
+            const int magnitude = sample < 0 ? -sample : sample;
+            if (magnitude > peak) peak = magnitude;
+        }
+        if (peak > frame_peak) frame_peak = peak;
+        size_t shade = 0;
+        while (shade < 9 && peak >= thresholds[shade]) shade++;
+        wave[bin] = shades[shade];
+    }
+    wave[MIC_LOG_WAVE_BINS] = '\0';
+
+    const double rms_db = mic_dbfs(frame_rms(pcm, n));
+    const double peak_db = mic_dbfs((float)frame_peak);
+    ESP_LOGI(TAG, "voice mic id=%" PRIu32 " frame=%" PRIu32
+                  " source=%s slot=%u rms=%.1f dBFS peak=%.1f dBFS"
+                  " levels=%.0f/%.0f/%.0f/%.0f |%s|",
+             s_talk_listen_id, frames_sent, source, (unsigned)slot, rms_db, peak_db,
+             levels ? (double)levels[0] : 0.0, levels ? (double)levels[1] : 0.0,
+             levels ? (double)levels[2] : 0.0, levels ? (double)levels[3] : 0.0, wave);
+    mpx_voice_stream_broadcast_mic_debug(s_talk_listen_id, frames_sent, slot,
+                                         (float)rms_db, (float)peak_db, levels, source, wave);
+}
+#endif
+
 /* The stream moved to another microphone channel: its level is not the old one's, so start the speech count over
  * (a louder channel must not look like the start of speech, nor a quieter one like its end). */
 static void dev_vad_new_channel(dev_vad_t *v)
@@ -780,6 +829,12 @@ static void talk_task(void *arg)
             }
         }
         frames_sent++;
+#if CONFIG_APP_VOICE_MIC_LOG_ENABLE
+        if (frames_sent % CONFIG_APP_VOICE_MIC_LOG_INTERVAL == 0) {
+            mic_log_frame(pcm, MPX_VOICE_UPLINK_FRAME, frames_sent, mic.pick,
+                          raw ? mic.lvl : NULL, phone ? "phone" : (barge_in ? "afe" : "robot"));
+        }
+#endif
         if (auto_mode && !barge_in && dev_vad_update(&vad, pcm, MPX_VOICE_UPLINK_FRAME)) {
             vad_ended = true;   /* you stopped talking: "stop" below makes the server transcribe now */
             break;

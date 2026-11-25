@@ -40,6 +40,7 @@ static const char *TAG = "mpx_voice_ota";
 #define VOICE_NVS_NAMESPACE  "mpx_voice"
 #define VOICE_NVS_URL        "ws_url"
 #define VOICE_NVS_TOKEN      "ws_token"
+#define VOICE_NVS_OTA_URL    "ota_url"
 #define VOICE_OTA_RESP_MAX   4096
 
 /* What the gateway is told it is talking to. */
@@ -89,6 +90,22 @@ const char *mpx_voice_stored_token(void)
         voice_load(VOICE_NVS_TOKEN, s_ws_token, sizeof(s_ws_token));
     }
     return s_ws_token;
+}
+
+bool mpx_voice_provision_needed(void)
+{
+    if (!mpx_voice_stored_url()[0]) {
+        return true;
+    }
+
+    char ota_url[192];
+    /* Older images stored only the discovered websocket and token. Treat a
+     * missing endpoint marker as stale so those units migrate without an NVS
+     * erase or a manual provisioning request after their next app update. */
+    if (!voice_load(VOICE_NVS_OTA_URL, ota_url, sizeof(ota_url))) {
+        return true;
+    }
+    return strcmp(ota_url, MPX_VOICE_DEFAULT_OTA_URL) != 0;
 }
 
 /* ── the request body ────────────────────────────────────────────────────── */
@@ -299,6 +316,12 @@ esp_err_t mpx_voice_provision(const char *ota_url)
     }
 
     ret = voice_parse_ota_response(resp);
+    if (ret == ESP_OK) {
+        /* Remember which endpoint issued these credentials. A later image
+         * with a different APP_VOICE_OTA_URL must discover its websocket
+         * instead of continuing to use this NVS-cached address forever. */
+        voice_store(VOICE_NVS_OTA_URL, url);
+    }
 
 cleanup:
     esp_http_client_close(client);

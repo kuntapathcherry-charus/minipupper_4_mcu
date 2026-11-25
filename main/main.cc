@@ -93,9 +93,9 @@ extern "C" void app_main(void)
 	if (mpx_identity_init() != ESP_OK) {
 		ESP_LOGW(TAG, "No robot identity -- cloud chat, robot token and MPXE are off");
 	}
-	// Factory image only (CONFIG_APP_FACTORY_SELF_PROVISION, off everywhere but
-	// sdkconfig.defaults.factory): a blank board mints and burns its own ID and
-	// root secret here, so one image flashed onto a tray of boards needs no
+	// First-boot self-provisioning (CONFIG_APP_FACTORY_SELF_PROVISION, on in
+	// the production default and factory profiles): a blank board mints and
+	// burns its own ID and root secret here, so one image needs no
 	// per-unit station run. The burn is irreversible and the HMAC peripheral
 	// cannot use a key burned in the running boot, so a successful burn restarts
 	// instead of continuing with the identity it just created; the next boot

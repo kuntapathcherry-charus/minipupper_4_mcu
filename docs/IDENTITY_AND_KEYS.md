@@ -238,9 +238,10 @@ different jobs and you need both:
 
 A flash image never carries an identity: `esptool`/the Flash Download Tool write
 SPI flash only, and a multi-board flash writes the same bytes to every chip. The
-one exception is a **factory image** (`sdkconfig.defaults.factory`), where the
-firmware does the station's job on the first boot of a blank board: it mints a
-random ID + `S` and burns them with the same one-batch `WR_DIS` write
+self-provisioning images (the default and `sdkconfig.defaults.factory`)
+instead have the firmware do the station's job on the first boot of a blank
+board: they mint a random ID + `S` and burn them with the same one-batch
+`WR_DIS` write
 ([ROBOT_IDENTITY_AND_KEYS.md](./ROBOT_IDENTITY_AND_KEYS.md) §6.6.1). That is the
 route for flashing a tray of boards in one go — no per-unit step, no per-unit
 image.
@@ -267,11 +268,10 @@ newly burned key until a reset. Power-cycle (or `Ctrl-T Ctrl-R` in `monitor`)
 or the unit looks provisioned to the station and unprovisioned to itself, and
 never enrols.
 
-The pilot profile is also the only image that currently reads the eFuse identity.
-Flashing the default profile onto a provisioned board would run it as whichever
-development ID `APP_ROBOT_UUID` names — two boards sharing `MPX-DOG-01` look fine
-one at a time — so the Kconfig path detects a burned record and logs an error at
-boot (`components/mpx_identity/mpx_identity.cc`, `load_kconfig_identity()`).
+The default, pilot and factory profiles all read the eFuse identity. A custom
+development build can still select Kconfig identity instead; that path detects
+a burned record and logs an error at boot
+(`components/mpx_identity/mpx_identity.cc`, `load_kconfig_identity()`).
 
 ## 10. Verifying
 

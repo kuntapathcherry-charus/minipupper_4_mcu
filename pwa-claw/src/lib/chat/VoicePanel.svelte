@@ -1,9 +1,12 @@
 <script>
   import AgentActivity from "./AgentActivity.svelte";
   import ChatMessage from "./ChatMessage.svelte";
+  import VoiceMicMonitor from "./VoiceMicMonitor.svelte";
+  import { isNearTranscriptBottom } from "./voiceTranscript.js";
 
   let {
     messages = [],
+    micSamples = [],
     voiceState = "idle",
     busy = false,
     error = "",
@@ -13,6 +16,7 @@
   } = $props();
 
   let transcriptEl = $state(null);
+  let followLatest = $state(true);
   let active = $derived(!["idle", "ended", "cleared"].includes(voiceState));
   let renderItems = $derived.by(() => {
     const items = [];
@@ -38,12 +42,27 @@
     return names.length === 1 ? `MCP · ${names[0]}` : "MCP tool calls";
   }
 
+  function handleTranscriptScroll() {
+    if (!transcriptEl) return;
+    followLatest = isNearTranscriptBottom(
+      transcriptEl.scrollHeight,
+      transcriptEl.scrollTop,
+      transcriptEl.clientHeight,
+    );
+  }
+
+  function jumpToLatest() {
+    followLatest = true;
+    transcriptEl?.scrollTo({ top: transcriptEl.scrollHeight });
+  }
+
   $effect(() => {
     messages.length;
-    if (!transcriptEl) return;
+    const shouldFollow = followLatest;
+    if (!transcriptEl || !shouldFollow) return;
     const el = transcriptEl;
     const frame = requestAnimationFrame(() => {
-      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+      el.scrollTo({ top: el.scrollHeight });
     });
     return () => cancelAnimationFrame(frame);
   });
@@ -83,7 +102,20 @@
     <span>{statusText(voiceState)}</span>
   </div>
 
-  <div class="transcript" bind:this={transcriptEl} aria-live="polite" aria-label="Live voice transcript">
+  <VoiceMicMonitor samples={micSamples} />
+
+  <div class="transcript-shell">
+    <!-- Keyboard focus makes the long MCP history scrollable without a pointer. -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <div
+      class="transcript"
+      bind:this={transcriptEl}
+      role="log"
+      aria-live="polite"
+      aria-label="Voice conversation and MCP activity history"
+      tabindex="0"
+      onscroll={handleTranscriptScroll}
+    >
     {#if messages.length === 0}
       <div class="empty">
         <span class="empty-mic">
@@ -102,12 +134,19 @@
             steps={item.steps}
             title={activityTitle(item.steps)}
             active={voiceState === "thinking" && item.endIndex === messages.length - 1}
+            autoCollapse={true}
           />
         {:else}
           {@const chatMessage = { ...item.message, role: item.message.role === "user" ? "user" : "bot" }}
           <ChatMessage msg={chatMessage} />
         {/if}
       {/each}
+    {/if}
+    </div>
+    {#if !followLatest && messages.length > 0}
+      <button type="button" class="jump-latest" onclick={jumpToLatest}>
+        <span aria-hidden="true">↓</span> Latest
+      </button>
     {/if}
   </div>
 
@@ -145,9 +184,12 @@
     bottom: max(16px, var(--safe-bottom));
     transform: translateX(-50%);
     width: min(560px, calc(100vw - 24px));
-    max-height: min(760px, calc(100dvh - 32px - var(--safe-top)));
+    height: min(760px, calc(100dvh - 32px - var(--safe-top)));
+    min-height: 0;
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
     padding: 22px;
     border: 1px solid var(--line);
     border-radius: 28px;
@@ -156,7 +198,7 @@
     color: var(--ink);
   }
 
-  .voice-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+  .voice-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-shrink: 0; }
   .voice-kicker { color: var(--sub); font-size: 11px; font-weight: 800; letter-spacing: 0.14em; }
   h2 { margin: 3px 0 0; font-size: 24px; line-height: 1.2; }
   .close {
@@ -172,28 +214,69 @@
     cursor: pointer;
   }
 
-  .status-line { display: flex; align-items: center; gap: 8px; margin: 16px 0 10px; color: var(--sub); font-size: 13px; font-weight: 700; }
+  .status-line { display: flex; align-items: center; gap: 8px; margin: 16px 0 10px; color: var(--sub); font-size: 13px; font-weight: 700; flex-shrink: 0; }
   .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #929087; }
   .status-dot.active { background: #1E7B34; box-shadow: 0 0 0 4px rgba(30, 123, 52, 0.12); }
 
-  .transcript {
-    min-height: 240px;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    padding: 8px 0 12px;
+  .transcript-shell {
+    position: relative;
+    flex: 1;
+    min-height: 0;
     display: flex;
-    flex-direction: column;
-    gap: 6px;
+    border: 1px solid var(--line);
+    border-radius: 18px;
     background: var(--page);
   }
 
-  .empty { min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 14px; text-align: center; color: var(--sub); }
+  .transcript {
+    flex: 1;
+    width: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: var(--hair) transparent;
+    padding: 8px 4px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border-radius: inherit;
+    background: var(--page);
+  }
+
+  .transcript:focus-visible { outline: 3px solid var(--ink); outline-offset: -3px; }
+  .transcript::-webkit-scrollbar { width: 6px; }
+  .transcript::-webkit-scrollbar-thumb { border-radius: 6px; background: var(--hair); }
+
+  .jump-latest {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 36px;
+    padding: 7px 12px;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: var(--ink);
+    color: var(--mpx-yellow);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
+  }
+
+  .empty { flex: 1; min-height: 180px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 14px; text-align: center; color: var(--sub); }
   .empty-mic { width: 56px; height: 56px; display: grid; place-items: center; border-radius: 50%; background: var(--page); color: var(--ink); }
   .empty h3 { margin: 14px 0 5px; color: var(--ink); font-size: 17px; }
   .empty p { max-width: 330px; margin: 0; font-size: 13px; line-height: 1.55; }
 
-  .error { margin: 10px 2px 0; color: var(--danger, #b3261e); font-size: 13px; font-weight: 650; }
-  .voice-actions { display: flex; margin-top: 16px; }
+  .error { margin: 10px 2px 0; color: var(--danger, #b3261e); font-size: 13px; font-weight: 650; flex-shrink: 0; }
+  .voice-actions { display: flex; margin-top: 16px; flex-shrink: 0; }
   .action {
     min-height: 50px;
     flex: 1;
@@ -212,9 +295,16 @@
   .action.stop { background: var(--ink); color: var(--mpx-yellow); }
   .action:disabled { opacity: 0.5; cursor: default; }
   .spinner { width: 17px; height: 17px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
-  .privacy { margin: 10px 0 -4px; text-align: center; color: var(--sub); font-size: 11px; }
+  .privacy { margin: 10px 0 -4px; text-align: center; color: var(--sub); font-size: 11px; flex-shrink: 0; }
   button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (max-height: 600px) {
+    .voice-panel { padding: 14px 18px; border-radius: 22px; }
+    .status-line { margin: 8px 0; }
+    .voice-actions { margin-top: 8px; }
+    .privacy { display: none; }
+  }
 
   @media (min-width: 768px) {
     .voice-panel { bottom: 50%; transform: translate(-50%, 50%); }

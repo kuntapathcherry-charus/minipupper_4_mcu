@@ -342,7 +342,7 @@ config APP_PROV_SEAL_KEY_ID
         keys during the overlap.
 
 config APP_FACTORY_SELF_PROVISION
-    bool "Burn a fresh identity on the first boot (factory image only)"
+    bool "Burn a fresh identity on the first boot"
     default n
     depends on APP_IDENTITY_SOURCE_EFUSE
     help
@@ -358,10 +358,11 @@ config APP_FACTORY_SELF_PROVISION
         and announces K_v on the first connect, as it does for a station-run
         unit.
 
-        IRREVERSIBLE, and there is no human in the loop. Keep it in
-        sdkconfig.defaults.factory and never in the default, pilot or shipped
-        profiles. A board that already carries a record is left untouched; a
-        half-burned board is refused rather than "repaired".
+        IRREVERSIBLE, and there is no human in the loop. The production
+        default and factory profiles enable this for tray flashing; the pilot
+        profile explicitly disables it in favour of bench provisioning. A
+        board that already carries a record is left untouched; a half-burned
+        board is refused rather than "repaired".
 
 # ── First-connect enrolment ───────────────────────────────────────
 # The robot announces its own key instead of the factory carrying it: at first
@@ -780,7 +781,9 @@ config APP_VOICE_OTA_URL
     help
         The MangDang voice gateway's OTA endpoint. The robot POSTs its
         identity here on the first voice turn and gets back the WebSocket
-        URL and token to talk to (saved in NVS). The same host serves the
+        URL and token to talk to (saved in NVS). Changing this URL in a new
+        image automatically re-provisions before the next voice connection;
+        no manual pairing or NVS erase is needed. The same host serves the
         marketplace proxy and the chat ingress (APP_CHAT_SERVER_IP).
 
 config APP_VOICE_BRAIN_LOCAL
@@ -845,6 +848,27 @@ config APP_VOICE_BARGE_IN
         reply, so opening the microphone alone does not interrupt. AEC and
         server VAD work together to suppress residual speaker echo. Older
         gateways retain PWA Interrupt; IO21_WAKE stops the active session.
+
+config APP_VOICE_MIC_LOG_ENABLE
+    bool "Log live microphone levels and an ASCII amplitude envelope"
+    default n
+    help
+        During each voice capture, log the selected microphone, RMS and peak
+        dBFS, all raw candidate channel levels, frames sent, and a 12-bin
+        ASCII amplitude envelope. This distinguishes silent/wrong-channel
+        capture from gateway VAD or ASR trouble without logging raw PCM.
+        Diagnostic only: leave off in production to avoid log traffic in the
+        real-time audio task. Enable gateway DEBUG logging to correlate these
+        lines with Silero VAD probability.
+
+config APP_VOICE_MIC_LOG_INTERVAL
+    int "Microphone log interval (60 ms frames)"
+    range 1 100
+    default 1
+    depends on APP_VOICE_MIC_LOG_ENABLE
+    help
+        Log every N captured frames. One frame is 60 ms: 1 gives the most
+        detail, 5 gives one line every 300 ms, and 10 one every 600 ms.
 
 endif  # APP_VOICE_ENABLE
 

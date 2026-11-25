@@ -49,6 +49,32 @@ bool voice_wanted()
 #include "cap_display.h"
 #endif
 
+extern "C" void mpx_voice_stream_broadcast_mic_debug(
+    uint32_t listen_id, uint32_t frame, uint8_t slot, float rms_db, float peak_db,
+    const float *levels, const char *source, const char *wave)
+{
+    cJSON *root = cJSON_CreateObject();
+    if (!root) return;
+    cJSON_AddStringToObject(root, "type", "voice_mic");
+    cJSON_AddNumberToObject(root, "listen_id", listen_id);
+    cJSON_AddNumberToObject(root, "frame", frame);
+    cJSON_AddStringToObject(root, "source", source);
+    cJSON_AddNumberToObject(root, "slot", slot);
+    cJSON_AddNumberToObject(root, "rms_db", rms_db);
+    cJSON_AddNumberToObject(root, "peak_db", peak_db);
+    cJSON *channel_levels = cJSON_AddArrayToObject(root, "levels");
+    for (int i = 0; i < 4; i++) {
+        cJSON_AddItemToArray(channel_levels, cJSON_CreateNumber(levels ? levels[i] : 0.0f));
+    }
+    cJSON_AddStringToObject(root, "wave", wave);
+    char *json = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (json) {
+        network::broadcast_voice_to_pwa(json);
+        cJSON_free(json);
+    }
+}
+
 namespace {
 
 enum Event : uint8_t { EV_MASTER_ON = 1, EV_MASTER_OFF };

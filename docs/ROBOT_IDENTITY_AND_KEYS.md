@@ -1032,8 +1032,8 @@ SPI flash only (eFuse is a separate peripheral, burned by `espefuse.py` / the
 app, never by a flash image), and it writes the *same* image to every board, so
 a per-board UUID cannot come from the image either.
 
-`CONFIG_APP_FACTORY_SELF_PROVISION` (`sdkconfig.defaults.factory`) moves the
-trigger into the firmware:
+`CONFIG_APP_FACTORY_SELF_PROVISION` (enabled by `sdkconfig.defaults` and
+`sdkconfig.defaults.factory`) moves the trigger into the firmware:
 
 1. Boot. `mpx_identity_init()` finds no record → `MPX_ID_UNPROVISIONED`.
 2. `mpx_selfprov_boot()` (`components/mpx_identity/mpx_selfprov.c`) checks the
@@ -1052,9 +1052,10 @@ trigger into the firmware:
 
 Consequences that are not negotiable:
 
-- **Irreversible, no human confirmation.** Keep the option out of the default,
-  pilot and shipped profiles. A bug in a factory image becomes a robot on
-  every blank board it boots on.
+- **Irreversible, no human confirmation.** The production default and factory
+  profiles enable the option; pilot explicitly disables it. Never boot those
+  self-provisioning images on a blank board unless that board should receive a
+  permanent identity.
 - **The ID exists only on the board** (and in its first boot log). With a
   multi-board flash nobody is watching ten consoles, so read it back later
   over Wi-Fi/HTTP or from the screen; there is no label to print at flash time.
@@ -1266,8 +1267,8 @@ Station output per unit: a log line with `robot_id, mac, key_fp, station_id,
 timestamp` and no secrets. That is enough to reconcile against the cloud and
 the production count.
 
-A build with `CONFIG_APP_FACTORY_SELF_PROVISION` (`sdkconfig.defaults.factory`)
-replaces the whole station column: the board mints its own `robot_id` and `S`
+A build with `CONFIG_APP_FACTORY_SELF_PROVISION` (the default or factory
+profile) replaces the whole station column: the board mints its own `robot_id` and `S`
 at first boot and reboots (§6.6.1), and the cloud sees the identity for the
 first time in the enrolment POST once the robot is on Wi-Fi. The reconciliation
 then has no per-unit station log — the boot log is the only place the ID is

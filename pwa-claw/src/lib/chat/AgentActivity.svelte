@@ -7,8 +7,9 @@
    * @prop steps   — [{ text, seq, total, ts }]
    * @prop active  — true while the agent is still working on this turn
    * @prop title   — optional completed-group label, e.g. the MCP tool name
+   * @prop autoCollapse — collapse when active becomes false
    */
-  let { steps = [], active = false, title = "" } = $props();
+  let { steps = [], active = false, title = "", autoCollapse = true } = $props();
 
   let total = $derived(steps.reduce((m, s) => Math.max(m, s.total || 0), 0) || steps.length);
   let last = $derived(steps[steps.length - 1]);
@@ -17,7 +18,7 @@
   // Auto-collapse once the turn finishes, but let the user re-open.
   let wasActive = false;
   $effect(() => {
-    if (wasActive && !active) open = false;
+    if (wasActive && !active && autoCollapse) open = false;
     wasActive = active;
   });
 
@@ -74,6 +75,9 @@
 
 <style>
   .activity {
+    /* A flex transcript must scroll, not compress this card and clip its
+       header against the overflow below. Folding remains controlled by open. */
+    flex-shrink: 0;
     margin: 2px 16px;
     max-width: 85%;
     border-radius: 18px;

@@ -13,6 +13,7 @@
   import AgentActivity from "./AgentActivity.svelte";
   import EmptyChat from "./EmptyChat.svelte";
   import VoicePanel from "./VoicePanel.svelte";
+  import { appendVoiceMicSample } from "./voiceMicDebug.js";
   import {
     saveConversation,
     getConversation,
@@ -70,8 +71,10 @@
   let voiceWakeBusy = $state(false);
   let voiceWakeError = $state("");
   let showVoicePanel = $state(false);
-  /* MCP ASR/TTS is deliberately ephemeral: this array is the only copy. */
+  /* MCP ASR/TTS and mic diagnostics are deliberately ephemeral: these arrays
+     are the only copies and are never persisted with a conversation. */
   let liveVoiceMessages = $state([]);
+  let voiceMicSamples = $state([]);
   let liveVoiceSeq = 0;
   let voiceWakeMode = $derived(
     messages.length === 0 && !inputText.trim() && !sending && !conversationArchived,
@@ -465,6 +468,10 @@
   }
 
   function handleMessage(data) {
+    if (data.type === "voice_mic") {
+      voiceMicSamples = appendVoiceMicSample(voiceMicSamples, data);
+      return;
+    }
     if (data.type === "voice_tool") {
       appendVoiceTool(data);
       return;
@@ -667,6 +674,7 @@
     openVoicePanel();
     if (!["idle", "ended", "cleared"].includes(voiceState)) return;
     liveVoiceMessages = [];
+    voiceMicSamples = [];
     voiceWakeBusy = true;
     voiceWakeError = "";
     voiceState = "starting";
@@ -978,6 +986,7 @@
   {#if showVoicePanel}
     <VoicePanel
       messages={liveVoiceMessages}
+      micSamples={voiceMicSamples}
       {voiceState}
       busy={voiceWakeBusy}
       error={voiceWakeError}

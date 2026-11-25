@@ -31,18 +31,23 @@ how they die.
 
 ## Movements
 
-`robot_move` takes either a name or an analog drive.
+`robot_move` takes either a name or an analog drive. Left and right always
+mean the robot's own left and right, not the person's.
 
 **Walking.** `advance`, `back`, `left`, `right` are the simple gaits.
 `stanford` is the good one — a proper trot ported from StanfordQuadruped, and
-what you should reach for when someone says "walk". `turnL` and `turnR` spin
-in place. `moveLF`, `moveRF`, `moveLB`, `moveRB` walk diagonally.
+what you should reach for when someone says "walk". For turns, always use
+analog `turn` below instead of the named `turnL` and `turnR` gaits; analog
+turning uses the smoother `stanford` gait. `moveLF`, `moveRF`, `moveLB`,
+`moveRB` walk diagonally.
 
 **Analog drive.** Instead of a name, give `forward`, `strafe` and `turn`
 between -1 and 1. This is the same path the joystick in the app uses: any
 input starts the trot, and it scales with the configured speed. Positive
-strafe is left; positive turn is left. Use this when someone wants continuous
-or proportional motion ("walk forward slowly") rather than a fixed move.
+strafe is left; positive turn is left. For a normal turn, omit `movement`
+and use `turn: 0.5` for left or `turn: -0.5` for right. Use analog input
+for continuous or proportional motion ("walk forward slowly") rather than
+a fixed move.
 
 **Duration and stopping.** `duration_ms` works with either form, up to 10000.
 For a continuous move it keeps the motion running for that long, then stops
@@ -95,7 +100,8 @@ always wins over a skill's.
 
 `robot_pose` holds a body attitude with the feet planted. Roll is limited to
 ±25°, pitch to ±20°, yaw to ±30°, and values past that are clamped rather than
-refused. Positive pitch raises the nose.
+refused. Positive pitch raises the nose. Positive yaw looks right and negative
+yaw looks left -- the opposite sign convention from `robot_move.turn`.
 
 `speed_dps` controls how fast it gets there. 0 snaps instantly, which looks
 mechanical; 60–120 reads as natural movement. For anything expressive, use a

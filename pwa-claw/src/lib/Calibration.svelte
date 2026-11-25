@@ -151,12 +151,15 @@
   }
 
   // Slider drag: values follow the finger; the robot is told on release.
+  // Only the handle starts a drag. A tap elsewhere on the track must not make
+  // a servo jump to that position.
   let dragJoint = null;
   function valueAt(e) {
     const r = e.currentTarget.getBoundingClientRect();
     return MIN + ((e.clientX - r.left) / r.width) * (MAX - MIN);
   }
   function sliderDown(e, joint) {
+    if (e.target !== e.currentTarget.querySelector(".handle")) return;
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
     dragJoint = joint;
     setJoint(joint, valueAt(e), { commit: false });
@@ -324,11 +327,11 @@
   .ctl { display: flex; align-items: center; gap: 12px; }
   .step { width: 56px; height: 56px; border-radius: 18px; border: none; background: var(--ground); color: var(--ink); flex-shrink: 0; display: grid; place-items: center; cursor: pointer; transition: transform 60ms; }
   .step:active { transform: scale(0.95); background: var(--mpx-yellow); }
-  .slider { flex: 1; height: 56px; position: relative; cursor: pointer; touch-action: none; }
+  .slider { flex: 1; height: 56px; position: relative; touch-action: none; }
   .track { position: absolute; left: 0; right: 0; top: 25px; height: 6px; border-radius: 3px; background: var(--hair); }
   .mid { position: absolute; left: 50%; top: 18px; width: 2px; height: 20px; margin-left: -1px; background: #B5AFA2; }
   .fill { position: absolute; top: 25px; height: 6px; border-radius: 3px; background: var(--ink); }
-  .handle { position: absolute; top: 14px; width: 28px; height: 28px; margin-left: -14px; border-radius: 14px; background: #fff; border: 2.5px solid var(--ink); box-sizing: border-box; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18); }
+  .handle { position: absolute; top: 14px; width: 28px; height: 28px; margin-left: -14px; border-radius: 14px; background: #fff; border: 2.5px solid var(--ink); box-sizing: border-box; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18); cursor: grab; }
   .joint.on .handle { background: var(--mpx-yellow); }
 
   .reset-all { height: 48px; border-radius: 24px; border: 1.5px solid #E2B4AE; background: #fff; color: #A12A1E; font-size: 15px; font-weight: 700; cursor: pointer; }

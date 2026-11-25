@@ -101,6 +101,11 @@ esp_err_t mpx_voice_provision(const char *ota_url);
 const char *mpx_voice_stored_url(void);
 const char *mpx_voice_stored_token(void);
 
+/* True when no websocket is stored, or when this image's OTA URL differs from
+ * the one that issued the stored credentials. Automatic connection paths use
+ * this to pick up a gateway change in a new build without erasing NVS. */
+bool mpx_voice_provision_needed(void);
+
 /* Passing NULL for either uses whatever provisioning stored. */
 esp_err_t mpx_voice_connect(const char *url, const char *token);
 void      mpx_voice_disconnect(void);
@@ -201,6 +206,14 @@ bool mpx_voice_talk_server_took_turn(void);
 /* The codec channel the last talk turn found to be the microphone (its loudest: 1 or 3 on this board's
  * R,M,N,M capture). The barge-in front end feeds AFE from it too. */
 uint8_t mpx_voice_talk_mic_slot(void);
+
+/* Debug-only microphone telemetry for the PWA voice panel. Implemented in
+ * voice_glue.cc because this C streaming task cannot call the C++ chat socket
+ * broadcaster directly. Levels may be NULL for AFE/phone mono sources. */
+void mpx_voice_stream_broadcast_mic_debug(uint32_t listen_id, uint32_t frame,
+                                          uint8_t slot, float rms_db, float peak_db,
+                                          const float *levels, const char *source,
+                                          const char *wave);
 
 /* TTS starts establish reply generations. reply_active stays true through
  * prebuffering and playback until a valid stop drains all queued audio.
