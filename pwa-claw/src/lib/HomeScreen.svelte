@@ -74,9 +74,6 @@
     { id: "backflip_k7_405_l2", label: "Backflip without screen", emoji: "🤸", color: "#117a65", category: "gait" },
     { id: "backflip_k7_405_l2d3", label: "Backflip safe with screen", short: "Backflip", emoji: "🤸", color: "#D14949", category: "gait" },
   ];
-  // Home's Quick actions: this one row (2026-11-23); the rest are under See all.
-  const HOME_QUICK = ["scratch", "look", "cower", "backflip_k7_405_l2d3"];
-  const homeQuick = HOME_QUICK.map((id) => actions.find((a) => a.id === id)).filter(Boolean);
   const DEFAULT_PINNED = ["scratch", "look", "cower", "paw", "surrender", "pushup", "spin90", "jump", "dig", "backflip_k7_405_l2", "backflip_k7_405_l2d3"];
 
   // ── Saved in the browser ────────────────────────────────────
@@ -354,7 +351,7 @@
                 <button type="button" class="see-all" onclick={() => (showAllActions = true)}>See all</button>
               </div>
               <ul class="quick-grid">
-                {#each homeQuick as a (a.id)}
+                {#each pinnedObjects as a (a.id)}
                   <li>
                     <button type="button" class="qa" class:hit={flash === a.id} onclick={() => runAction(a)} aria-label="Run {a.label}">
                       <span class="qa-ico"><ActionIcon id={a.id} emoji={a.emoji} /></span>
