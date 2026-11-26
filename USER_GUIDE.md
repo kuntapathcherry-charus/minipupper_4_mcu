@@ -160,13 +160,16 @@ The controller always starts in **Pose**, and the MOVE stick only works in
 Turning on is covered in [Quick start](#2-quick-start). Once the robot is on, its
 face tells you what the network is doing:
 
-| Screen | Meaning |
-|---|---|
-| Two eyes | Ready. The robot is on its hotspot, and may also be on your Wi-Fi. |
-| `join <network>` | Trying to join a saved network. |
-| `no network` | No saved network and no connection. The hotspot still works. |
-| An IP address, e.g. `192.168.1.105` | Connected to your network. This is the address to open in the browser. |
-| `ZZ` | Asleep/idle. The robot is still connected; a move or a control wakes it. |
+| Screen | Meaning | What to do |
+|---|---|---|
+| Two eyes | Ready. | Nothing: carry on. |
+| `MP4-XXXXXX` | The robot is still connecting, or it is not on your Wi-Fi. | Wait about 5 seconds. If it still shows `MP4-XXXXXX`, connect the robot to your Wi-Fi again: see [Connect the robot to your Wi-Fi](#3-connect-the-robot-to-your-wi-fi). |
+| An IP address, e.g. `192.168.1.105` | Connected to your Wi-Fi and ready to go. | Open this address in your phone's browser. |
+| `ZZ` | Asleep/idle. The robot is still connected. | A move or a control wakes it. |
+
+> **If the app shows "Can't reach robot":** the phone has lost its connection to
+> the robot. Refresh the page. If that does not help, check that your phone is
+> on the same Wi-Fi as the robot and open the IP shown on its screen.
 
 The robot starts its own hotspot **every time it boots**, even when it is also on
 your Wi-Fi. If you move to a new network, you can always join the hotspot and set
@@ -296,11 +299,28 @@ assignable face buttons.
 | **D-pad left / right** | Roll the body left / right. |
 | **Left stick** | Move. |
 | **Right stick** | Look around; while moving, it turns. |
-| **Four face buttons** | Assignable actions. Defaults: Jump, Stretch, Twerk, Situp. |
-| **Pencil icon** | Edit which action each face button runs. |
+| **Four face buttons** | Assignable moves. Defaults: triangle Look Around, square Push-ups, circle Scratch, pentagon Scared. |
+| **Pen icon** | Edit which move each face button runs (see below). |
 
-The controller keeps the last scheme you selected. Any custom button assignments
-are stored in the app, not on the robot.
+**Edit the four face buttons**
+
+You can put any move on any of the four face buttons:
+
+1. Tap the **pen icon** on the controller. The **Controller buttons** page opens.
+2. At the top, tap the button you want to change: triangle, square, circle or
+   pentagon. Each one shows the move it runs now.
+3. Tap a move to put it on that button. Moves are grouped into **Your moves**
+   (skills and moves you added) and **Built in**. Use **Search moves** to find
+   one quickly.
+4. Repeat for the other buttons, then tap **Back**. The controller now runs your
+   choices.
+
+To empty a button, select it and tap **Clear**. **Add a move from a file**, at
+the bottom of the list, adds a new move from a skill file on the robot.
+
+The controller keeps the last scheme you selected. Button choices are stored in
+the app on your phone, not on the robot, so another phone starts with the
+defaults.
 
 ### 5.4 Running moves
 
@@ -952,7 +972,7 @@ function's signature is a breaking change and bumps it.
 | Phone joins the hotspot but no page opens | Captive portal did not trigger | Open `http://192.168.2.1/` in the browser. |
 | Welcome screen does not appear | A successful connection is less than 24 h old | Tap the Wi-Fi pill on Home, or **Settings › ESP Wi-Fi**. |
 | "Couldn't join" the network | Wrong password, 5 GHz-only network, or weak signal | Use 2.4 GHz; re-enter the password; move closer to the router. |
-| App says offline after changing networks | Phone is on the wrong connection, or the robot changed IP | Join the same Wi-Fi as the robot; open the IP shown on its screen. |
+| App says "Can't reach robot" | The phone lost its connection, is on the wrong Wi-Fi, or the robot changed IP | Refresh the page; join the same Wi-Fi as the robot; open the IP shown on its screen. |
 | Controls do nothing | Controller is powered off, or the skill/voice owns the robot | Turn the controller on; wait for the skill to finish; end voice chat. |
 | Robot walks in an arc | Calibration trim or a mechanical issue | Check the legs first, then [calibrate](#95-calibration). |
 | A leg is crooked at rest | Servo offset or a loose horn | Calibration; if it does not respond, inspect the horn/servo. |
